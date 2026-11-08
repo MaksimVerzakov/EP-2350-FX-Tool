@@ -78,4 +78,30 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     expect(parsed.presets[0]).toHaveProperty('pos', 0);
     expect(parsed.presets[0]).toHaveProperty('name', 'WALKIE TALKIE');
   });
+
+  test('edits knob numeric inputs accurately (including 1% and clamping) and resets on double-click', async ({ page }) => {
+    await page.goto('/');
+
+    // In WALKIE TALKIE (Preset 1), DIST has WET MIX (default 50%)
+    const mixKnobGroup = page.locator('div[title^="WET MIX:"]').first();
+    const mixInput = mixKnobGroup.locator('input[type="text"]');
+    await expect(mixInput).toHaveValue('50%');
+
+    // Type 1 and press Enter -> must become 1% (not 100%)
+    await mixInput.click();
+    await mixInput.fill('1');
+    await mixInput.press('Enter');
+    await expect(mixInput).toHaveValue('1%');
+
+    // Type 999 and press Enter -> must clamp to 100%
+    await mixInput.click();
+    await mixInput.fill('999');
+    await mixInput.press('Enter');
+    await expect(mixInput).toHaveValue('100%');
+
+    // Double-click dial cap to reset to default (50%)
+    const dialCap = mixKnobGroup.locator('.cursor-ns-resize');
+    await dialCap.dblclick();
+    await expect(mixInput).toHaveValue('50%');
+  });
 });
