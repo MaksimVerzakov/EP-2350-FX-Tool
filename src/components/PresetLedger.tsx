@@ -455,8 +455,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           param: defaultParam,
           depth: depthCfg.defaultVal,
           shape: 'sine',
-          speed: 2.0,
-          phase: 0
+          speed: 2.0
         }
       });
     }
@@ -544,7 +543,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         depth: depthCfg.defaultVal,
         shape: preset.lfo?.shape ?? 'sine',
         speed: preset.lfo?.speed ?? 2.0,
-        phase: preset.lfo?.phase ?? 0
+        ...(typeof preset.lfo?.phase === 'number' ? { phase: preset.lfo.phase } : {})
       }
     });
   };
@@ -739,9 +738,6 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   step={param.step}
                   unit={param.unit}
                   displayScale={param.displayScale}
-                  displayValue={
-                    param.displayScale ? param.displayScale(currentVal) : undefined
-                  }
                   onChange={(v) => handleUpdateEffect(globalIdx, { ...effect, [param.name]: v })}
                   onReset={() => handleUpdateEffect(globalIdx, { ...effect, [param.name]: param.defaultVal })}
                   accentColor={encoderColor}
@@ -786,9 +782,6 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   step={param.step}
                   unit={param.unit}
                   displayScale={param.displayScale}
-                  displayValue={
-                    param.displayScale ? param.displayScale(currentVal) : undefined
-                  }
                   onChange={(v) => handleUpdateEffect(globalIdx, { ...effect, [param.name]: v })}
                   onReset={() => handleUpdateEffect(globalIdx, { ...effect, [param.name]: param.defaultVal })}
                   accentColor={encoderColor}
@@ -1381,9 +1374,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                         label="DEPTH"
                         value={
                           typeof preset.handle?.depth === 'number'
-                            ? (handleDepthCfg.isNormalizedPercent && Math.abs(preset.handle.depth) <= 1.0
-                                ? Math.round(preset.handle.depth * 100)
-                                : preset.handle.depth)
+                            ? preset.handle.depth
                             : handleDepthCfg.defaultVal
                         }
                         min={handleDepthCfg.min}
@@ -1515,9 +1506,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                       label="DEPTH"
                       value={
                         typeof preset.shake?.depth === 'number'
-                          ? (shakeDepthCfg.isNormalizedPercent && Math.abs(preset.shake.depth) <= 1.0
-                              ? Math.round(preset.shake.depth * 100)
-                              : preset.shake.depth)
+                          ? preset.shake.depth
                           : shakeDepthCfg.defaultVal
                       }
                       min={shakeDepthCfg.min}
@@ -1648,9 +1637,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                       label="DEPTH"
                       value={
                         typeof preset.lfo?.depth === 'number'
-                          ? (lfoDepthCfg.isNormalizedPercent && Math.abs(preset.lfo.depth) <= 1.0
-                              ? Math.round(preset.lfo.depth * 100)
-                              : preset.lfo.depth)
+                          ? preset.lfo.depth
                           : lfoDepthCfg.defaultVal
                       }
                       min={lfoDepthCfg.min}
