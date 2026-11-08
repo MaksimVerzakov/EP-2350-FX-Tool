@@ -1,4 +1,4 @@
-import { AnyEffect, PresetConfig } from '../types/config';
+import type { AnyEffect, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import {
   PitchShiftKernel,
@@ -115,7 +115,8 @@ export class DspAudioEngine {
   }
 
   public updatePreset(preset: PresetConfig) {
-    const prevTopology = this.activeNodes
+    const prevTopology = [...this.activeNodes]
+      .sort((a, b) => a.nodeRefs.rowIdx - b.nodeRefs.rowIdx)
       .map((n) => `${n.effectType}:${n.params.BUS || 1}:${n.nodeRefs.rowIdx}`)
       .join('|');
     const nextTopology = (preset.list || [])
