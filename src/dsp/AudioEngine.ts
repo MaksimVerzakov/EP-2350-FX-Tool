@@ -19,12 +19,15 @@ export interface ModulationState {
 export class DspAudioEngine {
   private ctx: AudioContext | null = null;
   private isRunning: boolean = false;
+  private isStarting: boolean = false;
+  private startGen: number = 0;
   private currentBuffer: AudioBuffer | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
   private analyserNode: AnalyserNode | null = null;
+  private safetyLimiter: DynamicsCompressorNode | null = null;
   private loopSource: boolean = true;
   private lfoRafId: number | null = null;
 
@@ -54,8 +57,18 @@ export class DspAudioEngine {
 
       this.analyserNode = this.ctx.createAnalyser();
       this.analyserNode.fftSize = 256;
+
+      // Master brickwall safety limiter to protect user hearing & monitors from feedback oscillation spikes
+      this.safetyLimiter = this.ctx.createDynamicsCompressor();
+      this.safetyLimiter.threshold.value = -0.5;
+      this.safetyLimiter.knee.value = 0.0;
+      this.safetyLimiter.ratio.value = 20.0;
+      this.safetyLimiter.attack.value = 0.001;
+      this.safetyLimiter.release.value = 0.05;
+
       this.gainMaster.connect(this.analyserNode);
-      this.analyserNode.connect(this.ctx.destination);
+      this.analyserNode.connect(this.safetyLimiter);
+      this.safetyLimiter.connect(this.ctx.destination);
 
       // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
       try {
@@ -77,6 +90,10 @@ export class DspAudioEngine {
 
   public getAnalyser(): AnalyserNode | null {
     return this.analyserNode;
+  }
+
+  public getSafetyLimiter(): DynamicsCompressorNode | null {
+    return this.safetyLimiter;
   }
 
   public setSampleType(type: 'voice' | 'beat' | 'synth') {
@@ -165,9 +182,25 @@ export class DspAudioEngine {
   }
 
   public async start() {
-    await this.init();
-    if (!this.ctx || !this.currentBuffer) return;
+    if (this.isStarting) return;
+    const myGen = ++this.startGen;
+    this.isStarting = true;
     this.isRunning = true;
+
+    try {
+      await this.init();
+    } finally {
+      if (myGen === this.startGen) {
+        this.isStarting = false;
+      }
+    }
+
+    if (myGen !== this.startGen || !this.isRunning || !this.ctx || !this.currentBuffer) {
+      if (myGen === this.startGen) {
+        this.isRunning = false;
+      }
+      return;
+    }
 
     if (this.sourceNode) {
       try {
@@ -229,6 +262,8 @@ export class DspAudioEngine {
   }
 
   public stop() {
+    ++this.startGen;
+    this.isStarting = false;
     this.isRunning = false;
     this.stopModulationLoop();
     this.cleanupActiveNodes();
