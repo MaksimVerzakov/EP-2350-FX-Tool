@@ -4,7 +4,6 @@ import { Play, Square } from 'lucide-react';
 import { ThemeMode } from '../types/config';
 
 interface AudioPlayerCompactProps {
-  onShakeTrigger?: () => void;
   theme?: ThemeMode;
   className?: string;
 }

@@ -54,17 +54,22 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
     shakeTimerRef.current = window.setTimeout(() => setIsCartoonShaking(false), 420);
   }, [onShakeTrigger]);
 
-  // Also animate cartoon shake when Spacebar is pressed
+  // Spacebar hotkey triggers both DSP shake and cartoon shake animation
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && e.target === document.body) {
-        setIsCartoonShaking(true);
-        if (shakeTimerRef.current) window.clearTimeout(shakeTimerRef.current);
-        shakeTimerRef.current = window.setTimeout(() => setIsCartoonShaking(false), 420);
+        e.preventDefault();
+        triggerCartoonShake();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [triggerCartoonShake]);
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current) window.clearTimeout(shakeTimerRef.current);
+    };
   }, []);
 
   // Handle Drag: Mouse or touch drag to squeeze/release the lever
@@ -146,11 +151,6 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            {/* LED Ambient Shadow */}
-            <radialGradient id="ledShadow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#1a1c1e" />
-              <stop offset="100%" stopColor="#2c3033" />
-            </radialGradient>
           </defs>
 
           {/* CARTOON SHAKE MOVEMENT (SEMI-TRANSPARENT GHOST COPIES) */}
