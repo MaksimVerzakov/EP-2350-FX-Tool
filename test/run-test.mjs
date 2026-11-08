@@ -371,7 +371,7 @@ assert.ok(
   'Main mic container must not scale or rotate when shaking or clicking buttons'
 );
 
-// 3. Cartoon shake afterimages & orange motion arrows exist in SVG and CSS
+// 3. Cartoon shake afterimages & orange affordance arrows exist in SVG and CSS
 assert.ok(
   themeCss.includes('cartoonShakeGhost1') && themeCss.includes('cartoonShakeGhost2'),
   'CSS keyframes must define cartoonShakeGhost1 and cartoonShakeGhost2'
@@ -381,20 +381,28 @@ assert.ok(
   'MicDevice must render ghost afterimages during cartoon shake'
 );
 assert.ok(
-  micDeviceSrc.includes('Top-Right Curved Motion Arrow') && micDeviceSrc.includes('Bottom-Left Curved Motion Arrow'),
-  'MicDevice must render cartoon orange motion curve arrows matching the design'
+  micDeviceSrc.includes('Lever press and release indicator arrow') &&
+    micDeviceSrc.includes('Top-Right Curved Motion Arrow') &&
+    micDeviceSrc.includes('Bottom-Left Curved Motion Arrow'),
+  'MicDevice must render orange affordance arrows for both lever press/release and mic shake'
+);
+assert.ok(
+  micDeviceSrc.includes('const isInMotion = isCartoonShaking || isSqueezing || isLeverMoving;') &&
+    micDeviceSrc.includes('{!isInMotion && ('),
+  'Orange indicator arrows must be hidden during motion (shaking or lever movement)'
 );
 
-// 4. Shake is triggered on bottom part of the mic, NOT on faceplate or buttons
+// 4. Shake is triggered on the lower chassis faceplate block (Mic FX / Ting FX), NOT on wire or buttons
 assert.ok(
-  micDeviceSrc.includes('Click bottom of mic to SHAKE'),
-  'Shake must be triggered on the bottom part of the mic'
+  micDeviceSrc.includes('Click Mic FX block to SHAKE') &&
+    !micDeviceSrc.includes('Click bottom of mic to SHAKE'),
+  'Shake must be triggered on the Mic FX / Ting FX lower faceplate block, not the wire section'
 );
 assert.ok(
   micDeviceSrc.includes('stopPropagation') && !micDeviceSrc.includes('onClick={triggerShakeWithFlash}'),
-  'Buttons and faceplate must not trigger shake'
+  'Buttons and wire section must not trigger shake'
 );
 
-console.log('✓ Suite 7: UX Lever default pressed & Cartoon Shake afterimages verified');
+console.log('✓ Suite 7: UX Lever default pressed, Mic FX block shake & rest-only orange arrows verified');
 
 console.log('\n=== ALL 7 PRODUCTION TEST SUITES PASSED (100%) ===');
