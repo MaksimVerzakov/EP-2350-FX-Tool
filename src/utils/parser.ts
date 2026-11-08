@@ -1,11 +1,39 @@
 import type { AnyEffect, EffectType, PackConfig, PresetConfig, SampleSlotConfig } from '../types/config';
 import { isPercentParam, getModDepthConfig } from '../constants/effectsRegistry';
 
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_JSON_BYTES = 5_000_000;
+const MAX_SAMPLES = 64;
+const MAX_PRESETS = 32;
+const MAX_EFFECTS_PER_PRESET = 32;
+
+function sanitizeEffectObject(rawItem: unknown): Record<string, any> {
+  if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+    return {};
+  }
+  const clean: Record<string, any> = {};
+  for (const key of Object.keys(rawItem)) {
+    if (FORBIDDEN_KEYS.has(key)) continue;
+    const val = (rawItem as Record<string, any>)[key];
+    if (typeof val === 'number' || typeof val === 'string' || typeof val === 'boolean') {
+      clean[key] = val;
+    }
+  }
+  return clean;
+}
+
 export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: string } {
   try {
+    if (typeof rawJson !== 'string') {
+      return { error: 'Invalid JSON: input must be a string' };
+    }
+    if (rawJson.length > MAX_JSON_BYTES) {
+      return { error: 'Invalid JSON: file exceeds maximum allowed size (5MB)' };
+    }
+
     const data = JSON.parse(rawJson);
 
-    if (typeof data !== 'object' || data === null) {
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
       return { error: 'Invalid JSON: root must be an object' };
     }
 
@@ -14,11 +42,11 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
 
     let samples: SampleSlotConfig[] = [];
     if (Array.isArray(data.samples)) {
-      samples = data.samples.map((s: any, idx: number) => ({
+      samples = data.samples.slice(0, MAX_SAMPLES).map((s: any, idx: number) => ({
         id: `imported-s-${idx}-${Date.now()}`,
-        pos: typeof s.pos === 'number' ? s.pos : idx,
-        file: typeof s.file === 'string' ? s.file : `${idx + 1}.wav`,
-        playmode: ['oneshot', 'hold', 'startstop'].includes(s.playmode) ? s.playmode : 'oneshot'
+        pos: typeof s?.pos === 'number' ? s.pos : idx,
+        file: typeof s?.file === 'string' ? s.file : `${idx + 1}.wav`,
+        playmode: ['oneshot', 'hold', 'startstop'].includes(s?.playmode) ? s.playmode : 'oneshot'
       }));
     } else {
       // Create empty default 4 slots
@@ -32,20 +60,20 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
 
     let presets: PresetConfig[] = [];
     if (Array.isArray(data.presets)) {
-      presets = data.presets.map((p: any, pIdx: number) => {
-        const pos = typeof p.pos === 'number' ? p.pos : pIdx;
-        const pName = typeof p.name === 'string' ? p.name : `PRESET ${pos}`;
-        const pComment = typeof p.comment === 'string' ? p.comment : '';
+      presets = data.presets.slice(0, MAX_PRESETS).map((p: any, pIdx: number) => {
+        const pos = typeof p?.pos === 'number' ? p.pos : pIdx;
+        const pName = typeof p?.name === 'string' ? p.name : `PRESET ${pos}`;
+        const pComment = typeof p?.comment === 'string' ? p.comment : '';
 
-        const list: AnyEffect[] = Array.isArray(p.list)
-          ? p.list.map((item: any, itemIdx: number) => {
-              const effectType = (typeof item.effect === 'string' ? item.effect.toUpperCase() : 'LOWPASS') as EffectType;
+        const list: AnyEffect[] = Array.isArray(p?.list)
+          ? p.list.slice(0, MAX_EFFECTS_PER_PRESET).map((item: any, itemIdx: number) => {
+              const safeProps = sanitizeEffectObject(item);
+              const effectType = (typeof safeProps.effect === 'string' ? safeProps.effect.toUpperCase() : 'LOWPASS') as EffectType;
               const effectEntry: AnyEffect = {
+                ...safeProps,
                 id: `fx-${pIdx}-${itemIdx}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-                effect: effectType,
-                ...item
+                effect: effectType
               };
-              effectEntry.effect = effectType;
 
               // Scale percent parameters from JSON (0.0..1.0) to UI percent (0..100)
               Object.keys(effectEntry).forEach((key) => {
