@@ -58,7 +58,7 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
 
     // Set up download listener
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: /EXPORT CONFIG\.JSON/i }).click();
+    await page.getByRole('button', { name: /^EXPORT$/i }).click();
     const download = await downloadPromise;
 
     expect(download.suggestedFilename()).toBe('config.json');
