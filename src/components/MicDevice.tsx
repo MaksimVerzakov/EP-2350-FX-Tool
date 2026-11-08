@@ -35,22 +35,39 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
 }) => {
   const isTing = theme === 'ting';
   const [isSqueezing, setIsSqueezing] = useState(false);
+  const [isLeverMoving, setIsLeverMoving] = useState(false);
   const [isCartoonShaking, setIsCartoonShaking] = useState(false);
   const dragStartY = useRef(0);
   const dragStartX = useRef(0);
   const dragStartVal = useRef(handlePos);
   const hasDragged = useRef(false);
+  const shakeTimerRef = useRef<number | null>(null);
+  const leverTimerRef = useRef<number | null>(null);
 
   const cyclePreset = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSelectSlot((activeSlot + 1) % 4);
   };
 
-  const triggerCartoonShake = () => {
+  const triggerCartoonShake = useCallback(() => {
     setIsCartoonShaking(true);
     onShakeTrigger();
-    setTimeout(() => setIsCartoonShaking(false), 420);
-  };
+    if (shakeTimerRef.current) window.clearTimeout(shakeTimerRef.current);
+    shakeTimerRef.current = window.setTimeout(() => setIsCartoonShaking(false), 420);
+  }, [onShakeTrigger]);
+
+  // Also animate cartoon shake when Spacebar is pressed
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && e.target === document.body) {
+        setIsCartoonShaking(true);
+        if (shakeTimerRef.current) window.clearTimeout(shakeTimerRef.current);
+        shakeTimerRef.current = window.setTimeout(() => setIsCartoonShaking(false), 420);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Handle Drag: Mouse or touch drag to squeeze/release the lever
   const handleHandleMouseDown = (e: React.MouseEvent) => {
@@ -88,6 +105,9 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
       // Click without drag: toggle between fully pressed (1.0) and released (0.0)
       const nextVal = handlePos >= 0.5 ? 0.0 : 1.0;
       onHandleChange(nextVal);
+      setIsLeverMoving(true);
+      if (leverTimerRef.current) window.clearTimeout(leverTimerRef.current);
+      leverTimerRef.current = window.setTimeout(() => setIsLeverMoving(false), 180);
     }
     // If dragged: stays at the set position so the user can listen to the decreased effect!
   }, [isSqueezing, handlePos, onHandleChange]);
@@ -107,6 +127,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
   // When handlePos is 1.0 (pressed by default), lever is rotated inward (7.5deg) and effect is enabled.
   // Releasing the handle (handlePos -> 0.0) rotates outward (0deg) and decreases the effect.
   const leverAngle = handlePos * 7.5;
+  const isInMotion = isCartoonShaking || isSqueezing || isLeverMoving;
 
   return (
     <div className="flex flex-col items-center select-none relative">
@@ -138,8 +159,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             </radialGradient>
           </defs>
 
-          {/* CARTOON SHAKE MOVEMENT (SEMI-TRANSPARENT GHOST COPIES & ORANGE MOTION ARCS) */}
-          {/* Main mic stays 100% stationary; afterimages & cartoon arrows depict physical movement */}
+          {/* CARTOON SHAKE MOVEMENT (SEMI-TRANSPARENT GHOST COPIES ONLY; ARROWS HIDDEN DURING MOTION) */}
           {isCartoonShaking && (
             <g className="pointer-events-none select-none" style={{ overflow: 'visible' }}>
               {/* Outer Ghost Copy (rotated further, lighter opacity) */}
@@ -161,14 +181,42 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
               >
                 <use href="#micGraphic" />
               </g>
+            </g>
+          )}
 
-              {/* Cartoon Orange Motion Curve Arrows (Exact match to uploaded design) */}
+          {/* ORANGE AFFORDANCE ARROWS (SHOWN AT REST, HIDDEN DURING MOTION) */}
+          {!isInMotion && (
+            <g className="select-none" style={{ overflow: 'visible' }}>
+              {/* 1. Lever Press / Release Orange Arrow (Left of Squeeze Handle) */}
               <g
-                style={{
-                  animation: 'cartoonArrowPulse 420ms ease-out forwards'
-                }}
+                onMouseDown={handleHandleMouseDown}
+                className="cursor-pointer"
+                aria-label="Lever press and release indicator arrow"
               >
-                {/* Top-Right Curved Motion Arrow */}
+                <title>Click or drag lever to press / release effect</title>
+                <path
+                  d="M 262 126 C 272 118, 283 114, 294 114"
+                  stroke="#F15A22"
+                  strokeWidth="5.5"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <polygon
+                  points="291 105, 306 114, 291 123"
+                  fill="#F15A22"
+                />
+              </g>
+
+              {/* 2. Top-Right Curved Motion Arrow (Shake Affordance) */}
+              <g
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerCartoonShake();
+                }}
+                className="cursor-pointer"
+                aria-label="Top-Right Curved Motion Arrow"
+              >
+                <title>Click Mic FX block to SHAKE</title>
                 <path
                   d="M 570 145 C 572 108, 552 75, 526 71"
                   stroke="#F15A22"
@@ -180,17 +228,27 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                   points="528 62, 511 73, 530 83"
                   fill="#F15A22"
                 />
+              </g>
 
-                {/* Bottom-Left Curved Motion Arrow */}
+              {/* 3. Bottom-Left Curved Motion Arrow (Beside Mic FX / Ting FX Block) */}
+              <g
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerCartoonShake();
+                }}
+                className="cursor-pointer"
+                aria-label="Bottom-Left Curved Motion Arrow"
+              >
+                <title>Click Mic FX block to SHAKE</title>
                 <path
-                  d="M 312 405 C 310 430, 307 452, 305 468"
+                  d="M 314 262 C 306 286, 306 310, 312 328"
                   stroke="#F15A22"
                   strokeWidth="6"
                   strokeLinecap="round"
                   fill="none"
                 />
                 <polygon
-                  points="297 462, 305 480, 314 462"
+                  points="303 325, 315 342, 321 322"
                   fill="#F15A22"
                 />
               </g>
@@ -520,8 +578,16 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             );
           })}
 
-          {/* 5. LOWER CHASSIS FACEPLATE (Off-white / Light Grey Plate) */}
-          <g onClick={(e) => e.stopPropagation()}>
+          {/* 5. LOWER CHASSIS FACEPLATE (Big Block with MIC FX / TING FX — Click to SHAKE) */}
+          <g
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerCartoonShake();
+            }}
+            className="cursor-pointer group"
+            aria-label="Click Mic FX block to SHAKE"
+          >
+            <title>Click Mic FX block to SHAKE</title>
             <path
               fill={isTing ? '#E8E9E4' : '#E4E3DF'}
               stroke="#000"
@@ -589,16 +655,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
           </g>
 
           {/* 6. REINFORCED RUBBER CABLE SEGMENT & CORRUGATED STRAIN RELIEF */}
-          {/* Bottom section of the mic triggers the cartoon shake effect when clicked */}
-          <g
-            onClick={triggerCartoonShake}
-            className="cursor-pointer group"
-            aria-label="Click bottom of mic to SHAKE"
-          >
-            <title>Click bottom of mic to SHAKE</title>
-            {/* Transparent hit area covering bottom of mic */}
-            <rect x="330" y="295" width="230" height="295" fill="transparent" />
-
+          <g onClick={(e) => e.stopPropagation()}>
             {/* Cable 45° Drop Shadow Facet */}
             <path
               stroke="#141617"
