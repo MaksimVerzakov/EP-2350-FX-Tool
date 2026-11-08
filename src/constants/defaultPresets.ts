@@ -47,3 +47,24 @@ export const OFFICIAL_TE_PACKS: OfficialPackPreset[] = [
 
 export const INITIAL_PACK: PackConfig = OFFICIAL_TE_PACKS[0].pack;
 export const DEFAULT_PRESETS = INITIAL_PACK.presets;
+
+export const createEmptyPack = (): PackConfig => {
+  const now = Date.now();
+  return {
+    name: 'NEW PACK',
+    useBuiltInSamples: true,
+    samples: [
+      { id: `s-0-${now}`, pos: 0, file: '1.wav', playmode: 'oneshot' },
+      { id: `s-1-${now}`, pos: 1, file: '2.wav', playmode: 'oneshot' },
+      { id: `s-2-${now}`, pos: 2, file: '3.wav', playmode: 'hold' },
+      { id: `s-3-${now}`, pos: 3, file: '4.wav', playmode: 'startstop' }
+    ],
+    presets: [0, 1, 2, 3].map((slot) => ({
+      id: `preset-${slot}-${now}`,
+      pos: slot,
+      name: `PRESET ${slot + 1}`,
+      comment: '',
+      list: []
+    }))
+  };
+};

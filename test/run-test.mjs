@@ -473,7 +473,7 @@ assert.ok(
   'Buttons and wire section must not trigger shake'
 );
 
-// 5. TopBanner right block matches left block size & 2-row format ([EXPORT][IMPORT] on top, dropdown below)
+// 5. TopBanner right block matches left block size & 2-row format ([EXPORT][IMPORT] on top, dropdown below + New Pack option)
 assert.strictEqual(
   (topBannerSrc.match(/w-\[236px\] h-\[66px\]/g) || []).length,
   2,
@@ -481,8 +481,10 @@ assert.strictEqual(
 );
 assert.ok(
   topBannerSrc.includes('aria-label="Export and Import actions"') &&
-    topBannerSrc.includes('aria-label="Select default pack"'),
-  'Right TopBanner block must have Export & Import buttons on top row and pack dropdown below'
+    topBannerSrc.includes('aria-label="Select default pack"') &&
+    topBannerSrc.includes('NEW PACK') &&
+    topBannerSrc.includes('onCreateNewPack'),
+  'Right TopBanner block must have Export & Import buttons on top row, pack dropdown below, and + New Pack action'
 );
 
 console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake & balanced TopBanner verified');
