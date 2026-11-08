@@ -398,12 +398,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         const fx = preset.list[targetRow];
         const m = fx ? EFFECTS_REGISTRY[fx.effect] : null;
         const defaultParam = m?.params[0]?.name || 'cutoff';
+        const depthCfg = getModDepthConfig(fx?.effect, defaultParam);
         onUpdatePreset({
           ...preset,
           handle: {
             row: targetRow,
             param: defaultParam,
-            depth: 80
+            depth: depthCfg.defaultVal
           }
         });
       }
@@ -422,12 +423,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       const fx = preset.list[targetRow];
       const m = fx ? EFFECTS_REGISTRY[fx.effect] : null;
       const defaultParam = m?.params[0]?.name || 'mix';
+      const depthCfg = getModDepthConfig(fx?.effect, defaultParam);
       onUpdatePreset({
         ...preset,
         shake: {
           row: targetRow,
           param: defaultParam,
-          depth: 50
+          depth: depthCfg.defaultVal
         }
       });
     }
@@ -445,12 +447,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       const fx = preset.list[targetRow];
       const m = fx ? EFFECTS_REGISTRY[fx.effect] : null;
       const defaultParam = m?.params[0]?.name || 'cutoff';
+      const depthCfg = getModDepthConfig(fx?.effect, defaultParam);
       onUpdatePreset({
         ...preset,
         lfo: {
           row: targetRow,
           param: defaultParam,
-          depth: 20,
+          depth: depthCfg.defaultVal,
           shape: 'sine',
           speed: 2.0,
           phase: 0
@@ -735,6 +738,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   max={param.max}
                   step={param.step}
                   unit={param.unit}
+                  displayScale={param.displayScale}
                   displayValue={
                     param.displayScale ? param.displayScale(currentVal) : undefined
                   }
@@ -781,6 +785,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   max={param.max}
                   step={param.step}
                   unit={param.unit}
+                  displayScale={param.displayScale}
                   displayValue={
                     param.displayScale ? param.displayScale(currentVal) : undefined
                   }

@@ -34,12 +34,15 @@ jobs:
           node-version: 22
           cache: 'npm'
 
-      - name: Compute & Tag Next Semantic Version
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Production Test Suite
+        run: npm test
+
+      - name: Compute Next Semantic Version
         id: semver
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           # Find latest vX.Y.Z tag, or start from package.json (1.0.0)
           LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1)
           if [ -z "$LATEST_TAG" ]; then
@@ -63,24 +66,23 @@ jobs:
             npm version "$BASE_VER" --no-git-tag-version --allow-same-version
             npm version "$BUMP" --no-git-tag-version
             NEW_VER=$(node -p "require('./package.json').version")
-
-            git tag -a "v${NEW_VER}" -m "Release v${NEW_VER}"
-            git push origin "v${NEW_VER}"
-            echo "Tagged and pushed v${NEW_VER}"
           else
             NEW_VER="$BASE_VER"
           fi
 
           echo "APP_VERSION=${NEW_VER}" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Production Test Suite
-        run: npm test
-
       - name: Build
         run: npm run build
+
+      - name: Tag & Push Semantic Release Version
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${APP_VERSION}" -m "Release v${APP_VERSION}"
+          git push origin "v${APP_VERSION}"
+          echo "Tagged and pushed v${APP_VERSION}"
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

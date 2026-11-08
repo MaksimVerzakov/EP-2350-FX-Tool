@@ -10,9 +10,27 @@ import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
 
+const safeGetLocalStorage = (key: string): string | null => {
+  try {
+    return typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+};
+
+const safeSetLocalStorage = (key: string, value: string): void => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore QuotaExceededError or restricted storage errors in private browsing
+  }
+};
+
 export const App: React.FC = () => {
   const [pack, setPack] = useState<PackConfig>(() => {
-    const saved = localStorage.getItem('ep2350_pack_config');
+    const saved = safeGetLocalStorage('ep2350_pack_config');
     if (saved) {
       const parsed = parseConfigJson(saved);
       if (parsed.pack) return parsed.pack;
@@ -21,7 +39,7 @@ export const App: React.FC = () => {
   });
 
   const [theme, setTheme] = useState<ThemeMode>(() => {
-    const savedTheme = localStorage.getItem('ep2350_theme');
+    const savedTheme = safeGetLocalStorage('ep2350_theme');
     return savedTheme === 'ting' ? 'ting' : 'fx';
   });
 
@@ -33,12 +51,12 @@ export const App: React.FC = () => {
   // Sync theme to document root & localStorage
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('ep2350_theme', theme);
+    safeSetLocalStorage('ep2350_theme', theme);
   }, [theme]);
 
   // Save to localStorage
   useEffect(() => {
-    localStorage.setItem('ep2350_pack_config', serializeToConfigJson(pack));
+    safeSetLocalStorage('ep2350_pack_config', serializeToConfigJson(pack));
   }, [pack]);
 
   // Synchronize active preset with DSP engine

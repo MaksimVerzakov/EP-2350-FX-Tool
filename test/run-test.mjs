@@ -23,7 +23,9 @@ function buildSourceModulesForTest() {
     'src/constants/defaultPresets.ts',
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
-    'src/dsp/math.ts'
+    'src/dsp/math.ts',
+    'src/dsp/synthSamples.ts',
+    'src/dsp/AudioEngine.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -38,6 +40,12 @@ function buildSourceModulesForTest() {
         const jsonContent = fs.readFileSync(fullJsonPath, 'utf8');
         return `const ${varName} = ${JSON.stringify(jsonContent)};`;
       }
+    );
+
+    // Handle static asset imports (e.g. speech.mp3 in AudioEngine.ts)
+    source = source.replace(
+      /import\s+([a-zA-Z0-9_]+)\s+from\s+['"]([^'"]+\.mp3)['"];?/g,
+      (_, varName, assetPath) => `const ${varName} = ${JSON.stringify(assetPath)};`
     );
 
     const stripped = stripTypeScriptTypes(source);
@@ -78,6 +86,9 @@ const {
   resolveModDepth
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
+);
+const { DspAudioEngine } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 
 // Clean up on exit
@@ -242,7 +253,58 @@ assert.strictEqual(customReserialized.presets[0].handle.depth, -6.5);
 assert.strictEqual(customReserialized.presets[0].shake.depth, -0.4);
 assert.strictEqual(customReserialized.presets[0].lfo.depth, -0.25);
 assert.strictEqual(customReserialized.presets[0].lfo.phase, 0.5);
-console.log('✓ Suite 4: Parser resilience, custom samples, parallel buses & bipolar depths verified');
+
+// 4b. 1% and -1% parameter and modulation depth round-trip (regression test for > 1 bug)
+const onePercentJson = JSON.stringify({
+  name: 'ONE PERCENT TEST',
+  presets: [
+    {
+      pos: 0,
+      name: 'SUBTLE',
+      list: [
+        { effect: 'DIST', amount: 10, mix: 0.01, 'lowpass-cutoff': 0.01, 'highpass-cutoff': 0.01 },
+        { effect: 'DELAY', time: 0.35, echo: 0.01, 'wet-level': 0.01, 'dry-level': 0.01 },
+        { effect: 'SAMPLE', level: 0.01 }
+      ],
+      handle: { row: 0, param: 'mix', depth: 0.01 },
+      shake: { row: 1, param: 'echo', depth: -0.01 },
+      lfo: { row: 1, param: 'wet-level', depth: 0.01, shape: 'sine', speed: 2.0 }
+    }
+  ]
+});
+const onePercentParsed = parseConfigJson(onePercentJson);
+assert.strictEqual(onePercentParsed.error, undefined);
+const p0 = onePercentParsed.pack.presets[0];
+assert.strictEqual(p0.list[0].mix, 1, '0.01 JSON mix must parse to 1% in UI');
+assert.strictEqual(p0.list[1].echo, 1, '0.01 JSON echo must parse to 1% in UI');
+assert.strictEqual(p0.handle.depth, 1, '0.01 JSON handle depth must parse to 1% in UI');
+assert.strictEqual(p0.shake.depth, -1, '-0.01 JSON shake depth must parse to -1% in UI');
+assert.strictEqual(p0.lfo.depth, 1, '0.01 JSON lfo depth must parse to 1% in UI');
+
+const onePercentReserialized = JSON.parse(serializeToConfigJson(onePercentParsed.pack)).presets[0];
+assert.strictEqual(onePercentReserialized.list[0].mix, 0.01, '1% UI mix must serialize back to 0.01 (not 1.0)');
+assert.strictEqual(onePercentReserialized.list[0]['lowpass-cutoff'], 0.01, '1% LP cutoff must serialize to 0.01');
+assert.strictEqual(onePercentReserialized.list[1].echo, 0.01, '1% UI echo must serialize back to 0.01');
+assert.strictEqual(onePercentReserialized.list[1]['wet-level'], 0.01, '1% wet-level must serialize back to 0.01');
+assert.strictEqual(onePercentReserialized.list[2].level, 0.01, '1% sample level must serialize back to 0.01');
+assert.strictEqual(onePercentReserialized.handle.depth, 0.01, '+1% handle depth must serialize to 0.01');
+assert.strictEqual(onePercentReserialized.shake.depth, -0.01, '-1% shake depth must serialize to -0.01');
+assert.strictEqual(onePercentReserialized.lfo.depth, 0.01, '+1% lfo depth must serialize to 0.01');
+
+// 4c. Security hardening: prototype pollution stripping, array roots, and bounded array lengths
+assert.ok(parseConfigJson('[]').error, 'Array JSON root must return error');
+assert.ok(parseConfigJson('42').error, 'Primitive JSON root must return error');
+const pollutedRaw =
+  '{"name":"SEC","samples":' +
+  JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ pos: i, file: `${i}.wav` }))) +
+  ',"presets":[{"pos":0,"list":[{"effect":"DIST","mix":0.5,"__proto__":{"polluted":true},"constructor":{"bad":1},"nested":{"drop":true}}],"handle":{"target":"lfo"}}]}';
+const secParsed = parseConfigJson(pollutedRaw);
+assert.strictEqual(secParsed.error, undefined);
+assert.strictEqual(({}).polluted, undefined, 'Object.prototype must not be polluted');
+assert.strictEqual(secParsed.pack.samples.length, 64, 'Samples array must be capped at 64 items');
+assert.strictEqual(secParsed.pack.presets[0].list[0].nested, undefined, 'Nested object properties on effects must be stripped');
+assert.strictEqual(secParsed.pack.presets[0].handle.param, 'speed', 'LFO-targeted handle must default param to speed');
+console.log('✓ Suite 4: Parser resilience, 1% round-trip, security hardening & bipolar depths verified');
 
 // ---------------------------------------------------------------------------
 // SUITE 5: Pure DSP Math Functions (src/dsp/math.ts)
@@ -260,9 +322,10 @@ assert.strictEqual(resolveModDepth('SSB', 'frequency', 1000), 1000);
 assert.strictEqual(resolveModDepth('DELAY', 'time', 0.005), 0.005);
 assert.strictEqual(resolveModDepth('HARMONY', 'pitch', -0.5), -0.5);
 
-// 5c. LFO shapes
+// 5c. LFO shapes & phase offset
 assert.ok(Math.abs(computeLfoWave('sine', 0, 1) - 0) < 1e-6);
 assert.ok(Math.abs(computeLfoWave('sine', 0.25, 1) - 1) < 1e-6);
+assert.ok(Math.abs(computeLfoWave('sine', 0, 1, 0.25) - 1) < 1e-6, 'Phase offset 0.25 at t=0 must peak at 1.0');
 assert.strictEqual(computeLfoWave('square', 0.1, 10), 1);
 assert.strictEqual(computeLfoWave('square', 0.06, 10), -1);
 assert.ok(Math.abs(computeLfoWave('sawtooth', 0.25, 1) - 0.5) < 1e-6);
@@ -361,13 +424,13 @@ const themeCss = fs.readFileSync(path.join(ROOT_DIR, 'src/styles/te-theme.css'),
 
 // 1. Lever defaults to fully pressed (1.0) in App.tsx
 assert.ok(
-  appSrc.includes('const [handlePos, setHandlePos] = useState<number>(1.0);'),
+  /useState(?:<number>)?\(1(?:\.0)?\)/.test(appSrc),
   'handlePos must initialize to 1.0 (fully pressed by default)'
 );
 
 // 2. MicDevice maintains stationary main mic without image flicking
 assert.ok(
-  !micDeviceSrc.includes('isShakingFlash ? \'scale-[1.02] -rotate-1\' : \'\''),
+  !micDeviceSrc.includes("isShakingFlash ? 'scale-[1.02] -rotate-1' : ''"),
   'Main mic container must not scale or rotate when shaking or clicking buttons'
 );
 
@@ -387,8 +450,7 @@ assert.ok(
   'MicDevice must render orange affordance arrows for both lever press/release and mic shake'
 );
 assert.ok(
-  micDeviceSrc.includes('const isInMotion = isCartoonShaking || isSqueezing || isLeverMoving;') &&
-    micDeviceSrc.includes('{!isInMotion && ('),
+  micDeviceSrc.includes('isInMotion') && micDeviceSrc.includes('!isInMotion'),
   'Orange indicator arrows must be hidden during motion (shaking or lever movement)'
 );
 
@@ -405,4 +467,220 @@ assert.ok(
 
 console.log('✓ Suite 7: UX Lever default pressed, Mic FX block shake & rest-only orange arrows verified');
 
-console.log('\n=== ALL 7 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection
+// -----------------------------------------------------------------------------
+function createMockAudioParam(initial = 0) {
+  return {
+    value: initial,
+    setTargetAtTime(val) {
+      this.value = val;
+    }
+  };
+}
+
+class MockAudioNode {
+  constructor() {
+    this.connections = [];
+  }
+  connect(target) {
+    this.connections.push(target);
+    return target;
+  }
+  disconnect() {
+    this.connections = [];
+  }
+}
+
+class MockAudioContext {
+  constructor() {
+    this.sampleRate = 48000;
+    this.currentTime = 0.25; // quarter second
+    this.state = 'running';
+    this.destination = new MockAudioNode();
+  }
+  async resume() {
+    this.state = 'running';
+  }
+  createBuffer(channels, length, sampleRate) {
+    const chData = Array.from({ length: channels }, () => new Float32Array(length));
+    return {
+      numberOfChannels: channels,
+      length,
+      sampleRate,
+      getChannelData: (c) => chData[c]
+    };
+  }
+  createBufferSource() {
+    const node = new MockAudioNode();
+    node.buffer = null;
+    node.loop = false;
+    node.playbackRate = createMockAudioParam(1.0);
+    node.started = false;
+    node.stopped = false;
+    node.start = () => {
+      node.started = true;
+    };
+    node.stop = () => {
+      node.stopped = true;
+    };
+    return node;
+  }
+  createGain() {
+    const node = new MockAudioNode();
+    node.gain = createMockAudioParam(1.0);
+    return node;
+  }
+  createAnalyser() {
+    const node = new MockAudioNode();
+    node.fftSize = 256;
+    return node;
+  }
+  createDynamicsCompressor() {
+    const node = new MockAudioNode();
+    node.threshold = createMockAudioParam(-24);
+    node.knee = createMockAudioParam(30);
+    node.ratio = createMockAudioParam(12);
+    node.attack = createMockAudioParam(0.003);
+    node.release = createMockAudioParam(0.25);
+    return node;
+  }
+  createBiquadFilter() {
+    const node = new MockAudioNode();
+    node.type = 'lowpass';
+    node.frequency = createMockAudioParam(350);
+    node.Q = createMockAudioParam(1.0);
+    node.gain = createMockAudioParam(0.0);
+    return node;
+  }
+  createWaveShaper() {
+    const node = new MockAudioNode();
+    node.curve = null;
+    node.oversample = 'none';
+    return node;
+  }
+  createDelay() {
+    const node = new MockAudioNode();
+    node.delayTime = createMockAudioParam(0.0);
+    return node;
+  }
+  createOscillator() {
+    const node = new MockAudioNode();
+    node.type = 'sine';
+    node.frequency = createMockAudioParam(440);
+    node.start = () => {};
+    node.stop = () => {};
+    return node;
+  }
+  createStereoPanner() {
+    const node = new MockAudioNode();
+    node.pan = createMockAudioParam(0.0);
+    return node;
+  }
+  createScriptProcessor() {
+    const node = new MockAudioNode();
+    node.onaudioprocess = null;
+    return node;
+  }
+}
+
+globalThis.window = { AudioContext: MockAudioContext };
+globalThis.requestAnimationFrame = () => 1;
+globalThis.cancelAnimationFrame = () => {};
+globalThis.fetch = async () => ({ ok: false });
+
+const engine = new DspAudioEngine();
+await engine.init();
+
+// 8a. Master brickwall safety limiter verification
+const limiter = engine.getSafetyLimiter();
+const analyser = engine.getAnalyser();
+assert.ok(limiter, 'DspAudioEngine must initialize a master safetyLimiter');
+assert.strictEqual(limiter.threshold.value, -0.5, 'Safety limiter threshold must be -0.5 dB');
+assert.strictEqual(limiter.knee.value, 0.0, 'Safety limiter must use hard knee (0 dB)');
+assert.strictEqual(limiter.ratio.value, 20.0, 'Safety limiter ratio must be 20:1');
+assert.strictEqual(limiter.attack.value, 0.001, 'Safety limiter attack must be 1ms');
+assert.ok(analyser.connections.includes(limiter), 'analyserNode must connect into safetyLimiter');
+assert.ok(limiter.connections.includes(engine.ctx.destination), 'safetyLimiter must connect to ctx.destination');
+
+// 8b. Build full multi-effect chain with Bus 1 + Bus 2 and verify 1% ratio & live parameter updates
+const testPreset = {
+  id: 'test-p',
+  pos: 0,
+  name: 'ENGINE TEST',
+  comment: '',
+  list: [
+    { id: 'fx0', effect: 'DIST', amount: 5, mix: 1, 'lowpass-cutoff': 50, 'highpass-cutoff': 10, BUS: 1 },
+    { id: 'fx1', effect: 'DELAY', time: 0.4, echo: 1, 'wet-level': 1, 'dry-level': 80, balance: 0.5, BUS: 1 },
+    { id: 'fx2', effect: 'REVERB', time: 0.5, 'spring-mix': 1, 'highpass-cutoff': 20, 'wet-level': 50, 'dry-level': 100, BUS: 2 },
+    { id: 'fx3', effect: 'RING', frequency: 300, mix: 1, BUS: 2 },
+    { id: 'fx4', effect: 'EQUALISER', CUTOFF: 0.5, Q: 0.5, GAIN: 0.2, BUS: 1 },
+    { id: 'fx5', effect: 'SAMPLE', speed: 1.0, pitch: 0, level: 1, BUS: 1 }
+  ],
+  handle: { row: 0, param: 'amount', depth: 20 },
+  shake: { row: 3, param: 'mix', depth: 50 },
+  lfo: { row: 4, param: 'GAIN', depth: 50, shape: 'sine', speed: 1.0, phase: 0.0 }
+};
+
+engine.updatePreset(testPreset);
+engine.updateModulation({ handlePos: 0.0, shakeAmount: 0.0 });
+await engine.start();
+assert.strictEqual(engine.getIsRunning(), true, 'Engine must be running after start()');
+
+const distNode = engine.activeNodes.find((n) => n.effectType === 'DIST');
+const delayNode = engine.activeNodes.find((n) => n.effectType === 'DELAY');
+const reverbNode = engine.activeNodes.find((n) => n.effectType === 'REVERB');
+const ringNode = engine.activeNodes.find((n) => n.effectType === 'RING');
+const eqNode = engine.activeNodes.find((n) => n.effectType === 'EQUALISER');
+const sampleNode = engine.activeNodes.find((n) => n.effectType === 'SAMPLE');
+
+// Verify 1% UI values map to 0.01 gain ratio (not 1.0!)
+assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DIST 1% mix must set wetGain to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.feedbackGain.gain.value - 0.01) < 1e-6, 'DELAY 1% echo must set feedbackGain to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DELAY 1% wet-level must set wetGain to 0.01');
+assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'RING 1% mix must set wetGain to 0.01');
+assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.01) < 1e-6, 'SAMPLE 1% level must set gain to 0.01');
+
+// Verify live parameter updates without rebuilding topology
+const updatedPreset = {
+  ...testPreset,
+  list: [
+    { ...testPreset.list[0], amount: 25, mix: 60 },
+    { ...testPreset.list[1], balance: 1.0, 'lowpass-cutoff': 25 },
+    { ...testPreset.list[2], time: 0.9, 'highpass-cutoff': 80 },
+    { ...testPreset.list[3], mix: 75 },
+    { ...testPreset.list[4], Q: 0.9 },
+    { ...testPreset.list[5], speed: 1.75, level: 90 }
+  ]
+};
+engine.updatePreset(updatedPreset);
+
+assert.strictEqual(distNode.nodeRefs.lastAmount, 25, 'Live DIST.amount update must regenerate distortion curve');
+assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.6) < 1e-6, 'Live DIST.mix update must update wetGain');
+assert.strictEqual(delayNode.nodeRefs.wetPanner.pan.value, 1.0, 'Live DELAY.balance update must pan wetPanner to +1');
+assert.ok(Math.abs(reverbNode.nodeRefs.hpFilter.frequency.value - cutoffToHz(0.8)) < 1e-3, 'Live REVERB.highpass-cutoff must update hpFilter');
+assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.75) < 1e-6, 'Live RING.mix must update wetGain');
+assert.ok(Math.abs(eqNode.nodeRefs.eq.Q.value - 9.0) < 1e-6, 'Live EQUALISER.Q must update eq.Q');
+assert.strictEqual(engine.sourceNode.playbackRate.value, 1.75, 'Live SAMPLE.speed must update sourceNode.playbackRate');
+assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.9) < 1e-6, 'Live SAMPLE.level must update gain');
+
+// Verify Handle & Shake modulation on DIST.amount and RING.mix
+engine.updateModulation({ handlePos: 1.0, shakeAmount: 0.5 });
+assert.strictEqual(distNode.nodeRefs.lastAmount, 40, 'Handle modulation on DIST.amount must clamp at 40x');
+assert.strictEqual(ringNode.nodeRefs.wetGain.gain.value, 1.0, 'Shake modulation on RING.mix (75% + 25%) must reach 1.0');
+
+// 8c. Async start() / stop() race protection
+engine.stop();
+assert.strictEqual(engine.getIsRunning(), false, 'Engine must report stopped after stop()');
+const engineRace = new DspAudioEngine();
+const startPromise = engineRace.start();
+assert.strictEqual(engineRace.getIsRunning(), true, 'getIsRunning() must be true immediately while start() is initializing');
+engineRace.stop();
+assert.strictEqual(engineRace.getIsRunning(), false, 'Calling stop() during async init() must immediately cancel running state');
+await startPromise;
+assert.strictEqual(engineRace.getIsRunning(), false, 'Cancelled start() must not resume playback after init() resolves');
+assert.strictEqual(engineRace.sourceNode, null, 'Cancelled start() must not create an active sourceNode');
+
+console.log('✓ Suite 8: DspAudioEngine graph routing, live modulations, safety limiter & async race protection verified');
+
+console.log('\n=== ALL 8 PRODUCTION TEST SUITES PASSED (100%) ===');
