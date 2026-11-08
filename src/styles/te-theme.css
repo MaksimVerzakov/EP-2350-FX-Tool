@@ -129,29 +129,6 @@ html[data-theme='ting'] {
   }
 }
 
-@keyframes cartoonArrowPulse {
-  0% {
-    opacity: 0;
-    transform: scale(0.92);
-  }
-  20% {
-    opacity: 1;
-    transform: scale(1.04);
-  }
-  55% {
-    opacity: 0.9;
-    transform: scale(1);
-  }
-  80% {
-    opacity: 0.5;
-    transform: scale(0.98);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.94);
-  }
-}
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -328,7 +305,6 @@ html[data-theme='ting'] .te-btn-secondary:hover {
  * Uses crisp 45° stepped axonometric page edges with alternating paper tones
  * (#ffffff -> #e5e6e6 -> #d2d3d4 -> #9aa0a9) and hard black shadow facet. Zero blur!
  */
-.te-notebook-card,
 .te-ledger-card {
   background-color: #ffffff;
   border: 1px solid #141617;
@@ -349,7 +325,6 @@ html[data-theme='ting'] .te-btn-secondary:hover {
     12px 12px 0px 0px #141617;
 }
 
-html[data-theme='ting'] .te-notebook-card,
 html[data-theme='ting'] .te-ledger-card {
   background-color: #f7f5ef;
   border: 1px solid #00503a;
@@ -392,35 +367,5 @@ html[data-theme='ting'] .te-hardware-chassis {
     4px 4px 0px 0px #003828,
     5px 5px 0px 0px #00291d,
     6px 6px 0px 0px #00291d;
-}
-
-/* Mechanical Keycap Socket & Extruded 45° Tactile Button */
-.te-btn-3d {
-  position: relative;
-  background-color: #232424;
-  color: #ffffff;
-  border: 1px solid #000000;
-  box-shadow: 2px 2px 0px #000000;
-  transition: transform 0.05s ease, box-shadow 0.05s ease;
-}
-
-.te-btn-3d:hover {
-  background-color: #353839;
-}
-
-.te-btn-3d:active, .te-btn-3d.active {
-  transform: translate(2px, 2px);
-  box-shadow: 0px 0px 0px #000000;
-}
-
-/* LED Glow Styles */
-.te-led-active {
-  background-color: var(--ep-led-red);
-  box-shadow: 0 0 6px #e52817, 0 0 2px #ffffff;
-}
-
-.te-led-inactive {
-  background-color: var(--ep-led-off);
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.9);
 }
 

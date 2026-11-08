@@ -75,18 +75,6 @@ export const App: React.FC = () => {
     audioEngine.triggerShake(1.0);
   }, []);
 
-  // Spacebar hotkey for shake
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && e.target === document.body) {
-        e.preventDefault();
-        handleShakeTrigger();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleShakeTrigger]);
-
   const handleUpdateActivePreset = (updated: PresetConfig) => {
     const updatedPresets = pack.presets.map((p) =>
       p.pos === updated.pos ? updated : p

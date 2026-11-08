@@ -487,6 +487,19 @@ assert.ok(
   'Right TopBanner block must have Export & Import buttons on top row, pack dropdown below, and + New Pack action'
 );
 
+// 6. PresetLedger does not rescale <= 1.0 modulation depths or inject default phase: 0
+const presetLedgerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/PresetLedger.tsx'), 'utf8');
+assert.ok(
+  !presetLedgerSrc.includes('Math.abs(preset.handle.depth) <= 1.0') &&
+    !presetLedgerSrc.includes('Math.abs(preset.shake.depth) <= 1.0') &&
+    !presetLedgerSrc.includes('Math.abs(preset.lfo.depth) <= 1.0'),
+  'PresetLedger must not multiply <= 1.0 UI modulation depths by 100 on render'
+);
+assert.ok(
+  !presetLedgerSrc.includes('phase: 0'),
+  'PresetLedger must not inject spurious phase: 0 when toggling LFO ON'
+);
+
 console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
@@ -616,13 +629,12 @@ await engine.init();
 
 // 8a. Master brickwall safety limiter verification
 const limiter = engine.getSafetyLimiter();
-const analyser = engine.getAnalyser();
 assert.ok(limiter, 'DspAudioEngine must initialize a master safetyLimiter');
 assert.strictEqual(limiter.threshold.value, -0.5, 'Safety limiter threshold must be -0.5 dB');
 assert.strictEqual(limiter.knee.value, 0.0, 'Safety limiter must use hard knee (0 dB)');
 assert.strictEqual(limiter.ratio.value, 20.0, 'Safety limiter ratio must be 20:1');
 assert.strictEqual(limiter.attack.value, 0.001, 'Safety limiter attack must be 1ms');
-assert.ok(analyser.connections.includes(limiter), 'analyserNode must connect into safetyLimiter');
+assert.ok(engine.gainMaster.connections.includes(limiter), 'gainMaster must connect into safetyLimiter');
 assert.ok(limiter.connections.includes(engine.ctx.destination), 'safetyLimiter must connect to ctx.destination');
 
 // 8b. Build full multi-effect chain with Bus 1 + Bus 2 and verify 1% ratio & live parameter updates
@@ -672,7 +684,7 @@ const updatedPreset = {
     { ...testPreset.list[2], time: 0.9, 'highpass-cutoff': 80 },
     { ...testPreset.list[3], mix: 75 },
     { ...testPreset.list[4], Q: 0.9 },
-    { ...testPreset.list[5], speed: 1.75, level: 90 }
+    { ...testPreset.list[5], speed: 1.75, level: 90, balance: 0.0 }
   ]
 };
 engine.updatePreset(updatedPreset);
@@ -685,6 +697,7 @@ assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.75) < 1e-6, 'Live RI
 assert.ok(Math.abs(eqNode.nodeRefs.eq.Q.value - 9.0) < 1e-6, 'Live EQUALISER.Q must update eq.Q');
 assert.strictEqual(engine.sourceNode.playbackRate.value, 1.75, 'Live SAMPLE.speed must update sourceNode.playbackRate');
 assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.9) < 1e-6, 'Live SAMPLE.level must update gain');
+assert.strictEqual(sampleNode.nodeRefs.panner.pan.value, -1.0, 'Live SAMPLE.balance update must pan StereoPannerNode to -1');
 
 // Verify Handle & Shake modulation on DIST.amount and RING.mix
 engine.updateModulation({ handlePos: 1.0, shakeAmount: 0.5 });

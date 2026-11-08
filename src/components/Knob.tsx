@@ -7,7 +7,6 @@ interface KnobProps {
   max: number;
   step?: number;
   unit?: string;
-  displayValue?: string;
   displayScale?: (val: number) => string;
   onChange: (val: number) => void;
   onReset?: () => void;
@@ -24,7 +23,6 @@ export const Knob: React.FC<KnobProps> = ({
   max,
   step = 0.01,
   unit = '',
-  displayValue,
   displayScale,
   onChange,
   onReset,
@@ -43,17 +41,15 @@ export const Knob: React.FC<KnobProps> = ({
     if (displayScale) {
       return displayScale(val);
     }
-    if (displayValue !== undefined) {
-      return displayValue;
-    }
+    const formatted = Number.isInteger(val) ? `${val}` : `${Number(val.toFixed(2))}`;
     if (unit === '%') {
       if (min < 0 && val > 0) {
-        return `+${Math.round(val)}%`;
+        return `+${formatted}%`;
       }
-      return `${Math.round(val)}%`;
+      return `${formatted}%`;
     }
-    return Number.isInteger(val) ? `${val}` : `${Number(val.toFixed(2))}`;
-  }, [displayScale, displayValue, min, unit]);
+    return formatted;
+  }, [displayScale, min, unit]);
 
   // Keep internal input text in sync with value when not focused / dragging
   useEffect(() => {

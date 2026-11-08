@@ -13,7 +13,6 @@ import defaultSpeechUrl from '../assets/speech.mp3';
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
   shakeAmount: number; // 0.0 to 1.0 (transient decay)
-  lfoPhase: number;
 }
 
 export class DspAudioEngine {
@@ -26,7 +25,6 @@ export class DspAudioEngine {
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
-  private analyserNode: AnalyserNode | null = null;
   private safetyLimiter: DynamicsCompressorNode | null = null;
   private loopSource: boolean = true;
   private lfoRafId: number | null = null;
@@ -35,8 +33,7 @@ export class DspAudioEngine {
   private preset: PresetConfig | null = null;
   private modState: ModulationState = {
     handlePos: 1.0,
-    shakeAmount: 0.0,
-    lfoPhase: 0.0
+    shakeAmount: 0.0
   };
 
   // Node references for live parameter updating
@@ -55,9 +52,6 @@ export class DspAudioEngine {
       this.gainMaster = this.ctx.createGain();
       this.gainMaster.gain.value = 0.85;
 
-      this.analyserNode = this.ctx.createAnalyser();
-      this.analyserNode.fftSize = 256;
-
       // Master brickwall safety limiter to protect user hearing & monitors from feedback oscillation spikes
       this.safetyLimiter = this.ctx.createDynamicsCompressor();
       this.safetyLimiter.threshold.value = -0.5;
@@ -66,8 +60,7 @@ export class DspAudioEngine {
       this.safetyLimiter.attack.value = 0.001;
       this.safetyLimiter.release.value = 0.05;
 
-      this.gainMaster.connect(this.analyserNode);
-      this.analyserNode.connect(this.safetyLimiter);
+      this.gainMaster.connect(this.safetyLimiter);
       this.safetyLimiter.connect(this.ctx.destination);
 
       // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
@@ -77,10 +70,10 @@ export class DspAudioEngine {
           const arrayBuffer = await res.arrayBuffer();
           this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
         } else {
-          this.currentBuffer = createSyntheticAudioBuffer(this.ctx, 'voice');
+          this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
         }
       } catch {
-        this.currentBuffer = createSyntheticAudioBuffer(this.ctx, 'voice');
+        this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
       }
     }
     if (this.ctx.state === 'suspended') {
@@ -88,30 +81,8 @@ export class DspAudioEngine {
     }
   }
 
-  public getAnalyser(): AnalyserNode | null {
-    return this.analyserNode;
-  }
-
   public getSafetyLimiter(): DynamicsCompressorNode | null {
     return this.safetyLimiter;
-  }
-
-  public setSampleType(type: 'voice' | 'beat' | 'synth') {
-    if (!this.ctx) return;
-    this.currentBuffer = createSyntheticAudioBuffer(this.ctx, type);
-    if (this.isRunning) {
-      this.restartPlayback();
-    }
-  }
-
-  public async loadCustomAudioFile(file: File) {
-    if (!this.ctx) await this.init();
-    if (!this.ctx) return;
-    const arrayBuffer = await file.arrayBuffer();
-    this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-    if (this.isRunning) {
-      this.restartPlayback();
-    }
   }
 
   public updatePreset(preset: PresetConfig) {
@@ -301,13 +272,6 @@ export class DspAudioEngine {
 
   public getIsRunning(): boolean {
     return this.isRunning;
-  }
-
-  private restartPlayback() {
-    if (this.isRunning) {
-      this.stop();
-      this.start();
-    }
   }
 
   private rebuildChain() {
@@ -669,9 +633,15 @@ export class DspAudioEngine {
 
       case 'SAMPLE': {
         const input = ctx.createGain();
-        const output = ctx.createGain();
+        const gain = ctx.createGain();
         const level = toRatio(fx.level, 1.0);
-        output.gain.value = level;
+        gain.gain.value = level;
+
+        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+        const bal = typeof fx.balance === 'number' ? fx.balance : 0.5;
+        if ('pan' in panner) {
+          panner.pan.value = Math.max(-1.0, Math.min(1.0, (bal - 0.5) * 2));
+        }
 
         // Only SAMPLE.speed changes playback speed; SAMPLE.pitch shifts pitch at constant speed
         if (this.sourceNode && typeof fx.speed === 'number' && fx.speed > 0) {
@@ -683,9 +653,10 @@ export class DspAudioEngine {
         const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
 
         input.connect(pitchShifter.processor);
-        pitchShifter.processor.connect(output);
+        pitchShifter.processor.connect(gain);
+        gain.connect(panner);
 
-        return { input, output, nodeRefs: { gain: output, pitchShifter, rowIdx } };
+        return { input, output: panner, nodeRefs: { gain, panner, pitchShifter, rowIdx } };
       }
 
       case 'SSB': {
@@ -981,6 +952,15 @@ export class DspAudioEngine {
           if (shake && shake.row === rowIdx && shake.param === 'level') level += shakeDelta;
           if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'level') level += lfoDelta;
           nodeRefs.gain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, level)), ctx.currentTime, 0.015);
+        }
+
+        if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
+          let bal = typeof params.balance === 'number' ? params.balance : 0.5;
+          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'balance') bal += handleDelta;
+          if (shake && shake.row === rowIdx && shake.param === 'balance') bal += shakeDelta;
+          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'balance') bal += lfoDelta;
+          bal = Math.max(0.0, Math.min(1.0, bal));
+          nodeRefs.panner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.015);
         }
       } else if (effectType === 'RING' || effectType === 'SSB') {
         if (nodeRefs.osc) {
