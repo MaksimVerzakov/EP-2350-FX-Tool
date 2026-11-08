@@ -2,6 +2,7 @@ import type { AnyEffect, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import {
   PitchShiftKernel,
+  SsbFrequencyShiftKernel,
   computeLfoWave,
   cutoffToHz,
   makeDistortionCurve,
@@ -9,6 +10,160 @@ import {
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
+
+const WORKLET_PROCESSOR_SOURCE = `
+class Ep2350PitchShiftProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.bufferSize = 16384;
+    this.mask = 16383;
+    this.ring = new Float32Array(16384);
+    this.grainSize = 2048;
+    this.writeIdx = 0;
+    this.phase = 0;
+    const initPitch = options?.processorOptions?.pitch ?? 1.0;
+    this.currentPitch = Math.max(0.25, Math.min(4.0, initPitch || 1.0));
+    this.targetPitch = this.currentPitch;
+    this.delayA = 8;
+    this.delayB = 1032;
+    this.port.onmessage = (e) => {
+      if (typeof e.data?.pitch === 'number') {
+        this.targetPitch = Math.max(0.25, Math.min(4.0, e.data.pitch || 1.0));
+      }
+    };
+  }
+  read(delaySamples) {
+    const readPos = this.writeIdx - delaySamples + this.bufferSize;
+    const idx0 = Math.floor(readPos);
+    const frac = readPos - idx0;
+    const ym1 = this.ring[(idx0 - 1) & this.mask];
+    const y0 = this.ring[idx0 & this.mask];
+    const y1 = this.ring[(idx0 + 1) & this.mask];
+    const y2 = this.ring[(idx0 + 2) & this.mask];
+    const c1 = 0.5 * (y1 - ym1);
+    const c2 = ym1 - 2.5 * y0 + 2.0 * y1 - 0.5 * y2;
+    const c3 = 0.5 * (y2 - ym1) + 1.5 * (y0 - y1);
+    return ((c3 * frac + c2) * frac + c1) * frac + y0;
+  }
+  findPhaseAlignedDelay(baseDelay, activeRefDelay) {
+    const ref0 = this.read(activeRefDelay);
+    const ref1 = this.read(activeRefDelay + 4);
+    const ref2 = this.read(activeRefDelay + 8);
+    let bestDelay = baseDelay;
+    let bestErr = Infinity;
+    for (let offset = 0; offset < 480; offset += 2) {
+      const cand = baseDelay + offset;
+      const d0 = this.ring[(this.writeIdx - Math.floor(cand) + this.bufferSize) & this.mask] - ref0;
+      const d1 = this.ring[(this.writeIdx - Math.floor(cand + 4) + this.bufferSize) & this.mask] - ref1;
+      const d2 = this.ring[(this.writeIdx - Math.floor(cand + 8) + this.bufferSize) & this.mask] - ref2;
+      const err = d0 * d0 + d1 * d1 + d2 * d2;
+      if (err < bestErr) {
+        bestErr = err;
+        bestDelay = cand;
+      }
+    }
+    return bestDelay;
+  }
+  process(inputs, outputs) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    const grain = this.grainSize;
+    for (let i = 0; i < output.length; i++) {
+      const x = input ? input[i] : 0;
+      this.ring[this.writeIdx] = x;
+      this.currentPitch += (this.targetPitch - this.currentPitch) * 0.0025;
+      const prevPhase = this.phase;
+      this.phase += 1.0 / grain;
+      const baseStart = this.currentPitch > 1.0 ? grain + 8 : 8;
+      if (this.phase >= 1.0) {
+        this.phase -= 1.0;
+        this.delayA = this.findPhaseAlignedDelay(baseStart, this.delayB);
+      }
+      if (prevPhase < 0.5 && this.phase >= 0.5) {
+        this.delayB = this.findPhaseAlignedDelay(baseStart, this.delayA);
+      }
+      const delta = 1.0 - this.currentPitch;
+      this.delayA = Math.max(4, this.delayA + delta);
+      this.delayB = Math.max(4, this.delayB + delta);
+      const pA = this.phase;
+      const pB = this.phase + 0.5 - Math.floor(this.phase + 0.5);
+      const wA = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * pA));
+      const wB = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * pB));
+      const wet = wA * this.read(this.delayA) + wB * this.read(this.delayB);
+      const shiftDist = Math.min(1.0, Math.abs(this.currentPitch - 1.0) / 0.015);
+      output[i] = x * (1.0 - shiftDist) + wet * shiftDist;
+      this.writeIdx = (this.writeIdx + 1) & this.mask;
+    }
+    return true;
+  }
+}
+
+class Ep2350SsbShiftProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.cI = [0.47940086558884, 0.87621849353931, 0.976597589508199, 0.997499255935549];
+    this.cQ = [0.161758498367701, 0.73302893234149, 0.945349700329113, 0.990599156684529];
+    const initFreq = options?.processorOptions?.frequency ?? 0.0;
+    this.currentFreq = Math.max(-20000, Math.min(20000, initFreq || 0));
+    this.targetFreq = this.currentFreq;
+    this.oscPhase = 0;
+    this.xI1 = new Float64Array(4);
+    this.xI2 = new Float64Array(4);
+    this.yI1 = new Float64Array(4);
+    this.yI2 = new Float64Array(4);
+    this.xQ1 = new Float64Array(4);
+    this.xQ2 = new Float64Array(4);
+    this.yQ1 = new Float64Array(4);
+    this.yQ2 = new Float64Array(4);
+    this.qDelay1 = 0;
+    this.port.onmessage = (e) => {
+      if (typeof e.data?.frequency === 'number') {
+        this.targetFreq = Math.max(-20000, Math.min(20000, e.data.frequency));
+      }
+    };
+  }
+  process(inputs, outputs) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    const invSr = 1.0 / sampleRate;
+    for (let i = 0; i < output.length; i++) {
+      const x = input ? input[i] : 0;
+      this.currentFreq += (this.targetFreq - this.currentFreq) * 0.005;
+      let sI = x;
+      for (let k = 0; k < 4; k++) {
+        const y = this.cI[k] * (sI - this.yI2[k]) + this.xI2[k];
+        this.xI2[k] = this.xI1[k];
+        this.xI1[k] = sI;
+        this.yI2[k] = this.yI1[k];
+        this.yI1[k] = y;
+        sI = y;
+      }
+      let sQ = this.qDelay1;
+      this.qDelay1 = x;
+      for (let k = 0; k < 4; k++) {
+        const y = this.cQ[k] * (sQ - this.yQ2[k]) + this.xQ2[k];
+        this.xQ2[k] = this.xQ1[k];
+        this.xQ1[k] = sQ;
+        this.yQ2[k] = this.yQ1[k];
+        this.yQ1[k] = y;
+        sQ = y;
+      }
+      this.oscPhase += this.currentFreq * invSr;
+      this.oscPhase -= Math.floor(this.oscPhase);
+      const angle = 2.0 * Math.PI * this.oscPhase;
+      const wet = sI * Math.cos(angle) - sQ * Math.sin(angle);
+      const shiftMix = Math.min(1.0, Math.abs(this.currentFreq) / 1.5);
+      output[i] = x * (1.0 - shiftMix) + wet * shiftMix;
+    }
+    return true;
+  }
+}
+
+registerProcessor('ep2350-pitch-shifter', Ep2350PitchShiftProcessor);
+registerProcessor('ep2350-ssb-shifter', Ep2350SsbShiftProcessor);
+`;
 
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
@@ -26,6 +181,7 @@ export class DspAudioEngine {
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
   private safetyLimiter: DynamicsCompressorNode | null = null;
+  private workletReady: boolean = false;
   private loopSource: boolean = true;
   private lfoRafId: number | null = null;
 
@@ -62,6 +218,24 @@ export class DspAudioEngine {
 
       this.gainMaster.connect(this.safetyLimiter);
       this.safetyLimiter.connect(this.ctx.destination);
+
+      if (
+        this.ctx.audioWorklet &&
+        typeof AudioWorkletNode !== 'undefined' &&
+        typeof Blob !== 'undefined' &&
+        typeof URL !== 'undefined' &&
+        typeof URL.createObjectURL === 'function'
+      ) {
+        try {
+          const blob = new Blob([WORKLET_PROCESSOR_SOURCE], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          await this.ctx.audioWorklet.addModule(workletUrl);
+          URL.revokeObjectURL(workletUrl);
+          this.workletReady = true;
+        } catch {
+          this.workletReady = false;
+        }
+      }
 
       // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
       try {
@@ -213,23 +387,89 @@ export class DspAudioEngine {
           nodeRefs.pitchShifter.processor.disconnect();
         } catch (e) {}
       }
+      if (nodeRefs.ssbShifter?.processor) {
+        try {
+          nodeRefs.ssbShifter.processor.onaudioprocess = null;
+          nodeRefs.ssbShifter.processor.disconnect();
+        } catch (e) {}
+      }
     });
     this.activeNodes = [];
   }
 
   /**
-   * Wrap the pure PitchShiftKernel (src/dsp/math.ts) in a ScriptProcessorNode.
-   * Shifts pitch while keeping playback speed strictly at 1.0x.
+   * Run PitchShiftKernel in an AudioWorkletNode on the dedicated audio rendering thread,
+   * falling back to ScriptProcessorNode in headless/Node test environments.
    */
   private createConstantSpeedPitchShifter(ctx: AudioContext, initialPitch: number) {
+    let currentPitch = PitchShiftKernel.clampPitch(initialPitch);
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const workletNode = new AudioWorkletNode(ctx, 'ep2350-pitch-shifter', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: { pitch: currentPitch }
+      });
+      return {
+        processor: workletNode as AudioNode & { onaudioprocess?: any },
+        setPitch: (newPitch: number) => {
+          currentPitch = PitchShiftKernel.clampPitch(newPitch);
+          workletNode.port.postMessage({ pitch: currentPitch });
+        },
+        getPitch: () => currentPitch
+      };
+    }
+
     const processor = ctx.createScriptProcessor(512, 1, 1);
-    const kernel = new PitchShiftKernel(initialPitch);
+    const kernel = new PitchShiftKernel(currentPitch);
     processor.onaudioprocess = (e: AudioProcessingEvent) => {
       kernel.process(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0));
     };
     return {
       processor,
-      setPitch: (newPitch: number) => kernel.setPitch(newPitch)
+      setPitch: (newPitch: number) => {
+        currentPitch = PitchShiftKernel.clampPitch(newPitch);
+        kernel.setPitch(currentPitch);
+      },
+      getPitch: () => currentPitch
+    };
+  }
+
+  /**
+   * Run Hilbert-transform Single-Sideband (SSB) frequency shifter in an AudioWorkletNode
+   * on the dedicated audio thread, falling back to ScriptProcessorNode in test environments.
+   */
+  private createSsbFrequencyShifter(ctx: AudioContext, initialFreqHz: number) {
+    let currentFreq = SsbFrequencyShiftKernel.clampFreq(initialFreqHz);
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const workletNode = new AudioWorkletNode(ctx, 'ep2350-ssb-shifter', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: { frequency: currentFreq }
+      });
+      return {
+        processor: workletNode as AudioNode & { onaudioprocess?: any },
+        setFrequency: (newFreqHz: number) => {
+          currentFreq = SsbFrequencyShiftKernel.clampFreq(newFreqHz);
+          workletNode.port.postMessage({ frequency: currentFreq });
+        },
+        getFrequency: () => currentFreq
+      };
+    }
+
+    const processor = ctx.createScriptProcessor(512, 1, 1);
+    const kernel = new SsbFrequencyShiftKernel(currentFreq, ctx.sampleRate);
+    processor.onaudioprocess = (e: AudioProcessingEvent) => {
+      kernel.process(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0));
+    };
+    return {
+      processor,
+      setFrequency: (newFreqHz: number) => {
+        currentFreq = SsbFrequencyShiftKernel.clampFreq(newFreqHz);
+        kernel.setFrequency(currentFreq);
+      },
+      getFrequency: () => currentFreq
     };
   }
 
@@ -660,34 +900,16 @@ export class DspAudioEngine {
       }
 
       case 'SSB': {
-        // Single Sideband frequency shift approximation
+        // True Single Sideband quadrature Hilbert frequency shifter (-20kHz..+20kHz)
         const input = ctx.createGain();
         const output = ctx.createGain();
-
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
         const freq = typeof fx.frequency === 'number' ? fx.frequency : 0.0;
-        osc.frequency.value = Math.max(1, Math.abs(freq));
+        const ssbShifter = this.createSsbFrequencyShifter(ctx, freq);
 
-        const modGain = ctx.createGain();
-        modGain.gain.value = 0;
-        osc.connect(modGain.gain);
-        osc.start();
+        input.connect(ssbShifter.processor);
+        ssbShifter.processor.connect(output);
 
-        const dryGain = ctx.createGain();
-        const wetGain = ctx.createGain();
-        const isShifted = Math.abs(freq) > 1;
-        dryGain.gain.value = isShifted ? 0.25 : 1.0;
-        wetGain.gain.value = isShifted ? 0.75 : 0.0;
-
-        input.connect(dryGain);
-        dryGain.connect(output);
-
-        input.connect(modGain);
-        modGain.connect(wetGain);
-        wetGain.connect(output);
-
-        return { input, output, nodeRefs: { osc, dryGain, wetGain, rowIdx } };
+        return { input, output, nodeRefs: { ssbShifter, rowIdx } };
       }
 
       case 'BALANCE': {
@@ -963,25 +1185,22 @@ export class DspAudioEngine {
           nodeRefs.panner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.015);
         }
       } else if (effectType === 'RING' || effectType === 'SSB') {
-        if (nodeRefs.osc) {
-          const baseFreq = typeof params.frequency === 'number' ? params.frequency : (effectType === 'RING' ? 440.0 : 0.0);
-          let moddedFreq = baseFreq;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'frequency') {
-            moddedFreq += this.modState.handlePos * (typeof handle.depth === 'number' ? handle.depth : 500.0);
-          }
-          if (shake && shake.row === rowIdx && shake.param === 'frequency') {
-            moddedFreq += this.modState.shakeAmount * (typeof shake.depth === 'number' ? shake.depth : 200.0);
-          }
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'frequency') {
-            const rawDepth = typeof lfo.depth === 'number' ? lfo.depth : 50.0;
-            moddedFreq += lfoWave * rawDepth;
-          }
+        const baseFreq = typeof params.frequency === 'number' ? params.frequency : (effectType === 'RING' ? 440.0 : 0.0);
+        let moddedFreq = baseFreq;
+        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'frequency') {
+          moddedFreq += this.modState.handlePos * (typeof handle.depth === 'number' ? handle.depth : 500.0);
+        }
+        if (shake && shake.row === rowIdx && shake.param === 'frequency') {
+          moddedFreq += this.modState.shakeAmount * (typeof shake.depth === 'number' ? shake.depth : 200.0);
+        }
+        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'frequency') {
+          const rawDepth = typeof lfo.depth === 'number' ? lfo.depth : 50.0;
+          moddedFreq += lfoWave * rawDepth;
+        }
+        if (effectType === 'SSB' && nodeRefs.ssbShifter) {
+          nodeRefs.ssbShifter.setFrequency(moddedFreq);
+        } else if (nodeRefs.osc) {
           nodeRefs.osc.frequency.setTargetAtTime(Math.max(1, Math.abs(moddedFreq)), ctx.currentTime, 0.015);
-          if (effectType === 'SSB' && nodeRefs.dryGain && nodeRefs.wetGain) {
-            const active = Math.abs(moddedFreq) > 2;
-            nodeRefs.dryGain.gain.setTargetAtTime(active ? 0.25 : 1.0, ctx.currentTime, 0.015);
-            nodeRefs.wetGain.gain.setTargetAtTime(active ? 0.75 : 0.0, ctx.currentTime, 0.015);
-          }
         }
         if (effectType === 'RING' && nodeRefs.dryGain && nodeRefs.wetGain) {
           let mix = toRatio(params.mix, 0.5);
