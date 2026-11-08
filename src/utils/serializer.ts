@@ -136,7 +136,7 @@ export function serializeToConfigJson(pack: PackConfig): string {
           const val = item[key];
           if (isPercentParam(item.effect, key)) {
             // Percent parameters: adjust from 0..100 (UI) to 0.0..1.0 (JSON)
-            const jsonVal = val > 1 ? val / 100 : val;
+            const jsonVal = val / 100;
             effectEntry[key] = Math.round(jsonVal * 1000) / 1000;
           } else {
             // Clean round numbers to 3 decimal places max
@@ -160,7 +160,7 @@ export function serializeToConfigJson(pack: PackConfig): string {
         const targetFx = p.list[p.handle.row];
         const depthCfg = getModDepthConfig(targetFx?.effect, p.handle.param);
         const rawDepth = p.handle.depth;
-        const depth = depthCfg.isNormalizedPercent && Math.abs(rawDepth) > 1 ? rawDepth / 100 : rawDepth;
+        const depth = depthCfg.isNormalizedPercent ? rawDepth / 100 : rawDepth;
         presetObj.handle = {
           row: p.handle.row,
           param: p.handle.param,
@@ -173,7 +173,7 @@ export function serializeToConfigJson(pack: PackConfig): string {
       const targetFx = p.list[p.shake.row];
       const depthCfg = getModDepthConfig(targetFx?.effect, p.shake.param);
       const rawDepth = p.shake.depth;
-      const depth = depthCfg.isNormalizedPercent && Math.abs(rawDepth) > 1 ? rawDepth / 100 : rawDepth;
+      const depth = depthCfg.isNormalizedPercent ? rawDepth / 100 : rawDepth;
       presetObj.shake = {
         row: p.shake.row,
         param: p.shake.param,
@@ -186,7 +186,7 @@ export function serializeToConfigJson(pack: PackConfig): string {
       const depthCfg = getModDepthConfig(targetFx?.effect, p.lfo.param);
       const rawDepth = p.lfo.depth;
       const depth =
-        p.lfo.target !== 'lfo' && depthCfg.isNormalizedPercent && Math.abs(rawDepth) > 1
+        p.lfo.target !== 'lfo' && depthCfg.isNormalizedPercent
           ? rawDepth / 100
           : rawDepth;
       const lfoEntry: any = {

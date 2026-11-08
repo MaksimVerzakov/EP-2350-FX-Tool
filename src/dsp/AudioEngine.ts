@@ -357,15 +357,19 @@ export class DspAudioEngine {
     if (!this.ctx) return null;
 
     const ctx = this.ctx;
-    const toRatio = (v: number | undefined, defaultVal: number) =>
+    // Normalized [0..1] parameters in UI (e.g. LOWPASS/HIGHPASS cutoff)
+    const toCutoffRatio = (v: number | undefined, defaultVal: number) =>
       typeof v === 'number' ? (v > 1 ? v / 100 : v) : defaultVal;
+    // Percentage [0..100] parameters in UI (where 1 means 1% = 0.01, not 100%)
+    const toRatio = (v: number | undefined, defaultVal: number) =>
+      typeof v === 'number' ? (v >= 1 ? v / 100 : v) : defaultVal;
 
     switch (fx.effect) {
       case 'LOWPASS': {
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.Q.value = 2.0;
-        const cutoff = toRatio(fx.cutoff, 1.0);
+        const cutoff = toCutoffRatio(fx.cutoff, 1.0);
         filter.frequency.value = cutoffToHz(cutoff);
         return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
       }
@@ -374,7 +378,7 @@ export class DspAudioEngine {
         const filter = ctx.createBiquadFilter();
         filter.type = 'highpass';
         filter.Q.value = 2.0;
-        const cutoff = toRatio(fx.cutoff, 0.0);
+        const cutoff = toCutoffRatio(fx.cutoff, 0.0);
         filter.frequency.value = cutoffToHz(cutoff);
         return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
       }
@@ -729,11 +733,13 @@ export class DspAudioEngine {
         lfoDelta = lfoWave * depthRatio;
       }
 
-      const toRatio = (v: number | undefined, defaultVal: number) =>
+      const toCutoffRatio = (v: number | undefined, defaultVal: number) =>
         typeof v === 'number' ? (v > 1 ? v / 100 : v) : defaultVal;
+      const toRatio = (v: number | undefined, defaultVal: number) =>
+        typeof v === 'number' ? (v >= 1 ? v / 100 : v) : defaultVal;
 
       if (effectType === 'LOWPASS' || effectType === 'HIGHPASS') {
-        const baseCutoff = toRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
+        const baseCutoff = toCutoffRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
         let moddedCutoff = baseCutoff;
         if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'cutoff') moddedCutoff += handleDelta;
         if (shake && shake.row === rowIdx && shake.param === 'cutoff') moddedCutoff += shakeDelta;

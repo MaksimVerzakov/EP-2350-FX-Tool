@@ -52,7 +52,7 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
                 if (isPercentParam(effectType, key) && typeof effectEntry[key] === 'number') {
                   const val = effectEntry[key];
                   if (val <= 1.0) {
-                    effectEntry[key] = Math.round(val * 100);
+                    effectEntry[key] = Math.round(val * 1000) / 10;
                   }
                 }
               });
