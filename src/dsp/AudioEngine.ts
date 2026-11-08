@@ -1,4 +1,4 @@
-import type { AnyEffect, PresetConfig } from '../types/config';
+import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import {
   PitchShiftKernel,
@@ -10,6 +10,17 @@ import {
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
+import sampleSlot0Url from '../assets/samples/kara-te.wav';
+import sampleSlot1Url from '../assets/samples/shouty.wav';
+import sampleSlot2Url from '../assets/samples/slion.wav';
+import sampleSlot3Url from '../assets/samples/alert.wav';
+
+export const BUNDLED_SAMPLES = [
+  { pos: 0, name: 'KARA-TE', file: 'kara-te.wav', url: sampleSlot0Url },
+  { pos: 1, name: 'SHOUTY', file: 'shouty.wav', url: sampleSlot1Url },
+  { pos: 2, name: 'SLION', file: 'slion.wav', url: sampleSlot2Url },
+  { pos: 3, name: 'ALERT', file: 'alert.wav', url: sampleSlot3Url }
+] as const;
 
 const WORKLET_PROCESSOR_SOURCE = `
 class Ep2350PitchShiftProcessor extends AudioWorkletProcessor {
@@ -176,6 +187,10 @@ export class DspAudioEngine {
   private isStarting: boolean = false;
   private startGen: number = 0;
   private currentBuffer: AudioBuffer | null = null;
+  private sampleBuffers: AudioBuffer[] = [];
+  private activeSampleSlot: number = 0;
+  private sampleSourceNode: AudioBufferSourceNode | null = null;
+  private isSamplePlaying: boolean = false;
   private sourceNode: AudioBufferSourceNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
@@ -200,6 +215,17 @@ export class DspAudioEngine {
   }> = [];
 
   constructor() {}
+
+  private async decodeUrlOrFallback(ctx: AudioContext, url: string): Promise<AudioBuffer> {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const arrayBuffer = await res.arrayBuffer();
+        return await ctx.decodeAudioData(arrayBuffer);
+      }
+    } catch {}
+    return createSyntheticAudioBuffer(ctx);
+  }
 
   public async init() {
     if (!this.ctx) {
@@ -237,18 +263,13 @@ export class DspAudioEngine {
         }
       }
 
-      // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
-      try {
-        const res = await fetch(defaultSpeechUrl);
-        if (res.ok) {
-          const arrayBuffer = await res.arrayBuffer();
-          this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-        } else {
-          this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
-        }
-      } catch {
-        this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
-      }
+      const ctx = this.ctx;
+      const [speechBuf, ...slotBufs] = await Promise.all([
+        this.decodeUrlOrFallback(ctx, defaultSpeechUrl),
+        ...BUNDLED_SAMPLES.map((s) => this.decodeUrlOrFallback(ctx, s.url))
+      ]);
+      this.currentBuffer = speechBuf;
+      this.sampleBuffers = slotBufs;
     }
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume();
@@ -257,6 +278,98 @@ export class DspAudioEngine {
 
   public getSafetyLimiter(): DynamicsCompressorNode | null {
     return this.safetyLimiter;
+  }
+
+  public setActiveSampleSlot(slot: number) {
+    const clamped = Math.max(0, Math.min(3, Math.floor(slot)));
+    if (clamped !== this.activeSampleSlot) {
+      this.activeSampleSlot = clamped;
+      this.stopSample();
+    }
+  }
+
+  public getActiveSampleSlot(): number {
+    return this.activeSampleSlot;
+  }
+
+  public getIsSamplePlaying(): boolean {
+    return this.isSamplePlaying;
+  }
+
+  public stopSample() {
+    this.isSamplePlaying = false;
+    if (this.sampleSourceNode) {
+      try {
+        this.sampleSourceNode.onended = null;
+        this.sampleSourceNode.stop();
+        this.sampleSourceNode.disconnect();
+      } catch (e) {}
+      this.sampleSourceNode = null;
+    }
+    if (!this.isRunning) {
+      this.stopModulationLoop();
+    }
+  }
+
+  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot') {
+    if (!down) {
+      if (playmode === 'hold') {
+        this.stopSample();
+      }
+      return;
+    }
+
+    if (playmode === 'startstop' && this.isSamplePlaying) {
+      this.stopSample();
+      return;
+    }
+
+    await this.init();
+    if (!this.ctx || !this.gainMaster) return;
+
+    if (!this.sourceHub) {
+      this.sourceHub = this.ctx.createGain();
+      this.sourceHub.gain.value = 1.0;
+    }
+    if (this.activeNodes.length === 0) {
+      this.rebuildChain();
+    }
+
+    this.stopSample();
+
+    const sampleBuf = this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
+    if (!sampleBuf) return;
+
+    const triggerRow = this.preset?.trigger?.row;
+    const sampleNodeEntry =
+      (typeof triggerRow === 'number'
+        ? this.activeNodes.find((n) => n.effectType === 'SAMPLE' && n.nodeRefs.rowIdx === triggerRow)
+        : undefined) || this.activeNodes.find((n) => n.effectType === 'SAMPLE');
+
+    const targetInput: AudioNode | null = sampleNodeEntry?.nodeRefs?.sampleInput || this.sourceHub;
+    if (!targetInput) return;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = sampleBuf;
+    src.loop = playmode === 'hold' || playmode === 'startstop';
+    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastSpeed ?? 1.0;
+
+    this.sampleSourceNode = src;
+    this.isSamplePlaying = true;
+    src.onended = () => {
+      if (this.sampleSourceNode === src) {
+        this.isSamplePlaying = false;
+        this.sampleSourceNode = null;
+        if (!this.isRunning) {
+          this.stopModulationLoop();
+        }
+      }
+    };
+
+    src.connect(targetInput);
+    this.applyLiveModulation(true);
+    src.start(0);
+    this.startModulationLoop();
   }
 
   public updatePreset(preset: PresetConfig) {
@@ -269,7 +382,7 @@ export class DspAudioEngine {
       .join('|');
 
     this.preset = preset;
-    if (!this.isRunning) return;
+    if (!this.isRunning && !this.isSamplePlaying) return;
 
     if (prevTopology === nextTopology && this.activeNodes.length === preset.list.length) {
       // Update parameters in place without tearing down nodes or restarting audio
@@ -313,7 +426,7 @@ export class DspAudioEngine {
   private startModulationLoop() {
     this.stopModulationLoop();
     const tick = () => {
-      if (!this.isRunning) return;
+      if (!this.isRunning && !this.isSamplePlaying) return;
       this.applyLiveModulation();
       this.lfoRafId = requestAnimationFrame(tick);
     };
@@ -477,6 +590,7 @@ export class DspAudioEngine {
     ++this.startGen;
     this.isStarting = false;
     this.isRunning = false;
+    this.stopSample();
     this.stopModulationLoop();
     this.cleanupActiveNodes();
     if (this.sourceHub) {
@@ -787,7 +901,11 @@ export class DspAudioEngine {
       }
 
       case 'SAMPLE': {
+        // Main vocal audition stream passes cleanly through SAMPLE (input -> output)
+        // Triggered hardware samples enter via sampleInput -> pitchShifter -> gain -> panner -> output
         const input = ctx.createGain();
+        const output = ctx.createGain();
+        const sampleInput = ctx.createGain();
         const gain = ctx.createGain();
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
 
@@ -795,11 +913,17 @@ export class DspAudioEngine {
         const pitchRatio = Math.pow(2, semitones / 12);
         const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
 
-        input.connect(pitchShifter.processor);
+        input.connect(output);
+        sampleInput.connect(pitchShifter.processor);
         pitchShifter.processor.connect(gain);
         gain.connect(panner);
+        panner.connect(output);
 
-        return { input, output: panner, nodeRefs: { gain, panner, pitchShifter, rowIdx } };
+        return {
+          input,
+          output,
+          nodeRefs: { sampleInput, gain, panner, pitchShifter, lastSpeed: 1.0, rowIdx }
+        };
       }
 
       case 'SSB': {
@@ -978,8 +1102,12 @@ export class DspAudioEngine {
         case 'SAMPLE': {
           const moddedSemitones = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 0, -24, 24);
           nodeRefs.pitchShifter?.setPitch(Math.pow(2, moddedSemitones / 12));
+          const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
+          nodeRefs.lastSpeed = moddedSpeed;
+          if (this.sampleSourceNode) {
+            this.sampleSourceNode.playbackRate.value = moddedSpeed;
+          }
           if (this.sourceNode) {
-            const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
             this.sourceNode.playbackRate.value = moddedSpeed;
           }
           setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);

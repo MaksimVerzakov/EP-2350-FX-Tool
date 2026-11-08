@@ -49,12 +49,12 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
         playmode: ['oneshot', 'hold', 'startstop'].includes(s?.playmode) ? s.playmode : 'oneshot'
       }));
     } else {
-      // Create empty default 4 slots
+      // Default 4 built-in sample slots
       samples = [
-        { id: 's-0', pos: 0, file: '1.wav', playmode: 'oneshot' },
-        { id: 's-1', pos: 1, file: '2.wav', playmode: 'oneshot' },
-        { id: 's-2', pos: 2, file: '3.wav', playmode: 'hold' },
-        { id: 's-3', pos: 3, file: '4.wav', playmode: 'startstop' }
+        { id: 's-0', pos: 0, file: 'kara-te.wav', playmode: 'oneshot' },
+        { id: 's-1', pos: 1, file: 'shouty.wav', playmode: 'oneshot' },
+        { id: 's-2', pos: 2, file: 'slion.wav', playmode: 'hold' },
+        { id: 's-3', pos: 3, file: 'alert.wav', playmode: 'startstop' }
       ];
     }
 

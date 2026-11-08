@@ -44,6 +44,7 @@ export const App: React.FC = () => {
   });
 
   const [activeSlot, setActiveSlot] = useState<number>(0);
+  const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
 
   const activePreset = pack.presets.find((p) => p.pos === activeSlot) || pack.presets[0];
@@ -63,6 +64,21 @@ export const App: React.FC = () => {
   useEffect(() => {
     audioEngine.updatePreset(activePreset);
   }, [activePreset]);
+
+  // Synchronize active sample slot with DSP engine
+  const handleSelectSampleSlot = useCallback((slot: number) => {
+    setActiveSampleSlot(slot);
+    audioEngine.setActiveSampleSlot(slot);
+  }, []);
+
+  // Trigger selected sample through active preset's SAMPLE block
+  const handleSampleTrigger = useCallback(
+    (down: boolean) => {
+      const slotCfg = pack.samples.find((s) => s.pos === activeSampleSlot) || pack.samples[activeSampleSlot];
+      audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot');
+    },
+    [pack.samples, activeSampleSlot]
+  );
 
   // Squeeze handle modulation
   const handleHandleChange = useCallback((val: number) => {
@@ -146,6 +162,9 @@ export const App: React.FC = () => {
             <MicDevice
               activeSlot={activeSlot}
               onSelectSlot={setActiveSlot}
+              activeSampleSlot={activeSampleSlot}
+              onSelectSampleSlot={handleSelectSampleSlot}
+              onSampleTrigger={handleSampleTrigger}
               handlePos={handlePos}
               onHandleChange={handleHandleChange}
               onShakeTrigger={handleShakeTrigger}

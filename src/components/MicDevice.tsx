@@ -4,6 +4,9 @@ import { ThemeMode } from '../types/config';
 interface MicDeviceProps {
   activeSlot: number; // 0, 1, 2, 3
   onSelectSlot: (slot: number) => void;
+  activeSampleSlot?: number; // 0, 1, 2, 3
+  onSelectSampleSlot?: (slot: number) => void;
+  onSampleTrigger?: (down: boolean) => void;
   handlePos: number; // 0.0 to 1.0
   onHandleChange: (pos: number) => void;
   onShakeTrigger: () => void;
@@ -28,6 +31,9 @@ const TING_LOUVER_Y = [
 export const MicDevice: React.FC<MicDeviceProps> = ({
   activeSlot,
   onSelectSlot,
+  activeSampleSlot = 0,
+  onSelectSampleSlot,
+  onSampleTrigger,
   handlePos,
   onHandleChange,
   onShakeTrigger,
@@ -36,6 +42,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
   const isTing = theme === 'ting';
   const [isSqueezing, setIsSqueezing] = useState(false);
   const [isCartoonShaking, setIsCartoonShaking] = useState(false);
+  const [isSamplePressing, setIsSamplePressing] = useState(false);
   const dragStartY = useRef(0);
   const dragStartX = useRef(0);
   const dragStartVal = useRef(handlePos);
@@ -45,6 +52,11 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
   const cyclePreset = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSelectSlot((activeSlot + 1) % 4);
+  };
+
+  const cycleSampleSlot = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onSelectSampleSlot?.((activeSampleSlot + 1) % 4);
   };
 
   const triggerCartoonShake = useCallback(() => {
@@ -392,10 +404,14 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             />
           </g>
 
-          {/* BUTTON 2: WHITE BUTTON (FX) / GREEN BUTTON (TING) */}
+          {/* BUTTON 2: SAMPLE SLOT SELECTOR (White on FX / Green on Ting) */}
           {/* Recessed Socket */}
           <rect x="550" y="112.5" width="18" height="34" rx="2" fill="#141617" stroke="#000000" strokeWidth="0.8" />
-          <g onClick={(e) => e.stopPropagation()}>
+          <g
+            onClick={cycleSampleSlot}
+            className="cursor-pointer group active:translate-x-[1px] active:translate-y-[1px] transition-transform"
+          >
+            <title>Sample Selector Button (Slots 1-4)</title>
             {/* 45° Extruded Facets */}
             <polygon points="562.725 118.191 565.725 121.191 565.725 140.688 562.725 137.688" fill={isTing ? '#003d2c' : '#bcbeb9'} stroke="#000" strokeWidth="0.8" />
             <polygon points="551.476 140.688 554.476 143.688 565.725 143.688 562.725 140.688" fill={isTing ? '#00291d' : '#949692'} stroke="#000" strokeWidth="0.8" />
@@ -406,13 +422,36 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
               strokeWidth="1.2"
               strokeMiterlimit="10"
               d="M551.476 114.518h11.249a3.674 3.674 0 0 1 3.673 3.673v22.497a3.675 3.675 0 0 1-3.673 3.673h-11.249z"
+              className="group-hover:brightness-105 group-active:brightness-95"
             />
           </g>
 
-          {/* BUTTON 3: GREY BUTTON (FX) / OFF-WHITE BUTTON (TING) */}
+          {/* BUTTON 3: SAMPLE TRIGGER (Grey on FX / Off-White on Ting) */}
           {/* Recessed Socket */}
           <rect x="550" y="241.5" width="18" height="36" rx="2" fill="#141617" stroke="#000000" strokeWidth="0.8" />
-          <g onClick={(e) => e.stopPropagation()}>
+          <g
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setIsSamplePressing(true);
+              onSampleTrigger?.(true);
+            }}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              if (isSamplePressing) {
+                setIsSamplePressing(false);
+                onSampleTrigger?.(false);
+              }
+            }}
+            onMouseLeave={() => {
+              if (isSamplePressing) {
+                setIsSamplePressing(false);
+                onSampleTrigger?.(false);
+              }
+            }}
+            className={`cursor-pointer group transition-transform ${isSamplePressing ? 'translate-x-[1px] translate-y-[1px]' : ''}`}
+          >
+            <title>Sample Trigger Button (Play Selected Sample)</title>
             {/* 45° Extruded Facets */}
             <polygon points="562.725 247.401 565.725 250.401 565.725 273.573 562.725 270.573" fill={isTing ? '#c5c7c0' : '#a8aaac'} stroke="#000" strokeWidth="0.8" />
             <polygon points="551.476 273.573 554.476 276.573 565.725 276.573 562.725 273.573" fill={isTing ? '#9e9f99' : '#7a7d80'} stroke="#000" strokeWidth="0.8" />
@@ -423,6 +462,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
               strokeWidth="1.2"
               strokeMiterlimit="10"
               d="M551.476 243.728h11.249a3.675 3.675 0 0 1 3.673 3.673v22.497a3.676 3.676 0 0 1-3.673 3.674h-11.249v-29.845z"
+              className="group-hover:brightness-105 group-active:brightness-95"
             />
           </g>
 
@@ -535,10 +575,61 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             return (
               <g
                 key={slot}
-                onClick={() => onSelectSlot(slot)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSlot(slot);
+                }}
                 className="cursor-pointer group"
               >
                 <title>{`Preset ${slot + 1}`}</title>
+                {/* Hit area */}
+                <circle cx={521.08} cy={cy} r={8} fill="transparent" />
+
+                {/* Outer Bezel Rim */}
+                <circle
+                  cx={521.08}
+                  cy={cy}
+                  r={3.798}
+                  fill="#181a1c"
+                  stroke="#000"
+                  strokeWidth="0.8"
+                />
+
+                {/* Core LED Lamp */}
+                <circle
+                  cx={521.08}
+                  cy={cy}
+                  r={2.8}
+                  fill={isActive ? '#ff3b30' : '#2b3034'}
+                  filter={isActive ? 'url(#ledGlow)' : undefined}
+                />
+
+                {/* Specular highlight for active LED */}
+                {isActive && (
+                  <circle cx={520.3} cy={cy - 0.9} r={0.9} fill="#ffffff" opacity={0.9} />
+                )}
+              </g>
+            );
+          })}
+
+          {/* LOWER SLOT: 4 INTERACTIVE SAMPLE LED APERTURES */}
+          {[
+            { slot: 0, cy: 106.792 },
+            { slot: 1, cy: 121.965 },
+            { slot: 2, cy: 137.138 },
+            { slot: 3, cy: 152.344 }
+          ].map(({ slot, cy }) => {
+            const isActive = activeSampleSlot === slot;
+            return (
+              <g
+                key={`sample-led-${slot}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSampleSlot?.(slot);
+                }}
+                className="cursor-pointer group"
+              >
+                <title>{`Sample Slot ${slot + 1}`}</title>
                 {/* Hit area */}
                 <circle cx={521.08} cy={cy} r={8} fill="transparent" />
 
