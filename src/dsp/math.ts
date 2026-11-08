@@ -12,9 +12,10 @@ export function cutoffToHz(normalized: number): number {
   return 20 * Math.pow(1000, n);
 }
 
-/** Evaluate an LFO waveform in the range [-1, 1] at `time` seconds for `speed` Hz. */
-export function computeLfoWave(shape: LfoShape, time: number, speed: number): number {
-  const cycles = time * speed;
+/** Evaluate an LFO waveform in the range [-1, 1] at `time` seconds for `speed` Hz and `phaseOffset` (0..1). */
+export function computeLfoWave(shape: LfoShape, time: number, speed: number, phaseOffset: number = 0): number {
+  const offset = typeof phaseOffset === 'number' && !Number.isNaN(phaseOffset) ? phaseOffset : 0;
+  const cycles = time * speed + offset;
   const phase = cycles - Math.floor(cycles);
   if (shape === 'square') {
     return phase < 0.5 ? 1 : -1;
