@@ -419,6 +419,7 @@ console.log(
 // Suite 7: UX Behavior Verification (Lever Defaults to Pressed & Cartoon Shake)
 // -----------------------------------------------------------------------------
 const micDeviceSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/MicDevice.tsx'), 'utf8');
+const topBannerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/TopBanner.tsx'), 'utf8');
 const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
 const themeCss = fs.readFileSync(path.join(ROOT_DIR, 'src/styles/te-theme.css'), 'utf8');
 
@@ -434,7 +435,7 @@ assert.ok(
   'Main mic container must not scale or rotate when shaking or clicking buttons'
 );
 
-// 3. Cartoon shake afterimages & orange affordance arrows exist in SVG and CSS
+// 3. Cartoon shake afterimages & two horizontal orange affordance arrows ("Push ->" and "Shake ->")
 assert.ok(
   themeCss.includes('cartoonShakeGhost1') && themeCss.includes('cartoonShakeGhost2'),
   'CSS keyframes must define cartoonShakeGhost1 and cartoonShakeGhost2'
@@ -444,10 +445,17 @@ assert.ok(
   'MicDevice must render ghost afterimages during cartoon shake'
 );
 assert.ok(
-  micDeviceSrc.includes('Lever press and release indicator arrow') &&
-    micDeviceSrc.includes('Top-Right Curved Motion Arrow') &&
-    micDeviceSrc.includes('Bottom-Left Curved Motion Arrow'),
-  'MicDevice must render orange affordance arrows for both lever press/release and mic shake'
+  !micDeviceSrc.includes('Top-Right Curved Motion Arrow') &&
+    !micDeviceSrc.includes('Bottom-Left Curved Motion Arrow') &&
+    !micDeviceSrc.includes('Lever press and release indicator arrow'),
+  'Previous curved arrows must be removed'
+);
+assert.ok(
+  micDeviceSrc.includes('Push lever indicator arrow') &&
+    micDeviceSrc.includes('Shake Mic FX block indicator arrow') &&
+    micDeviceSrc.includes('Push') &&
+    micDeviceSrc.includes('Shake'),
+  'MicDevice must render two horizontal orange arrows ("Push ->" to middle of lever and "Shake ->" to middle of Mic FX block)'
 );
 assert.ok(
   micDeviceSrc.includes('isInMotion') && micDeviceSrc.includes('!isInMotion'),
@@ -465,7 +473,19 @@ assert.ok(
   'Buttons and wire section must not trigger shake'
 );
 
-console.log('✓ Suite 7: UX Lever default pressed, Mic FX block shake & rest-only orange arrows verified');
+// 5. TopBanner right block matches left block size & 2-row format ([EXPORT][IMPORT] on top, dropdown below)
+assert.strictEqual(
+  (topBannerSrc.match(/w-\[236px\] h-\[66px\]/g) || []).length,
+  2,
+  'Both left and right TopBanner blocks must share identical 236x66 modular dimensions'
+);
+assert.ok(
+  topBannerSrc.includes('aria-label="Export and Import actions"') &&
+    topBannerSrc.includes('aria-label="Select default pack"'),
+  'Right TopBanner block must have Export & Import buttons on top row and pack dropdown below'
+);
+
+console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
 // SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection

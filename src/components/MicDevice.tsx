@@ -184,71 +184,70 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             </g>
           )}
 
-          {/* ORANGE AFFORDANCE ARROWS (SHOWN AT REST, HIDDEN DURING MOTION) */}
+          {/* HORIZONTAL ORANGE AFFORDANCE ARROWS (SHOWN AT REST, HIDDEN DURING MOTION) */}
           {!isInMotion && (
             <g className="select-none" style={{ overflow: 'visible' }}>
-              {/* 1. Lever Press / Release Orange Arrow (Left of Squeeze Handle) */}
+              {/* 1. Horizontal "Push ->" Arrow pointing to the middle of the lever */}
               <g
                 onMouseDown={handleHandleMouseDown}
                 className="cursor-pointer"
-                aria-label="Lever press and release indicator arrow"
+                aria-label="Push lever indicator arrow"
               >
-                <title>Click or drag lever to press / release effect</title>
-                <path
-                  d="M 262 126 C 272 118, 283 114, 294 114"
+                <title>Push or release lever to control effect</title>
+                <text
+                  x="268"
+                  y="159"
+                  textAnchor="end"
+                  fill="#F15A22"
+                  className="font-te-regular text-[13px] font-bold tracking-wide"
+                >
+                  Push
+                </text>
+                <line
+                  x1="274"
+                  y1="155"
+                  x2="303"
+                  y2="155"
                   stroke="#F15A22"
-                  strokeWidth="5.5"
+                  strokeWidth="3"
                   strokeLinecap="round"
-                  fill="none"
                 />
                 <polygon
-                  points="291 105, 306 114, 291 123"
+                  points="300 149, 311 155, 300 161"
                   fill="#F15A22"
                 />
               </g>
 
-              {/* 2. Top-Right Curved Motion Arrow (Shake Affordance) */}
+              {/* 2. Horizontal "Shake ->" Arrow pointing to the middle of the Mic FX / Ting FX lower block */}
               <g
                 onClick={(e) => {
                   e.stopPropagation();
                   triggerCartoonShake();
                 }}
                 className="cursor-pointer"
-                aria-label="Top-Right Curved Motion Arrow"
+                aria-label="Shake Mic FX block indicator arrow"
               >
                 <title>Click Mic FX block to SHAKE</title>
-                <path
-                  d="M 570 145 C 572 108, 552 75, 526 71"
-                  stroke="#F15A22"
-                  strokeWidth="6"
-                  strokeLinecap="round"
-                  fill="none"
-                />
-                <polygon
-                  points="528 62, 511 73, 530 83"
+                <text
+                  x="290"
+                  y="263"
+                  textAnchor="end"
                   fill="#F15A22"
-                />
-              </g>
-
-              {/* 3. Bottom-Left Curved Motion Arrow (Beside Mic FX / Ting FX Block) */}
-              <g
-                onClick={(e) => {
-                  e.stopPropagation();
-                  triggerCartoonShake();
-                }}
-                className="cursor-pointer"
-                aria-label="Bottom-Left Curved Motion Arrow"
-              >
-                <title>Click Mic FX block to SHAKE</title>
-                <path
-                  d="M 314 262 C 306 286, 306 310, 312 328"
+                  className="font-te-regular text-[13px] font-bold tracking-wide"
+                >
+                  Shake
+                </text>
+                <line
+                  x1="296"
+                  y1="259"
+                  x2="325"
+                  y2="259"
                   stroke="#F15A22"
-                  strokeWidth="6"
+                  strokeWidth="3"
                   strokeLinecap="round"
-                  fill="none"
                 />
                 <polygon
-                  points="303 325, 315 342, 321 322"
+                  points="322 253, 333 259, 322 265"
                   fill="#F15A22"
                 />
               </g>
