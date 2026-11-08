@@ -42,9 +42,9 @@ function buildSourceModulesForTest() {
       }
     );
 
-    // Handle static asset imports (e.g. speech.mp3 in AudioEngine.ts)
+    // Handle static asset imports (e.g. speech.mp3 and *.wav in AudioEngine.ts)
     source = source.replace(
-      /import\s+([a-zA-Z0-9_]+)\s+from\s+['"]([^'"]+\.mp3)['"];?/g,
+      /import\s+([a-zA-Z0-9_]+)\s+from\s+['"]([^'"]+\.(?:mp3|wav))['"];?/g,
       (_, varName, assetPath) => `const ${varName} = ${JSON.stringify(assetPath)};`
     );
 
@@ -67,7 +67,7 @@ buildSourceModulesForTest();
 const { EFFECTS_REGISTRY, isPercentParam, getModDepthConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/constants/effectsRegistry.mjs')).href
 );
-const { OFFICIAL_TE_PACKS } = await import(
+const { OFFICIAL_TE_PACKS, createEmptyPack } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/constants/defaultPresets.mjs')).href
 );
 const { parseConfigJson } = await import(
@@ -78,6 +78,7 @@ const { serializeToConfigJson, validatePackConfig } = await import(
 );
 const {
   PitchShiftKernel,
+  SsbFrequencyShiftKernel,
   computeLfoWave,
   cutoffToHz,
   hann,
@@ -87,7 +88,7 @@ const {
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
-const { DspAudioEngine } = await import(
+const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 
@@ -411,8 +412,69 @@ const hzHalf = estimateFundamentalHz(outHalf, sampleRate);
 
 assert.ok(Math.abs(hz2x - 440) < 10, `2.0x pitch of 220Hz should be ~440Hz (got ${hz2x.toFixed(1)}Hz)`);
 assert.ok(Math.abs(hzHalf - 110) < 5, `0.5x pitch of 220Hz should be ~110Hz (got ${hzHalf.toFixed(1)}Hz)`);
+const dynamicKernel = new PitchShiftKernel(1.0);
+dynamicKernel.setPitch(1.5);
+dynamicKernel.process(sine220.subarray(0, 4096), new Float32Array(4096));
+assert.ok(Math.abs(dynamicKernel.getPitch() - 1.5) < 1e-3);
 console.log(
-  `✓ Suite 6: PitchShiftKernel verified (220Hz -> 0.5x=${hzHalf.toFixed(1)}Hz, 2.0x=${hz2x.toFixed(1)}Hz at constant speed)`
+  `✓ Suite 6a: PitchShiftKernel verified (220Hz -> 0.5x=${hzHalf.toFixed(1)}Hz, 2.0x=${hz2x.toFixed(1)}Hz at constant speed)`
+);
+
+// 6b. SsbFrequencyShiftKernel Hilbert Quadrature Single-Sideband Frequency Shifter
+const ssbN = 24000;
+const sine440 = new Float32Array(ssbN);
+for (let i = 0; i < ssbN; i++) {
+  sine440[i] = Math.sin((2 * Math.PI * 440 * i) / sampleRate);
+}
+
+function measurePeakDftHz(sig, sr) {
+  const start = 4000;
+  const len = 8000;
+  let bestHz = 0;
+  let bestMag = -1;
+  for (let f = 100; f <= 1000; f += 2) {
+    let re = 0;
+    let im = 0;
+    for (let n = 0; n < len; n++) {
+      const ang = (2 * Math.PI * f * n) / sr;
+      re += sig[start + n] * Math.cos(ang);
+      im -= sig[start + n] * Math.sin(ang);
+    }
+    const mag = Math.hypot(re, im);
+    if (mag > bestMag) {
+      bestMag = mag;
+      bestHz = f;
+    }
+  }
+  return bestHz;
+}
+
+const ssbUp = new SsbFrequencyShiftKernel(200, sampleRate);
+const outSsbUp = new Float32Array(ssbN);
+ssbUp.process(sine440, outSsbUp);
+const peakUpHz = measurePeakDftHz(outSsbUp, sampleRate);
+assert.ok(Math.abs(peakUpHz - 640) <= 4, `+200Hz SSB shift of 440Hz must peak at 640Hz (got ${peakUpHz}Hz)`);
+
+const ssbDown = new SsbFrequencyShiftKernel(-200, sampleRate);
+const outSsbDown = new Float32Array(ssbN);
+ssbDown.process(sine440, outSsbDown);
+const peakDownHz = measurePeakDftHz(outSsbDown, sampleRate);
+assert.ok(Math.abs(peakDownHz - 240) <= 4, `-200Hz SSB shift of 440Hz must down-shift to 240Hz (got ${peakDownHz}Hz)`);
+
+const ssbZero = new SsbFrequencyShiftKernel(0, sampleRate);
+const outSsbZero = new Float32Array(ssbN);
+ssbZero.process(sine440, outSsbZero);
+for (let i = 0; i < ssbN; i++) {
+  assert.ok(Math.abs(outSsbZero[i] - sine440[i]) < 1e-6, '0Hz SSB shift must be bit-transparent');
+}
+ssbZero.setFrequency(-500);
+ssbZero.process(sine440.subarray(0, 4096), new Float32Array(4096));
+assert.ok(Math.abs(ssbZero.getFrequency() - -500) < 1e-2);
+assert.strictEqual(SsbFrequencyShiftKernel.clampFreq(99999), 20000);
+assert.strictEqual(SsbFrequencyShiftKernel.clampFreq(-99999), -20000);
+assert.strictEqual(SsbFrequencyShiftKernel.clampFreq(NaN), 0);
+console.log(
+  `✓ Suite 6b: SsbFrequencyShiftKernel Hilbert SSB verified (440Hz -> -200Hz=${peakDownHz}Hz, +200Hz=${peakUpHz}Hz)`
 );
 
 // -----------------------------------------------------------------------------
@@ -704,7 +766,132 @@ engine.updateModulation({ handlePos: 1.0, shakeAmount: 0.5 });
 assert.strictEqual(distNode.nodeRefs.lastAmount, 40, 'Handle modulation on DIST.amount must clamp at 40x');
 assert.strictEqual(ringNode.nodeRefs.wetGain.gain.value, 1.0, 'Shake modulation on RING.mix (75% + 25%) must reach 1.0');
 
-// 8c. Async start() / stop() race protection
+// 8c. All remaining effects (LOWPASS, HIGHPASS, HARMONY, SSB, BALANCE, unknown fallback) & LFO/Handle/Shake modulation
+const remainingPreset = {
+  id: 'test-p2',
+  pos: 1,
+  name: 'REMAINING FX',
+  comment: '',
+  list: [
+    { id: 'fx0', effect: 'LOWPASS', cutoff: 50, BUS: 1 },
+    { id: 'fx1', effect: 'HIGHPASS', cutoff: 20, BUS: 1 },
+    { id: 'fx2', effect: 'HARMONY', pitch: 1.25, 'dry-level': 50, BUS: 1 },
+    { id: 'fx3', effect: 'SSB', frequency: -500, BUS: 1 },
+    { id: 'fx4', effect: 'BALANCE', balance: 0.5, BUS: 1 },
+    { id: 'fx5', effect: 'SAMPLE', speed: 1.0, pitch: 12, level: 80, BUS: 1 },
+    { id: 'fx6', effect: 'UNKNOWN_FX', BUS: 1 }
+  ],
+  handle: { target: 'lfo', param: 'speed', depth: 4.0 },
+  shake: { row: 3, param: 'frequency', depth: -300 },
+  lfo: { row: 4, param: 'balance', depth: 50, shape: 'square', speed: 2.0, phase: 0.3 },
+  trigger: { row: 5 }
+};
+engine.updatePreset(remainingPreset);
+const lpNode = engine.activeNodes.find((n) => n.effectType === 'LOWPASS');
+const hpNode = engine.activeNodes.find((n) => n.effectType === 'HIGHPASS');
+const harmonyNode = engine.activeNodes.find((n) => n.effectType === 'HARMONY');
+const ssbNode = engine.activeNodes.find((n) => n.effectType === 'SSB');
+const balanceNode = engine.activeNodes.find((n) => n.effectType === 'BALANCE');
+const sampleNode2 = engine.activeNodes.find((n) => n.effectType === 'SAMPLE');
+
+assert.ok(Math.abs(lpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.5)) < 1e-3, 'LOWPASS 50% cutoff must map to log Hz');
+assert.ok(Math.abs(hpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.2)) < 1e-3, 'HIGHPASS 20% cutoff must map to log Hz');
+assert.strictEqual(harmonyNode.nodeRefs.pitchShifter.getPitch(), 1.25, 'HARMONY pitchShifter must initialize to 1.25x');
+assert.strictEqual(ssbNode.nodeRefs.ssbShifter.getFrequency(), -650, 'SSB -500Hz + 0.5*(-300Hz) shake must equal -650Hz');
+assert.strictEqual(sampleNode2.nodeRefs.pitchShifter.getPitch(), 2.0, 'SAMPLE +12 semitones must set pitchShifter to 2.0x');
+// At currentTime=0.25, effectiveLfoSpeed = 2.0 + 1.0*4.0 = 6.0 -> cycles = 0.25*6.0 + 0.3 = 1.8 (phase 0.8 >= 0.5 -> square = -1)
+assert.strictEqual(balanceNode.nodeRefs.chopperGain.gain.value, 0.18, 'Square LFO < 0 on BALANCE must engage 0.18 chopper gate');
+
+// Invoke ScriptProcessor onaudioprocess callbacks on HARMONY and SSB
+const dummyIn = new Float32Array(64);
+const dummyOut = new Float32Array(64);
+const dummyEvent = {
+  inputBuffer: { getChannelData: () => dummyIn },
+  outputBuffer: { getChannelData: () => dummyOut }
+};
+harmonyNode.nodeRefs.pitchShifter.processor.onaudioprocess(dummyEvent);
+ssbNode.nodeRefs.ssbShifter.processor.onaudioprocess(dummyEvent);
+
+// 8d. Bundled december_pack WAV samples & SAMPLE block trigger modes (oneshot, hold, startstop)
+assert.strictEqual(BUNDLED_SAMPLES.length, 4, 'Must bundle 4 WAV samples from december_pack');
+for (const s of BUNDLED_SAMPLES) {
+  const wavPath = path.join(ROOT_DIR, 'src/assets/samples', s.file);
+  assert.ok(fs.existsSync(wavPath), `Bundled sample ${s.file} must exist on disk`);
+  const header = fs.readFileSync(wavPath).subarray(0, 12).toString('ascii');
+  assert.ok(header.startsWith('RIFF') && header.endsWith('WAVE'), `${s.file} must be a valid RIFF/WAVE file`);
+}
+
+engine.setActiveSampleSlot(2);
+assert.strictEqual(engine.getActiveSampleSlot(), 2, 'setActiveSampleSlot(2) must select slot 2');
+engine.setActiveSampleSlot(99);
+assert.strictEqual(engine.getActiveSampleSlot(), 3, 'setActiveSampleSlot(99) must clamp to slot 3');
+
+// Trigger in 'hold' mode: starts on down=true, stops on down=false
+await engine.triggerSample(true, 'hold');
+assert.strictEqual(engine.getIsSamplePlaying(), true, 'triggerSample(true, "hold") must start sample playback');
+assert.strictEqual(engine.sampleSourceNode.loop, true, 'hold mode must loop sample while held');
+assert.ok(
+  engine.sampleSourceNode.connections.includes(sampleNode2.nodeRefs.sampleInput),
+  'Triggered sample must route into SAMPLE node sampleInput at trigger.row'
+);
+await engine.triggerSample(false, 'hold');
+assert.strictEqual(engine.getIsSamplePlaying(), false, 'triggerSample(false, "hold") must stop sample on button release');
+
+// Trigger in 'startstop' mode: toggles on down=true, ignores down=false
+await engine.triggerSample(true, 'startstop');
+assert.strictEqual(engine.getIsSamplePlaying(), true, 'startstop 1st press must start sample');
+await engine.triggerSample(false, 'startstop');
+assert.strictEqual(engine.getIsSamplePlaying(), true, 'startstop release must keep sample playing');
+await engine.triggerSample(true, 'startstop');
+assert.strictEqual(engine.getIsSamplePlaying(), false, 'startstop 2nd press must stop sample');
+
+// Trigger in 'oneshot' mode and verify onended cleanup
+await engine.triggerSample(true, 'oneshot');
+assert.strictEqual(engine.getIsSamplePlaying(), true, 'oneshot press must start sample');
+assert.strictEqual(engine.sampleSourceNode.loop, false, 'oneshot mode must not loop');
+engine.sampleSourceNode.onended();
+assert.strictEqual(engine.getIsSamplePlaying(), false, 'onended callback must clear isSamplePlaying');
+
+// Verify togglePlay() and triggerShake() decay
+assert.strictEqual(engine.togglePlay(), false, 'togglePlay() while running must stop and return false');
+assert.strictEqual(engine.togglePlay(), true, 'togglePlay() while stopped must start and return true');
+let rafCb = null;
+globalThis.requestAnimationFrame = (cb) => {
+  rafCb = cb;
+  return 1;
+};
+engine.triggerShake(0.8);
+assert.strictEqual(engine.modState.shakeAmount, 0.8);
+if (rafCb) rafCb();
+
+// 8e. AudioWorkletNode path verification when AudioWorklet is supported
+class MockAudioWorkletNode extends MockAudioNode {
+  constructor(ctx, name, opts) {
+    super();
+    this.name = name;
+    this.opts = opts;
+    this.messages = [];
+    this.port = {
+      postMessage: (msg) => this.messages.push(msg)
+    };
+  }
+}
+globalThis.AudioWorkletNode = MockAudioWorkletNode;
+MockAudioContext.prototype.audioWorklet = {
+  addModule: async () => {}
+};
+const workletEngine = new DspAudioEngine();
+workletEngine.updatePreset(remainingPreset);
+await workletEngine.start();
+const workletHarmony = workletEngine.activeNodes.find((n) => n.effectType === 'HARMONY');
+const workletSsb = workletEngine.activeNodes.find((n) => n.effectType === 'SSB');
+assert.strictEqual(workletHarmony.nodeRefs.pitchShifter.processor.name, 'ep2350-pitch-shifter');
+assert.strictEqual(workletSsb.nodeRefs.ssbShifter.processor.name, 'ep2350-ssb-shifter');
+workletEngine.stop();
+delete globalThis.AudioWorkletNode;
+delete MockAudioContext.prototype.audioWorklet;
+
+// 8f. Async start() / stop() race protection & remaining parser/serializer edge branches
 engine.stop();
 assert.strictEqual(engine.getIsRunning(), false, 'Engine must report stopped after stop()');
 const engineRace = new DspAudioEngine();
@@ -716,6 +903,14 @@ await startPromise;
 assert.strictEqual(engineRace.getIsRunning(), false, 'Cancelled start() must not resume playback after init() resolves');
 assert.strictEqual(engineRace.sourceNode, null, 'Cancelled start() must not create an active sourceNode');
 
-console.log('✓ Suite 8: DspAudioEngine graph routing, live modulations, safety limiter & async race protection verified');
+const emptyPack = createEmptyPack();
+assert.strictEqual(emptyPack.presets.length, 4);
+assert.strictEqual(emptyPack.samples[0].file, 'kara-te.wav');
+assert.ok(parseConfigJson(123).error, 'Non-string input must return error');
+assert.ok(parseConfigJson('x'.repeat(5_000_005)).error, 'Oversized JSON > 5MB must return error');
+const emptyPresetsIssues = validatePackConfig({ name: 'X', useBuiltInSamples: true, samples: [], presets: [] });
+assert.ok(emptyPresetsIssues.some((i) => i.type === 'error' && i.message.includes('At least one preset')));
+
+console.log('✓ Suite 8: DspAudioEngine all 11 effects, bundled WAV samples, AudioWorklet & race protection verified');
 
 console.log('\n=== ALL 8 PRODUCTION TEST SUITES PASSED (100%) ===');
