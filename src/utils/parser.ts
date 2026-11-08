@@ -72,7 +72,7 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
         if (p.handle && typeof p.handle === 'object') {
           const isLfo = p.handle.target === 'lfo';
           const row = typeof p.handle.row === 'number' ? p.handle.row : undefined;
-          const param = typeof p.handle.param === 'string' ? p.handle.param : 'cutoff';
+          const param = typeof p.handle.param === 'string' ? p.handle.param : (isLfo ? 'speed' : 'cutoff');
           const targetFx = typeof row === 'number' ? list[row] : undefined;
           const depthCfg = getModDepthConfig(targetFx?.effect, param);
           let depth = typeof p.handle.depth === 'number' ? p.handle.depth : (isLfo ? 10.0 : depthCfg.defaultVal);

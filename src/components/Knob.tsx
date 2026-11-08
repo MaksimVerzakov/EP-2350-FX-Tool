@@ -34,6 +34,7 @@ export const Knob: React.FC<KnobProps> = ({
   modulationSource
 }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const [inputText, setInputText] = useState(value.toString());
   const dragStartY = useRef(0);
   const dragStartVal = useRef(value);
@@ -56,10 +57,10 @@ export const Knob: React.FC<KnobProps> = ({
 
   // Keep internal input text in sync with value when not focused / dragging
   useEffect(() => {
-    if (!isDragging) {
+    if (!isDragging && !isFocused) {
       setInputText(formatVal(value));
     }
-  }, [value, isDragging, formatVal]);
+  }, [value, isDragging, isFocused, formatVal]);
 
   // Map value to angle: -135deg to +135deg (270deg total travel)
   const normalized = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
@@ -119,9 +120,23 @@ export const Knob: React.FC<KnobProps> = ({
 
   const commitValue = (textToCommit: string) => {
     const cleanLower = textToCommit.trim().toLowerCase();
+    if (!cleanLower) {
+      setInputText(formatVal(value));
+      return;
+    }
+
+    if (cleanLower === 'ctr') {
+      const mid = Math.round(((min + max) / 2) * 1000) / 1000;
+      onChange(mid);
+      setInputText(formatVal(mid));
+      return;
+    }
+
     if (displayScale) {
-      const stepVal = step || 1;
-      for (let testVal = min; testVal <= max; testVal += stepVal) {
+      const stepVal = step || 0.01;
+      const numSteps = Math.min(4000, Math.round((max - min) / stepVal));
+      for (let i = 0; i <= numSteps; i++) {
+        const testVal = Math.round((min + i * stepVal) * 1000) / 1000;
         if (displayScale(testVal).toLowerCase() === cleanLower) {
           onChange(testVal);
           setInputText(formatVal(testVal));
@@ -129,12 +144,23 @@ export const Knob: React.FC<KnobProps> = ({
         }
       }
     }
+
     const cleanText = textToCommit.replace(/[^\d.-]/g, '');
     let parsed = parseFloat(cleanText);
     if (!isNaN(parsed)) {
-      if (unit === '%' && Math.abs(parsed) > 0 && Math.abs(parsed) <= 1.0 && max >= 100) {
-        parsed = parsed * 100;
+      // Invert scaled display units when user types formatted values (e.g. 350ms, 500Hz, +6dB, 3.0s)
+      if (cleanLower.endsWith('ms') && unit === 's') {
+        parsed = parsed / 1000;
+      } else if (unit === 's' && max <= 1.2 && Math.abs(parsed) > max) {
+        parsed = parsed / 1000;
+      } else if (unit === 'Hz' && min === 0 && max === 1 && parsed >= 20) {
+        parsed = Math.log(Math.max(20, Math.min(20000, parsed)) / 20) / Math.log(1000);
+      } else if (unit === 'dB' && min === -1 && max === 1 && (cleanLower.includes('db') || Math.abs(parsed) > 1)) {
+        parsed = parsed / 15;
+      } else if (unit === 's' && min === 0 && max === 1 && displayScale && displayScale(1) === '6.0s' && parsed > 1) {
+        parsed = parsed / 6;
       }
+
       const clamped = Math.max(min, Math.min(max, parsed));
       const rounded = step ? Math.round(clamped / step) * step : clamped;
       const finalVal = Math.round(rounded * 1000) / 1000;
@@ -147,22 +173,15 @@ export const Knob: React.FC<KnobProps> = ({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
-    if (e.target.value === '-' || e.target.value === '+') {
-      return;
-    }
-    const parsed = parseFloat(e.target.value.replace(/[^\d.-]/g, ''));
-    if (!isNaN(parsed)) {
-      const clamped = Math.max(min, Math.min(max, parsed));
-      const rounded = step ? Math.round(clamped / step) * step : clamped;
-      onChange(Math.round(rounded * 1000) / 1000);
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
+      setIsFocused(false);
       commitValue(inputText);
       (e.target as HTMLInputElement).blur();
     } else if (e.key === 'Escape') {
+      setIsFocused(false);
       setInputText(formatVal(value));
       (e.target as HTMLInputElement).blur();
     }
@@ -185,7 +204,7 @@ export const Knob: React.FC<KnobProps> = ({
   return (
     <div
       className="flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5"
-      title={`${label}: ${displayValue || value + unit} (Drag dial or type in box)`}
+      title={`${label}: ${formatVal(value)} (Drag dial or type in box)`}
     >
       {/* Parameter Label + Mod Indicator */}
       <div className="flex items-center justify-between w-full mb-0.5 px-0.5">
@@ -272,8 +291,12 @@ export const Knob: React.FC<KnobProps> = ({
         <input
           type="text"
           value={inputText}
+          onFocus={() => setIsFocused(true)}
           onChange={handleInputChange}
-          onBlur={() => commitValue(inputText)}
+          onBlur={() => {
+            setIsFocused(false);
+            commitValue(inputText);
+          }}
           onKeyDown={handleKeyDown}
           onDoubleClick={onReset}
           className="w-[52px] h-[17px] text-[9px] font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-[#141617] focus:border-[#f15a22] rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
