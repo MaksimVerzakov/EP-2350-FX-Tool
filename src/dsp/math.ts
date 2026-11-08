@@ -184,3 +184,107 @@ export class PitchShiftKernel {
     }
   }
 }
+
+/**
+ * True Single-Sideband (SSB) frequency shifter kernel using an 8th-order
+ * Regalia-Mitra / Niemitalo half-band Hilbert-transform all-pass filter pair.
+ *
+ * - Positive `freqHz` (+Δf) shifts all spectral components upward by +Δf Hz (upper sideband).
+ * - Negative `freqHz` (-Δf) shifts all spectral components downward by -Δf Hz (lower sideband).
+ * - `0 Hz` smoothly crossfades to unity pass-through (tuned-in AM station).
+ */
+export class SsbFrequencyShiftKernel {
+  private static readonly COEFF_I = [
+    0.47940086558884,
+    0.87621849353931,
+    0.976597589508199,
+    0.997499255935549
+  ];
+  private static readonly COEFF_Q = [
+    0.161758498367701,
+    0.73302893234149,
+    0.945349700329113,
+    0.990599156684529
+  ];
+
+  private readonly sampleRate: number;
+  private currentFreq: number;
+  private targetFreq: number;
+  private oscPhase = 0;
+
+  // State history for 4 cascaded z^-2 all-pass stages on I and Q branches
+  private readonly xI1 = new Float64Array(4);
+  private readonly xI2 = new Float64Array(4);
+  private readonly yI1 = new Float64Array(4);
+  private readonly yI2 = new Float64Array(4);
+
+  private readonly xQ1 = new Float64Array(4);
+  private readonly xQ2 = new Float64Array(4);
+  private readonly yQ1 = new Float64Array(4);
+  private readonly yQ2 = new Float64Array(4);
+  private qDelay1 = 0;
+
+  constructor(initialFreqHz = 0.0, sampleRate = 48000) {
+    this.sampleRate = sampleRate > 0 ? sampleRate : 48000;
+    this.currentFreq = SsbFrequencyShiftKernel.clampFreq(initialFreqHz);
+    this.targetFreq = this.currentFreq;
+  }
+
+  static clampFreq(freqHz: number): number {
+    if (typeof freqHz !== 'number' || Number.isNaN(freqHz)) return 0;
+    return Math.max(-20000, Math.min(20000, freqHz));
+  }
+
+  setFrequency(freqHz: number): void {
+    this.targetFreq = SsbFrequencyShiftKernel.clampFreq(freqHz);
+  }
+
+  getFrequency(): number {
+    return this.currentFreq;
+  }
+
+  process(input: Float32Array, output: Float32Array): void {
+    const len = input.length;
+    const invSr = 1.0 / this.sampleRate;
+    const cI = SsbFrequencyShiftKernel.COEFF_I;
+    const cQ = SsbFrequencyShiftKernel.COEFF_Q;
+
+    for (let i = 0; i < len; i++) {
+      const x = input[i];
+      this.currentFreq += (this.targetFreq - this.currentFreq) * 0.005;
+
+      // Branch I: 4 cascaded all-pass sections y[n] = c * (x[n] - y[n-2]) + x[n-2]
+      let sI = x;
+      for (let k = 0; k < 4; k++) {
+        const y = cI[k] * (sI - this.yI2[k]) + this.xI2[k];
+        this.xI2[k] = this.xI1[k];
+        this.xI1[k] = sI;
+        this.yI2[k] = this.yI1[k];
+        this.yI1[k] = y;
+        sI = y;
+      }
+
+      // Branch Q: 1-sample delay followed by 4 cascaded all-pass sections
+      let sQ = this.qDelay1;
+      this.qDelay1 = x;
+      for (let k = 0; k < 4; k++) {
+        const y = cQ[k] * (sQ - this.yQ2[k]) + this.xQ2[k];
+        this.xQ2[k] = this.xQ1[k];
+        this.xQ1[k] = sQ;
+        this.yQ2[k] = this.yQ1[k];
+        this.yQ1[k] = y;
+        sQ = y;
+      }
+
+      // Advance quadrature oscillator
+      this.oscPhase += this.currentFreq * invSr;
+      this.oscPhase -= Math.floor(this.oscPhase);
+      const angle = 2.0 * Math.PI * this.oscPhase;
+      const wet = sI * Math.cos(angle) - sQ * Math.sin(angle);
+
+      // Smooth crossfade to dry unity signal within ±1.5 Hz of 0 Hz (clean AM station tuning)
+      const shiftMix = Math.min(1.0, Math.abs(this.currentFreq) / 1.5);
+      output[i] = x * (1.0 - shiftMix) + wet * shiftMix;
+    }
+  }
+}
