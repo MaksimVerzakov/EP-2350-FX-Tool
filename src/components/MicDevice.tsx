@@ -35,14 +35,12 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
 }) => {
   const isTing = theme === 'ting';
   const [isSqueezing, setIsSqueezing] = useState(false);
-  const [isLeverMoving, setIsLeverMoving] = useState(false);
   const [isCartoonShaking, setIsCartoonShaking] = useState(false);
   const dragStartY = useRef(0);
   const dragStartX = useRef(0);
   const dragStartVal = useRef(handlePos);
   const hasDragged = useRef(false);
   const shakeTimerRef = useRef<number | null>(null);
-  const leverTimerRef = useRef<number | null>(null);
 
   const cyclePreset = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -105,9 +103,6 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
       // Click without drag: toggle between fully pressed (1.0) and released (0.0)
       const nextVal = handlePos >= 0.5 ? 0.0 : 1.0;
       onHandleChange(nextVal);
-      setIsLeverMoving(true);
-      if (leverTimerRef.current) window.clearTimeout(leverTimerRef.current);
-      leverTimerRef.current = window.setTimeout(() => setIsLeverMoving(false), 180);
     }
     // If dragged: stays at the set position so the user can listen to the decreased effect!
   }, [isSqueezing, handlePos, onHandleChange]);
@@ -127,7 +122,6 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
   // When handlePos is 1.0 (pressed by default), lever is rotated inward (7.5deg) and effect is enabled.
   // Releasing the handle (handlePos -> 0.0) rotates outward (0deg) and decreases the effect.
   const leverAngle = handlePos * 7.5;
-  const isInMotion = isCartoonShaking || isSqueezing || isLeverMoving;
 
   return (
     <div className="flex flex-col items-center select-none relative">
@@ -159,7 +153,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             </radialGradient>
           </defs>
 
-          {/* CARTOON SHAKE MOVEMENT (SEMI-TRANSPARENT GHOST COPIES ONLY; ARROWS HIDDEN DURING MOTION) */}
+          {/* CARTOON SHAKE MOVEMENT (SEMI-TRANSPARENT GHOST COPIES) */}
           {isCartoonShaking && (
             <g className="pointer-events-none select-none" style={{ overflow: 'visible' }}>
               {/* Outer Ghost Copy (rotated further, lighter opacity) */}
@@ -184,75 +178,73 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             </g>
           )}
 
-          {/* HORIZONTAL ORANGE AFFORDANCE ARROWS (SHOWN AT REST, HIDDEN DURING MOTION) */}
-          {!isInMotion && (
-            <g className="select-none" style={{ overflow: 'visible' }}>
-              {/* 1. Horizontal "Push ->" Arrow pointing to the middle of the lever */}
-              <g
-                onMouseDown={handleHandleMouseDown}
-                className="cursor-pointer"
-                aria-label="Push lever indicator arrow"
+          {/* HORIZONTAL ORANGE AFFORDANCE ARROWS (ALWAYS VISIBLE) */}
+          <g className="select-none" style={{ overflow: 'visible' }}>
+            {/* 1. Horizontal "Push ->" Arrow pointing to the visual middle of the lever */}
+            <g
+              onMouseDown={handleHandleMouseDown}
+              className="cursor-pointer"
+              aria-label="Push lever indicator arrow"
+            >
+              <title>Push or release lever to control effect</title>
+              <text
+                x="259"
+                y="120"
+                textAnchor="end"
+                fill="#F15A22"
+                className="font-te-regular text-[13px] font-bold tracking-wide"
               >
-                <title>Push or release lever to control effect</title>
-                <text
-                  x="268"
-                  y="159"
-                  textAnchor="end"
-                  fill="#F15A22"
-                  className="font-te-regular text-[13px] font-bold tracking-wide"
-                >
-                  Push
-                </text>
-                <line
-                  x1="274"
-                  y1="155"
-                  x2="303"
-                  y2="155"
-                  stroke="#F15A22"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-                <polygon
-                  points="300 149, 311 155, 300 161"
-                  fill="#F15A22"
-                />
-              </g>
-
-              {/* 2. Horizontal "Shake ->" Arrow pointing to the middle of the Mic FX / Ting FX lower block */}
-              <g
-                onClick={(e) => {
-                  e.stopPropagation();
-                  triggerCartoonShake();
-                }}
-                className="cursor-pointer"
-                aria-label="Shake Mic FX block indicator arrow"
-              >
-                <title>Click Mic FX block to SHAKE</title>
-                <text
-                  x="290"
-                  y="263"
-                  textAnchor="end"
-                  fill="#F15A22"
-                  className="font-te-regular text-[13px] font-bold tracking-wide"
-                >
-                  Shake
-                </text>
-                <line
-                  x1="296"
-                  y1="259"
-                  x2="325"
-                  y2="259"
-                  stroke="#F15A22"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-                <polygon
-                  points="322 253, 333 259, 322 265"
-                  fill="#F15A22"
-                />
-              </g>
+                Push
+              </text>
+              <line
+                x1="265"
+                y1="116"
+                x2="294"
+                y2="116"
+                stroke="#F15A22"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <polygon
+                points="291 110, 302 116, 291 122"
+                fill="#F15A22"
+              />
             </g>
-          )}
+
+            {/* 2. Horizontal "Shake ->" Arrow pointing to the middle of the Mic FX / Ting FX lower block */}
+            <g
+              onClick={(e) => {
+                e.stopPropagation();
+                triggerCartoonShake();
+              }}
+              className="cursor-pointer"
+              aria-label="Shake Mic FX block indicator arrow"
+            >
+              <title>Click Mic FX block to SHAKE</title>
+              <text
+                x="290"
+                y="263"
+                textAnchor="end"
+                fill="#F15A22"
+                className="font-te-regular text-[13px] font-bold tracking-wide"
+              >
+                Shake
+              </text>
+              <line
+                x1="296"
+                y1="259"
+                x2="325"
+                y2="259"
+                stroke="#F15A22"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <polygon
+                points="322 253, 333 259, 322 265"
+                fill="#F15A22"
+              />
+            </g>
+          </g>
 
           {/* MAIN STATIONARY FOREGROUND MIC */}
           <g id="micGraphic">

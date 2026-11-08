@@ -38,6 +38,12 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
 
     // Preset 1 in MYSTERIOUS PACK should be MANUAL PITCHER
     await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('MANUAL PITCHER');
+
+    // Start an empty pack via + NEW PACK
+    await dropdownToggle.click();
+    await page.getByRole('button', { name: /NEW PACK/i }).click();
+    await expect(packInput).toHaveValue('NEW PACK');
+    await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('PRESET 1');
   });
 
   test('can switch between FX and TING themes', async ({ page }) => {

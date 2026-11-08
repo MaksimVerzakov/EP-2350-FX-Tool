@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { INITIAL_PACK, OfficialPackPreset } from './constants/defaultPresets';
+import { INITIAL_PACK, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
 import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
@@ -105,6 +105,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleCreateNewPack = () => {
+    setPack(createEmptyPack());
+    setActiveSlot(0);
+  };
+
   const handleImportJson = (rawJson: string) => {
     const parsed = parseConfigJson(rawJson);
     if (parsed.pack) {
@@ -138,6 +143,7 @@ export const App: React.FC = () => {
           packName={pack.name}
           onUpdatePackName={(name) => setPack({ ...pack, name })}
           onSelectDefaultPack={handleSelectDefaultPack}
+          onCreateNewPack={handleCreateNewPack}
           onImportJson={handleImportJson}
           onExportJson={handleExportJson}
           theme={theme}

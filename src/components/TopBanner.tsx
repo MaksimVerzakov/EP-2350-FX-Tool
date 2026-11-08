@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Download, Upload, ChevronDown, Check } from 'lucide-react';
+import { Download, Upload, ChevronDown, Check, Plus } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
 
@@ -7,6 +7,7 @@ interface TopBannerProps {
   packName: string;
   onUpdatePackName: (name: string) => void;
   onSelectDefaultPack: (presetPack: OfficialPackPreset) => void;
+  onCreateNewPack: () => void;
   onImportJson: (json: string) => void;
   onExportJson: () => void;
   theme: ThemeMode;
@@ -17,6 +18,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   packName,
   onUpdatePackName,
   onSelectDefaultPack,
+  onCreateNewPack,
   onImportJson,
   onExportJson,
   theme,
@@ -437,6 +439,41 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 </button>
               );
             })}
+
+            <div
+              className={`border-t mt-0.5 pt-1 ${
+                isTing ? 'border-[#00503a]/20' : 'border-[#e2e4e2]'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  onCreateNewPack();
+                  setDropdownOpen(false);
+                }}
+                className={`w-full text-left px-2 py-1.5 rounded-[1px] transition-colors cursor-pointer flex flex-col gap-0.5 group ${
+                  isTing
+                    ? 'hover:bg-[#f15a22] hover:text-white text-[#f15a22]'
+                    : 'hover:bg-[#f15a22] hover:text-white text-[#f15a22]'
+                }`}
+              >
+                <div className="flex items-center gap-1">
+                  <Plus className="w-3 h-3 shrink-0" />
+                  <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide">
+                    NEW PACK
+                  </span>
+                </div>
+                <span
+                  className={`font-mono text-[8px] uppercase truncate ${
+                    isTing
+                      ? 'text-[#4b6b5d] group-hover:text-white/85'
+                      : 'text-[#73787a] group-hover:text-white/85'
+                  }`}
+                >
+                  START AN EMPTY 4-PRESET PACK
+                </span>
+              </button>
+            </div>
           </div>
         )}
       </div>
