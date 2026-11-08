@@ -13,7 +13,6 @@ import defaultSpeechUrl from '../assets/speech.mp3';
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
   shakeAmount: number; // 0.0 to 1.0 (transient decay)
-  lfoPhase: number;
 }
 
 export class DspAudioEngine {
@@ -26,7 +25,6 @@ export class DspAudioEngine {
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
-  private analyserNode: AnalyserNode | null = null;
   private safetyLimiter: DynamicsCompressorNode | null = null;
   private loopSource: boolean = true;
   private lfoRafId: number | null = null;
@@ -35,8 +33,7 @@ export class DspAudioEngine {
   private preset: PresetConfig | null = null;
   private modState: ModulationState = {
     handlePos: 1.0,
-    shakeAmount: 0.0,
-    lfoPhase: 0.0
+    shakeAmount: 0.0
   };
 
   // Node references for live parameter updating
@@ -55,9 +52,6 @@ export class DspAudioEngine {
       this.gainMaster = this.ctx.createGain();
       this.gainMaster.gain.value = 0.85;
 
-      this.analyserNode = this.ctx.createAnalyser();
-      this.analyserNode.fftSize = 256;
-
       // Master brickwall safety limiter to protect user hearing & monitors from feedback oscillation spikes
       this.safetyLimiter = this.ctx.createDynamicsCompressor();
       this.safetyLimiter.threshold.value = -0.5;
@@ -66,8 +60,7 @@ export class DspAudioEngine {
       this.safetyLimiter.attack.value = 0.001;
       this.safetyLimiter.release.value = 0.05;
 
-      this.gainMaster.connect(this.analyserNode);
-      this.analyserNode.connect(this.safetyLimiter);
+      this.gainMaster.connect(this.safetyLimiter);
       this.safetyLimiter.connect(this.ctx.destination);
 
       // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
@@ -77,10 +70,10 @@ export class DspAudioEngine {
           const arrayBuffer = await res.arrayBuffer();
           this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
         } else {
-          this.currentBuffer = createSyntheticAudioBuffer(this.ctx, 'voice');
+          this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
         }
       } catch {
-        this.currentBuffer = createSyntheticAudioBuffer(this.ctx, 'voice');
+        this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
       }
     }
     if (this.ctx.state === 'suspended') {
@@ -88,30 +81,8 @@ export class DspAudioEngine {
     }
   }
 
-  public getAnalyser(): AnalyserNode | null {
-    return this.analyserNode;
-  }
-
   public getSafetyLimiter(): DynamicsCompressorNode | null {
     return this.safetyLimiter;
-  }
-
-  public setSampleType(type: 'voice' | 'beat' | 'synth') {
-    if (!this.ctx) return;
-    this.currentBuffer = createSyntheticAudioBuffer(this.ctx, type);
-    if (this.isRunning) {
-      this.restartPlayback();
-    }
-  }
-
-  public async loadCustomAudioFile(file: File) {
-    if (!this.ctx) await this.init();
-    if (!this.ctx) return;
-    const arrayBuffer = await file.arrayBuffer();
-    this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-    if (this.isRunning) {
-      this.restartPlayback();
-    }
   }
 
   public updatePreset(preset: PresetConfig) {
@@ -301,13 +272,6 @@ export class DspAudioEngine {
 
   public getIsRunning(): boolean {
     return this.isRunning;
-  }
-
-  private restartPlayback() {
-    if (this.isRunning) {
-      this.stop();
-      this.start();
-    }
   }
 
   private rebuildChain() {

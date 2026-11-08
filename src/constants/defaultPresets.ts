@@ -46,7 +46,6 @@ export const OFFICIAL_TE_PACKS: OfficialPackPreset[] = [
 ];
 
 export const INITIAL_PACK: PackConfig = OFFICIAL_TE_PACKS[0].pack;
-export const DEFAULT_PRESETS = INITIAL_PACK.presets;
 
 export const createEmptyPack = (): PackConfig => {
   const now = Date.now();

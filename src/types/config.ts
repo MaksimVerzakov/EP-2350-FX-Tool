@@ -151,8 +151,6 @@ export interface SampleSlotConfig {
   pos: number; // 0, 1, 2, 3
   file: string;
   playmode: PlayMode;
-  audioBlobUrl?: string; // Loaded audio for auditioning
-  sizeBytes?: number;
 }
 
 export interface PackConfig {

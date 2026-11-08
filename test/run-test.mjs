@@ -616,13 +616,12 @@ await engine.init();
 
 // 8a. Master brickwall safety limiter verification
 const limiter = engine.getSafetyLimiter();
-const analyser = engine.getAnalyser();
 assert.ok(limiter, 'DspAudioEngine must initialize a master safetyLimiter');
 assert.strictEqual(limiter.threshold.value, -0.5, 'Safety limiter threshold must be -0.5 dB');
 assert.strictEqual(limiter.knee.value, 0.0, 'Safety limiter must use hard knee (0 dB)');
 assert.strictEqual(limiter.ratio.value, 20.0, 'Safety limiter ratio must be 20:1');
 assert.strictEqual(limiter.attack.value, 0.001, 'Safety limiter attack must be 1ms');
-assert.ok(analyser.connections.includes(limiter), 'analyserNode must connect into safetyLimiter');
+assert.ok(engine.gainMaster.connections.includes(limiter), 'gainMaster must connect into safetyLimiter');
 assert.ok(limiter.connections.includes(engine.ctx.destination), 'safetyLimiter must connect to ctx.destination');
 
 // 8b. Build full multi-effect chain with Bus 1 + Bus 2 and verify 1% ratio & live parameter updates

@@ -26,7 +26,7 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
     const seenEffects = new Set<string>();
     let hasSampleBlock = false;
 
-    preset.list.forEach((effect, idx) => {
+    preset.list.forEach((effect) => {
       if (effect.effect === 'SAMPLE') {
         hasSampleBlock = true;
       }
@@ -39,11 +39,6 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
           });
         }
         seenEffects.add(effect.effect);
-      }
-
-      // Check row target bounds in modulations
-      if (preset.handle && preset.handle.row === idx && preset.handle.target !== 'lfo') {
-        // valid
       }
     });
 
