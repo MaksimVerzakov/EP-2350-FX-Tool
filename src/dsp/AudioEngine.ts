@@ -1,7 +1,8 @@
-import type { AnyEffect, PresetConfig } from '../types/config';
+import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import {
   PitchShiftKernel,
+  SsbFrequencyShiftKernel,
   computeLfoWave,
   cutoffToHz,
   makeDistortionCurve,
@@ -9,6 +10,171 @@ import {
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
+import sampleSlot0Url from '../assets/samples/kara-te.wav';
+import sampleSlot1Url from '../assets/samples/shouty.wav';
+import sampleSlot2Url from '../assets/samples/slion.wav';
+import sampleSlot3Url from '../assets/samples/alert.wav';
+
+export const BUNDLED_SAMPLES = [
+  { pos: 0, name: 'KARA-TE', file: 'kara-te.wav', url: sampleSlot0Url },
+  { pos: 1, name: 'SHOUTY', file: 'shouty.wav', url: sampleSlot1Url },
+  { pos: 2, name: 'SLION', file: 'slion.wav', url: sampleSlot2Url },
+  { pos: 3, name: 'ALERT', file: 'alert.wav', url: sampleSlot3Url }
+] as const;
+
+const WORKLET_PROCESSOR_SOURCE = `
+class Ep2350PitchShiftProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.bufferSize = 16384;
+    this.mask = 16383;
+    this.ring = new Float32Array(16384);
+    this.grainSize = 2048;
+    this.writeIdx = 0;
+    this.phase = 0;
+    const initPitch = options?.processorOptions?.pitch ?? 1.0;
+    this.currentPitch = Math.max(0.25, Math.min(4.0, initPitch || 1.0));
+    this.targetPitch = this.currentPitch;
+    this.delayA = 8;
+    this.delayB = 1032;
+    this.port.onmessage = (e) => {
+      if (typeof e.data?.pitch === 'number') {
+        this.targetPitch = Math.max(0.25, Math.min(4.0, e.data.pitch || 1.0));
+      }
+    };
+  }
+  read(delaySamples) {
+    const readPos = this.writeIdx - delaySamples + this.bufferSize;
+    const idx0 = Math.floor(readPos);
+    const frac = readPos - idx0;
+    const ym1 = this.ring[(idx0 - 1) & this.mask];
+    const y0 = this.ring[idx0 & this.mask];
+    const y1 = this.ring[(idx0 + 1) & this.mask];
+    const y2 = this.ring[(idx0 + 2) & this.mask];
+    const c1 = 0.5 * (y1 - ym1);
+    const c2 = ym1 - 2.5 * y0 + 2.0 * y1 - 0.5 * y2;
+    const c3 = 0.5 * (y2 - ym1) + 1.5 * (y0 - y1);
+    return ((c3 * frac + c2) * frac + c1) * frac + y0;
+  }
+  findPhaseAlignedDelay(baseDelay, activeRefDelay) {
+    const ref0 = this.read(activeRefDelay);
+    const ref1 = this.read(activeRefDelay + 4);
+    const ref2 = this.read(activeRefDelay + 8);
+    let bestDelay = baseDelay;
+    let bestErr = Infinity;
+    for (let offset = 0; offset < 480; offset += 2) {
+      const cand = baseDelay + offset;
+      const d0 = this.ring[(this.writeIdx - Math.floor(cand) + this.bufferSize) & this.mask] - ref0;
+      const d1 = this.ring[(this.writeIdx - Math.floor(cand + 4) + this.bufferSize) & this.mask] - ref1;
+      const d2 = this.ring[(this.writeIdx - Math.floor(cand + 8) + this.bufferSize) & this.mask] - ref2;
+      const err = d0 * d0 + d1 * d1 + d2 * d2;
+      if (err < bestErr) {
+        bestErr = err;
+        bestDelay = cand;
+      }
+    }
+    return bestDelay;
+  }
+  process(inputs, outputs) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    const grain = this.grainSize;
+    for (let i = 0; i < output.length; i++) {
+      const x = input ? input[i] : 0;
+      this.ring[this.writeIdx] = x;
+      this.currentPitch += (this.targetPitch - this.currentPitch) * 0.0025;
+      const prevPhase = this.phase;
+      this.phase += 1.0 / grain;
+      const baseStart = this.currentPitch > 1.0 ? grain + 8 : 8;
+      if (this.phase >= 1.0) {
+        this.phase -= 1.0;
+        this.delayA = this.findPhaseAlignedDelay(baseStart, this.delayB);
+      }
+      if (prevPhase < 0.5 && this.phase >= 0.5) {
+        this.delayB = this.findPhaseAlignedDelay(baseStart, this.delayA);
+      }
+      const delta = 1.0 - this.currentPitch;
+      this.delayA = Math.max(4, this.delayA + delta);
+      this.delayB = Math.max(4, this.delayB + delta);
+      const pA = this.phase;
+      const pB = this.phase + 0.5 - Math.floor(this.phase + 0.5);
+      const wA = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * pA));
+      const wB = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * pB));
+      const wet = wA * this.read(this.delayA) + wB * this.read(this.delayB);
+      const shiftDist = Math.min(1.0, Math.abs(this.currentPitch - 1.0) / 0.015);
+      output[i] = x * (1.0 - shiftDist) + wet * shiftDist;
+      this.writeIdx = (this.writeIdx + 1) & this.mask;
+    }
+    return true;
+  }
+}
+
+class Ep2350SsbShiftProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.cI = [0.47940086558884, 0.87621849353931, 0.976597589508199, 0.997499255935549];
+    this.cQ = [0.161758498367701, 0.73302893234149, 0.945349700329113, 0.990599156684529];
+    const initFreq = options?.processorOptions?.frequency ?? 0.0;
+    this.currentFreq = Math.max(-20000, Math.min(20000, initFreq || 0));
+    this.targetFreq = this.currentFreq;
+    this.oscPhase = 0;
+    this.xI1 = new Float64Array(4);
+    this.xI2 = new Float64Array(4);
+    this.yI1 = new Float64Array(4);
+    this.yI2 = new Float64Array(4);
+    this.xQ1 = new Float64Array(4);
+    this.xQ2 = new Float64Array(4);
+    this.yQ1 = new Float64Array(4);
+    this.yQ2 = new Float64Array(4);
+    this.qDelay1 = 0;
+    this.port.onmessage = (e) => {
+      if (typeof e.data?.frequency === 'number') {
+        this.targetFreq = Math.max(-20000, Math.min(20000, e.data.frequency));
+      }
+    };
+  }
+  process(inputs, outputs) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    const invSr = 1.0 / sampleRate;
+    for (let i = 0; i < output.length; i++) {
+      const x = input ? input[i] : 0;
+      this.currentFreq += (this.targetFreq - this.currentFreq) * 0.005;
+      let sI = x;
+      for (let k = 0; k < 4; k++) {
+        const y = this.cI[k] * (sI - this.yI2[k]) + this.xI2[k];
+        this.xI2[k] = this.xI1[k];
+        this.xI1[k] = sI;
+        this.yI2[k] = this.yI1[k];
+        this.yI1[k] = y;
+        sI = y;
+      }
+      let sQ = this.qDelay1;
+      this.qDelay1 = x;
+      for (let k = 0; k < 4; k++) {
+        const y = this.cQ[k] * (sQ - this.yQ2[k]) + this.xQ2[k];
+        this.xQ2[k] = this.xQ1[k];
+        this.xQ1[k] = sQ;
+        this.yQ2[k] = this.yQ1[k];
+        this.yQ1[k] = y;
+        sQ = y;
+      }
+      this.oscPhase += this.currentFreq * invSr;
+      this.oscPhase -= Math.floor(this.oscPhase);
+      const angle = 2.0 * Math.PI * this.oscPhase;
+      const wet = sI * Math.cos(angle) - sQ * Math.sin(angle);
+      const shiftMix = Math.min(1.0, Math.abs(this.currentFreq) / 1.5);
+      output[i] = x * (1.0 - shiftMix) + wet * shiftMix;
+    }
+    return true;
+  }
+}
+
+registerProcessor('ep2350-pitch-shifter', Ep2350PitchShiftProcessor);
+registerProcessor('ep2350-ssb-shifter', Ep2350SsbShiftProcessor);
+`;
 
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
@@ -21,11 +187,16 @@ export class DspAudioEngine {
   private isStarting: boolean = false;
   private startGen: number = 0;
   private currentBuffer: AudioBuffer | null = null;
+  private sampleBuffers: AudioBuffer[] = [];
+  private activeSampleSlot: number = 0;
+  private sampleSourceNode: AudioBufferSourceNode | null = null;
+  private isSamplePlaying: boolean = false;
   private sourceNode: AudioBufferSourceNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
   private safetyLimiter: DynamicsCompressorNode | null = null;
+  private workletReady: boolean = false;
   private loopSource: boolean = true;
   private lfoRafId: number | null = null;
 
@@ -45,6 +216,17 @@ export class DspAudioEngine {
 
   constructor() {}
 
+  private async decodeUrlOrFallback(ctx: AudioContext, url: string): Promise<AudioBuffer> {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const arrayBuffer = await res.arrayBuffer();
+        return await ctx.decodeAudioData(arrayBuffer);
+      }
+    } catch {}
+    return createSyntheticAudioBuffer(ctx);
+  }
+
   public async init() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -63,18 +245,31 @@ export class DspAudioEngine {
       this.gainMaster.connect(this.safetyLimiter);
       this.safetyLimiter.connect(this.ctx.destination);
 
-      // Default sample: Clean spoken speech sample ("The quick brown fox jumps over the lazy dog")
-      try {
-        const res = await fetch(defaultSpeechUrl);
-        if (res.ok) {
-          const arrayBuffer = await res.arrayBuffer();
-          this.currentBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-        } else {
-          this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
+      if (
+        this.ctx.audioWorklet &&
+        typeof AudioWorkletNode !== 'undefined' &&
+        typeof Blob !== 'undefined' &&
+        typeof URL !== 'undefined' &&
+        typeof URL.createObjectURL === 'function'
+      ) {
+        try {
+          const blob = new Blob([WORKLET_PROCESSOR_SOURCE], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          await this.ctx.audioWorklet.addModule(workletUrl);
+          URL.revokeObjectURL(workletUrl);
+          this.workletReady = true;
+        } catch {
+          this.workletReady = false;
         }
-      } catch {
-        this.currentBuffer = createSyntheticAudioBuffer(this.ctx);
       }
+
+      const ctx = this.ctx;
+      const [speechBuf, ...slotBufs] = await Promise.all([
+        this.decodeUrlOrFallback(ctx, defaultSpeechUrl),
+        ...BUNDLED_SAMPLES.map((s) => this.decodeUrlOrFallback(ctx, s.url))
+      ]);
+      this.currentBuffer = speechBuf;
+      this.sampleBuffers = slotBufs;
     }
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume();
@@ -83,6 +278,98 @@ export class DspAudioEngine {
 
   public getSafetyLimiter(): DynamicsCompressorNode | null {
     return this.safetyLimiter;
+  }
+
+  public setActiveSampleSlot(slot: number) {
+    const clamped = Math.max(0, Math.min(3, Math.floor(slot)));
+    if (clamped !== this.activeSampleSlot) {
+      this.activeSampleSlot = clamped;
+      this.stopSample();
+    }
+  }
+
+  public getActiveSampleSlot(): number {
+    return this.activeSampleSlot;
+  }
+
+  public getIsSamplePlaying(): boolean {
+    return this.isSamplePlaying;
+  }
+
+  public stopSample() {
+    this.isSamplePlaying = false;
+    if (this.sampleSourceNode) {
+      try {
+        this.sampleSourceNode.onended = null;
+        this.sampleSourceNode.stop();
+        this.sampleSourceNode.disconnect();
+      } catch (e) {}
+      this.sampleSourceNode = null;
+    }
+    if (!this.isRunning) {
+      this.stopModulationLoop();
+    }
+  }
+
+  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot') {
+    if (!down) {
+      if (playmode === 'hold') {
+        this.stopSample();
+      }
+      return;
+    }
+
+    if (playmode === 'startstop' && this.isSamplePlaying) {
+      this.stopSample();
+      return;
+    }
+
+    await this.init();
+    if (!this.ctx || !this.gainMaster) return;
+
+    if (!this.sourceHub) {
+      this.sourceHub = this.ctx.createGain();
+      this.sourceHub.gain.value = 1.0;
+    }
+    if (this.activeNodes.length === 0) {
+      this.rebuildChain();
+    }
+
+    this.stopSample();
+
+    const sampleBuf = this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
+    if (!sampleBuf) return;
+
+    const triggerRow = this.preset?.trigger?.row;
+    const sampleNodeEntry =
+      (typeof triggerRow === 'number'
+        ? this.activeNodes.find((n) => n.effectType === 'SAMPLE' && n.nodeRefs.rowIdx === triggerRow)
+        : undefined) || this.activeNodes.find((n) => n.effectType === 'SAMPLE');
+
+    const targetInput: AudioNode | null = sampleNodeEntry?.nodeRefs?.sampleInput || this.sourceHub;
+    if (!targetInput) return;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = sampleBuf;
+    src.loop = playmode === 'hold' || playmode === 'startstop';
+    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastSpeed ?? 1.0;
+
+    this.sampleSourceNode = src;
+    this.isSamplePlaying = true;
+    src.onended = () => {
+      if (this.sampleSourceNode === src) {
+        this.isSamplePlaying = false;
+        this.sampleSourceNode = null;
+        if (!this.isRunning) {
+          this.stopModulationLoop();
+        }
+      }
+    };
+
+    src.connect(targetInput);
+    this.applyLiveModulation(true);
+    src.start(0);
+    this.startModulationLoop();
   }
 
   public updatePreset(preset: PresetConfig) {
@@ -95,7 +382,7 @@ export class DspAudioEngine {
       .join('|');
 
     this.preset = preset;
-    if (!this.isRunning) return;
+    if (!this.isRunning && !this.isSamplePlaying) return;
 
     if (prevTopology === nextTopology && this.activeNodes.length === preset.list.length) {
       // Update parameters in place without tearing down nodes or restarting audio
@@ -139,7 +426,7 @@ export class DspAudioEngine {
   private startModulationLoop() {
     this.stopModulationLoop();
     const tick = () => {
-      if (!this.isRunning) return;
+      if (!this.isRunning && !this.isSamplePlaying) return;
       this.applyLiveModulation();
       this.lfoRafId = requestAnimationFrame(tick);
     };
@@ -213,23 +500,89 @@ export class DspAudioEngine {
           nodeRefs.pitchShifter.processor.disconnect();
         } catch (e) {}
       }
+      if (nodeRefs.ssbShifter?.processor) {
+        try {
+          nodeRefs.ssbShifter.processor.onaudioprocess = null;
+          nodeRefs.ssbShifter.processor.disconnect();
+        } catch (e) {}
+      }
     });
     this.activeNodes = [];
   }
 
   /**
-   * Wrap the pure PitchShiftKernel (src/dsp/math.ts) in a ScriptProcessorNode.
-   * Shifts pitch while keeping playback speed strictly at 1.0x.
+   * Run PitchShiftKernel in an AudioWorkletNode on the dedicated audio rendering thread,
+   * falling back to ScriptProcessorNode in headless/Node test environments.
    */
   private createConstantSpeedPitchShifter(ctx: AudioContext, initialPitch: number) {
+    let currentPitch = PitchShiftKernel.clampPitch(initialPitch);
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const workletNode = new AudioWorkletNode(ctx, 'ep2350-pitch-shifter', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: { pitch: currentPitch }
+      });
+      return {
+        processor: workletNode as AudioNode & { onaudioprocess?: any },
+        setPitch: (newPitch: number) => {
+          currentPitch = PitchShiftKernel.clampPitch(newPitch);
+          workletNode.port.postMessage({ pitch: currentPitch });
+        },
+        getPitch: () => currentPitch
+      };
+    }
+
     const processor = ctx.createScriptProcessor(512, 1, 1);
-    const kernel = new PitchShiftKernel(initialPitch);
+    const kernel = new PitchShiftKernel(currentPitch);
     processor.onaudioprocess = (e: AudioProcessingEvent) => {
       kernel.process(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0));
     };
     return {
       processor,
-      setPitch: (newPitch: number) => kernel.setPitch(newPitch)
+      setPitch: (newPitch: number) => {
+        currentPitch = PitchShiftKernel.clampPitch(newPitch);
+        kernel.setPitch(currentPitch);
+      },
+      getPitch: () => currentPitch
+    };
+  }
+
+  /**
+   * Run Hilbert-transform Single-Sideband (SSB) frequency shifter in an AudioWorkletNode
+   * on the dedicated audio thread, falling back to ScriptProcessorNode in test environments.
+   */
+  private createSsbFrequencyShifter(ctx: AudioContext, initialFreqHz: number) {
+    let currentFreq = SsbFrequencyShiftKernel.clampFreq(initialFreqHz);
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const workletNode = new AudioWorkletNode(ctx, 'ep2350-ssb-shifter', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: { frequency: currentFreq }
+      });
+      return {
+        processor: workletNode as AudioNode & { onaudioprocess?: any },
+        setFrequency: (newFreqHz: number) => {
+          currentFreq = SsbFrequencyShiftKernel.clampFreq(newFreqHz);
+          workletNode.port.postMessage({ frequency: currentFreq });
+        },
+        getFrequency: () => currentFreq
+      };
+    }
+
+    const processor = ctx.createScriptProcessor(512, 1, 1);
+    const kernel = new SsbFrequencyShiftKernel(currentFreq, ctx.sampleRate);
+    processor.onaudioprocess = (e: AudioProcessingEvent) => {
+      kernel.process(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0));
+    };
+    return {
+      processor,
+      setFrequency: (newFreqHz: number) => {
+        currentFreq = SsbFrequencyShiftKernel.clampFreq(newFreqHz);
+        kernel.setFrequency(currentFreq);
+      },
+      getFrequency: () => currentFreq
     };
   }
 
@@ -237,6 +590,7 @@ export class DspAudioEngine {
     ++this.startGen;
     this.isStarting = false;
     this.isRunning = false;
+    this.stopSample();
     this.stopModulationLoop();
     this.cleanupActiveNodes();
     if (this.sourceHub) {
@@ -347,7 +701,7 @@ export class DspAudioEngine {
     }
 
     busSummer.connect(this.gainMaster);
-    this.applyLiveModulation();
+    this.applyLiveModulation(true);
   }
 
   private buildEffectNodes(
@@ -355,43 +709,20 @@ export class DspAudioEngine {
     rowIdx: number
   ): { input: AudioNode; output: AudioNode; nodeRefs: Record<string, any> } | null {
     if (!this.ctx) return null;
-
     const ctx = this.ctx;
-    // Normalized [0..1] parameters in UI (e.g. LOWPASS/HIGHPASS cutoff)
-    const toCutoffRatio = (v: number | undefined, defaultVal: number) =>
-      typeof v === 'number' ? (v > 1 ? v / 100 : v) : defaultVal;
-    // Percentage [0..100] parameters in UI (where 1 means 1% = 0.01, not 100%)
-    const toRatio = (v: number | undefined, defaultVal: number) =>
-      typeof v === 'number' ? (v >= 1 ? v / 100 : v) : defaultVal;
 
     switch (fx.effect) {
-      case 'LOWPASS': {
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.Q.value = 2.0;
-        const cutoff = toCutoffRatio(fx.cutoff, 1.0);
-        filter.frequency.value = cutoffToHz(cutoff);
-        return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
-      }
-
+      case 'LOWPASS':
       case 'HIGHPASS': {
         const filter = ctx.createBiquadFilter();
-        filter.type = 'highpass';
+        filter.type = fx.effect === 'LOWPASS' ? 'lowpass' : 'highpass';
         filter.Q.value = 2.0;
-        const cutoff = toCutoffRatio(fx.cutoff, 0.0);
-        filter.frequency.value = cutoffToHz(cutoff);
         return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
       }
 
       case 'EQUALISER': {
         const eq = ctx.createBiquadFilter();
         eq.type = 'peaking';
-        const cutoff = typeof fx.CUTOFF === 'number' ? fx.CUTOFF : 0.5;
-        eq.frequency.value = cutoffToHz(cutoff);
-        const q = typeof fx.Q === 'number' ? fx.Q : 0.7;
-        eq.Q.value = Math.max(0.1, q * 10);
-        const gain = typeof fx.GAIN === 'number' ? fx.GAIN : 0.0;
-        eq.gain.value = gain * 15;
         return { input: eq, output: eq, nodeRefs: { eq, rowIdx } };
       }
 
@@ -400,42 +731,28 @@ export class DspAudioEngine {
         // Even at amount: 0.0 (e.g. DEEP TRAP), base saturation is active when mix > 0
         const inputGain = ctx.createGain();
         const outputGain = ctx.createGain();
-
         const dryGain = ctx.createGain();
         const wetGain = ctx.createGain();
         const shaper = ctx.createWaveShaper();
+        shaper.oversample = '4x';
 
         const lpTone = ctx.createBiquadFilter();
         lpTone.type = 'lowpass';
         const hpTone = ctx.createBiquadFilter();
         hpTone.type = 'highpass';
 
-        const mix = toRatio(fx.mix, 0.5);
-        dryGain.gain.value = 1.0 - mix;
-        wetGain.gain.value = mix;
-
-        const amount = typeof fx.amount === 'number' ? fx.amount : 10.0;
-        shaper.curve = makeDistortionCurve(amount) as any;
-        shaper.oversample = '4x';
-
-        const lp = toRatio(fx['lowpass-cutoff'], 1.0);
-        lpTone.frequency.value = cutoffToHz(lp);
-        const hp = toRatio(fx['highpass-cutoff'], 0.0);
-        hpTone.frequency.value = cutoffToHz(hp);
-
         inputGain.connect(dryGain);
         inputGain.connect(hpTone);
         hpTone.connect(shaper);
         shaper.connect(lpTone);
         lpTone.connect(wetGain);
-
         dryGain.connect(outputGain);
         wetGain.connect(outputGain);
 
         return {
           input: inputGain,
           output: outputGain,
-          nodeRefs: { dryGain, wetGain, shaper, lpTone, hpTone, lastAmount: amount, rowIdx }
+          nodeRefs: { dryGain, wetGain, shaper, lpTone, hpTone, lastAmount: null, rowIdx }
         };
       }
 
@@ -443,15 +760,8 @@ export class DspAudioEngine {
         // Stereo/Dub Delay with up to 1.2s delay line, HP + LP damping in loop, and tape saturation for self-oscillation
         const input = ctx.createGain();
         const output = ctx.createGain();
-
         const delayNode = ctx.createDelay(2.0);
-        const time = typeof fx.time === 'number' ? fx.time : 0.35;
-        delayNode.delayTime.value = Math.max(0.01, Math.min(1.2, time));
-
         const feedbackGain = ctx.createGain();
-        const echo = toRatio(fx.echo, 0.4);
-        const crossFeed = toRatio(fx['cross-feed'], 0.0);
-        feedbackGain.gain.value = Math.min(1.15, echo + crossFeed * 0.15);
 
         // Soft limiter inside feedback loop so echo > 1.0 (SPACE ECHO) self-oscillates warmly without clipping
         const tapeLimiter = ctx.createWaveShaper();
@@ -459,25 +769,11 @@ export class DspAudioEngine {
 
         const lpFilter = ctx.createBiquadFilter();
         lpFilter.type = 'lowpass';
-        const lp = toRatio(fx['lowpass-cutoff'], 1.0);
-        lpFilter.frequency.value = cutoffToHz(lp);
-
         const hpFilter = ctx.createBiquadFilter();
         hpFilter.type = 'highpass';
-        const hp = toRatio(fx['highpass-cutoff'], 0.0);
-        hpFilter.frequency.value = cutoffToHz(hp);
-
         const dryGain = ctx.createGain();
-        dryGain.gain.value = toRatio(fx['dry-level'], 1.0);
-
         const wetGain = ctx.createGain();
-        wetGain.gain.value = toRatio(fx['wet-level'], 0.5);
-
         const wetPanner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-        const bal = typeof fx.balance === 'number' ? fx.balance : 0.5;
-        if ('pan' in wetPanner) {
-          wetPanner.pan.value = (bal - 0.5) * 2;
-        }
 
         // Connect delay loop: input -> delay -> hp -> lp -> tapeLimiter -> feedback -> delay
         input.connect(dryGain);
@@ -505,34 +801,20 @@ export class DspAudioEngine {
         // Algorithmic Reverb & Spring Tank with live-modulatable decay time and spring-mix
         const input = ctx.createGain();
         const output = ctx.createGain();
-
         const dryGain = ctx.createGain();
-        dryGain.gain.value = toRatio(fx['dry-level'], 1.0);
         const wetGain = ctx.createGain();
-        wetGain.gain.value = toRatio(fx['wet-level'], 0.5);
-
         const hpFilter = ctx.createBiquadFilter();
         hpFilter.type = 'highpass';
-        const hp = toRatio(fx['highpass-cutoff'], 0.0);
-        hpFilter.frequency.value = cutoffToHz(hp);
 
         const combTimes = [0.029, 0.037, 0.043, 0.051];
         const combBaseGains = [0.82, 0.78, 0.74, 0.7];
-        const timeScale = typeof fx.time === 'number' ? fx.time : 0.5;
-        const springMix = toRatio(fx['spring-mix'], 0.0);
-
         const combSum = ctx.createGain();
-        combSum.gain.value = 0.28 + springMix * 0.45;
-
         const combFeedbackGains: GainNode[] = [];
         const combDelays: DelayNode[] = [];
 
-        combTimes.forEach((dTime, idx) => {
+        combTimes.forEach(() => {
           const delay = ctx.createDelay(0.5);
-          delay.delayTime.value = dTime * (0.6 + timeScale * 0.8);
-
           const fb = ctx.createGain();
-          fb.gain.value = Math.min(0.95, combBaseGains[idx] * (0.6 + timeScale * 0.36));
 
           hpFilter.connect(delay);
           delay.connect(fb);
@@ -545,7 +827,6 @@ export class DspAudioEngine {
 
         input.connect(dryGain);
         dryGain.connect(output);
-
         input.connect(hpFilter);
         combSum.connect(wetGain);
         wetGain.connect(output);
@@ -570,11 +851,8 @@ export class DspAudioEngine {
       case 'RING': {
         const input = ctx.createGain();
         const output = ctx.createGain();
-
         const osc = ctx.createOscillator();
         osc.type = 'sine';
-        const freq = typeof fx.frequency === 'number' ? fx.frequency : 440.0;
-        osc.frequency.value = Math.max(1, freq);
 
         const ringGain = ctx.createGain();
         ringGain.gain.value = 0;
@@ -583,13 +861,9 @@ export class DspAudioEngine {
 
         const dryGain = ctx.createGain();
         const wetGain = ctx.createGain();
-        const mix = toRatio(fx.mix, 0.5);
-        dryGain.gain.value = 1.0 - mix;
-        wetGain.gain.value = mix;
 
         input.connect(dryGain);
         dryGain.connect(output);
-
         input.connect(ringGain);
         ringGain.connect(wetGain);
         wetGain.connect(output);
@@ -606,11 +880,7 @@ export class DspAudioEngine {
         // Keeps playback speed strictly at 1.0x while shifting pitch (0.5x..2.0x)
         const input = ctx.createGain();
         const output = ctx.createGain();
-
         const dryGain = ctx.createGain();
-        const dryLevel = toRatio(fx['dry-level'], 1.0);
-        dryGain.gain.value = dryLevel;
-
         const wetGain = ctx.createGain();
         wetGain.gain.value = 1.0;
 
@@ -619,7 +889,6 @@ export class DspAudioEngine {
 
         input.connect(dryGain);
         dryGain.connect(output);
-
         input.connect(pitchShifter.processor);
         pitchShifter.processor.connect(wetGain);
         wetGain.connect(output);
@@ -632,72 +901,48 @@ export class DspAudioEngine {
       }
 
       case 'SAMPLE': {
+        // Main vocal audition stream passes cleanly through SAMPLE (input -> output)
+        // Triggered hardware samples enter via sampleInput -> pitchShifter -> gain -> panner -> output
         const input = ctx.createGain();
+        const output = ctx.createGain();
+        const sampleInput = ctx.createGain();
         const gain = ctx.createGain();
-        const level = toRatio(fx.level, 1.0);
-        gain.gain.value = level;
-
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-        const bal = typeof fx.balance === 'number' ? fx.balance : 0.5;
-        if ('pan' in panner) {
-          panner.pan.value = Math.max(-1.0, Math.min(1.0, (bal - 0.5) * 2));
-        }
-
-        // Only SAMPLE.speed changes playback speed; SAMPLE.pitch shifts pitch at constant speed
-        if (this.sourceNode && typeof fx.speed === 'number' && fx.speed > 0) {
-          this.sourceNode.playbackRate.value = fx.speed;
-        }
 
         const semitones = typeof fx.pitch === 'number' ? fx.pitch : 0;
         const pitchRatio = Math.pow(2, semitones / 12);
         const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
 
-        input.connect(pitchShifter.processor);
+        input.connect(output);
+        sampleInput.connect(pitchShifter.processor);
         pitchShifter.processor.connect(gain);
         gain.connect(panner);
+        panner.connect(output);
 
-        return { input, output: panner, nodeRefs: { gain, panner, pitchShifter, rowIdx } };
+        return {
+          input,
+          output,
+          nodeRefs: { sampleInput, gain, panner, pitchShifter, lastSpeed: 1.0, rowIdx }
+        };
       }
 
       case 'SSB': {
-        // Single Sideband frequency shift approximation
+        // True Single Sideband quadrature Hilbert frequency shifter (-20kHz..+20kHz)
         const input = ctx.createGain();
         const output = ctx.createGain();
-
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
         const freq = typeof fx.frequency === 'number' ? fx.frequency : 0.0;
-        osc.frequency.value = Math.max(1, Math.abs(freq));
+        const ssbShifter = this.createSsbFrequencyShifter(ctx, freq);
 
-        const modGain = ctx.createGain();
-        modGain.gain.value = 0;
-        osc.connect(modGain.gain);
-        osc.start();
+        input.connect(ssbShifter.processor);
+        ssbShifter.processor.connect(output);
 
-        const dryGain = ctx.createGain();
-        const wetGain = ctx.createGain();
-        const isShifted = Math.abs(freq) > 1;
-        dryGain.gain.value = isShifted ? 0.25 : 1.0;
-        wetGain.gain.value = isShifted ? 0.75 : 0.0;
-
-        input.connect(dryGain);
-        dryGain.connect(output);
-
-        input.connect(modGain);
-        modGain.connect(wetGain);
-        wetGain.connect(output);
-
-        return { input, output, nodeRefs: { osc, dryGain, wetGain, rowIdx } };
+        return { input, output, nodeRefs: { ssbShifter, rowIdx } };
       }
 
       case 'BALANCE': {
         const input = ctx.createGain();
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
         const chopperGain = ctx.createGain();
-        const bal = typeof fx.balance === 'number' ? fx.balance : 0.5;
-        if ('pan' in panner) {
-          panner.pan.value = (bal - 0.5) * 2;
-        }
         input.connect(panner);
         panner.connect(chopperGain);
         return { input, output: chopperGain, nodeRefs: { panner, chopperGain, rowIdx } };
@@ -710,7 +955,7 @@ export class DspAudioEngine {
     }
   }
 
-  private applyLiveModulation() {
+  private applyLiveModulation(immediate = false) {
     if (!this.preset || !this.ctx) return;
     const ctx = this.ctx;
 
@@ -727,338 +972,162 @@ export class DspAudioEngine {
     const lfoPhase = typeof lfo?.phase === 'number' ? lfo.phase : 0;
     const lfoWave = lfo ? computeLfoWave(lfo.shape || 'sine', ctx.currentTime, effectiveLfoSpeed, lfoPhase) : 0;
 
+    // Normalized [0..1] parameters in UI (e.g. LOWPASS/HIGHPASS cutoff)
+    const toCutoffRatio = (v: number | undefined, defaultVal: number) =>
+      typeof v === 'number' ? (v > 1 ? v / 100 : v) : defaultVal;
+    // Percentage [0..100] parameters in UI (where 1 means 1% = 0.01, not 100%)
+    const toRatio = (v: number | undefined, defaultVal: number) =>
+      typeof v === 'number' ? (v >= 1 ? v / 100 : v) : defaultVal;
+
+    const setParam = (audioParam: AudioParam | undefined, val: number, tau = 0.015) => {
+      if (!audioParam) return;
+      if (immediate) {
+        audioParam.value = val;
+      } else {
+        audioParam.setTargetAtTime(val, ctx.currentTime, tau);
+      }
+    };
+
     this.activeNodes.forEach(({ effectType, params, nodeRefs }) => {
       const rowIdx = nodeRefs.rowIdx;
 
-      // Normalized [-1..1] deltas for [0..1] parameters
-      let handleDelta = 0;
-      if (handle && handle.target !== 'lfo' && handle.row === rowIdx) {
-        const depthRatio = resolveModDepth(effectType, handle.param, handle.depth);
-        handleDelta = this.modState.handlePos * depthRatio;
-      }
-
-      let shakeDelta = 0;
-      if (shake && shake.row === rowIdx) {
-        const depthRatio = resolveModDepth(effectType, shake.param, shake.depth);
-        shakeDelta = this.modState.shakeAmount * depthRatio;
-      }
-
-      let lfoDelta = 0;
-      if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx) {
-        const depthRatio = resolveModDepth(effectType, lfo.param, lfo.depth);
-        lfoDelta = lfoWave * depthRatio;
-      }
-
-      const toCutoffRatio = (v: number | undefined, defaultVal: number) =>
-        typeof v === 'number' ? (v > 1 ? v / 100 : v) : defaultVal;
-      const toRatio = (v: number | undefined, defaultVal: number) =>
-        typeof v === 'number' ? (v >= 1 ? v / 100 : v) : defaultVal;
-
-      if (effectType === 'LOWPASS' || effectType === 'HIGHPASS') {
-        const baseCutoff = toCutoffRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
-        let moddedCutoff = baseCutoff;
-        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'cutoff') moddedCutoff += handleDelta;
-        if (shake && shake.row === rowIdx && shake.param === 'cutoff') moddedCutoff += shakeDelta;
-        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'cutoff') moddedCutoff += lfoDelta;
-        moddedCutoff = Math.max(0.0, Math.min(1.0, moddedCutoff));
-
-        const hz = cutoffToHz(moddedCutoff);
-        if (nodeRefs.filter) {
-          nodeRefs.filter.frequency.setTargetAtTime(hz, ctx.currentTime, 0.015);
+      const mod = (paramName: string, base: number, min: number, max: number) => {
+        let v = base;
+        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === paramName) {
+          v += this.modState.handlePos * resolveModDepth(effectType, paramName, handle.depth);
         }
-      } else if (effectType === 'EQUALISER') {
-        if (nodeRefs.eq) {
-          const baseCutoff = typeof params.CUTOFF === 'number' ? params.CUTOFF : 0.5;
-          let moddedCutoff = baseCutoff;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'CUTOFF') moddedCutoff += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'CUTOFF') moddedCutoff += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'CUTOFF') moddedCutoff += lfoDelta;
-          moddedCutoff = Math.max(0.0, Math.min(1.0, moddedCutoff));
-          nodeRefs.eq.frequency.setTargetAtTime(cutoffToHz(moddedCutoff), ctx.currentTime, 0.015);
-
-          let q = typeof params.Q === 'number' ? params.Q : 0.7;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'Q') q += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'Q') q += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'Q') q += lfoDelta;
-          q = Math.max(0.0, Math.min(1.0, q));
-          nodeRefs.eq.Q.setTargetAtTime(Math.max(0.1, q * 10), ctx.currentTime, 0.015);
-
-          let gain = typeof params.GAIN === 'number' ? params.GAIN : 0.0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'GAIN') gain += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'GAIN') gain += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'GAIN') gain += lfoDelta;
-          gain = Math.max(-1.0, Math.min(1.0, gain));
-          nodeRefs.eq.gain.setTargetAtTime(gain * 15, ctx.currentTime, 0.015);
+        if (shake && shake.row === rowIdx && shake.param === paramName) {
+          v += this.modState.shakeAmount * resolveModDepth(effectType, paramName, shake.depth);
         }
-      } else if (effectType === 'DIST') {
-        if (nodeRefs.shaper) {
-          const baseAmount = typeof params.amount === 'number' ? params.amount : 10.0;
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'amount') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'amount') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'amount') delta += lfoDelta;
-          const moddedAmount = Math.max(0.0, Math.min(40.0, Math.round((baseAmount + delta) * 100) / 100));
-          if (nodeRefs.lastAmount !== moddedAmount) {
+        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === paramName) {
+          v += lfoWave * resolveModDepth(effectType, paramName, lfo.depth);
+        }
+        return Math.max(min, Math.min(max, v));
+      };
+
+      switch (effectType) {
+        case 'LOWPASS':
+        case 'HIGHPASS': {
+          const baseCutoff = toCutoffRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
+          setParam(nodeRefs.filter?.frequency, cutoffToHz(mod('cutoff', baseCutoff, 0.0, 1.0)), 0.015);
+          break;
+        }
+
+        case 'EQUALISER': {
+          const cutoff = mod('CUTOFF', typeof params.CUTOFF === 'number' ? params.CUTOFF : 0.5, 0.0, 1.0);
+          const q = mod('Q', typeof params.Q === 'number' ? params.Q : 0.7, 0.0, 1.0);
+          const gain = mod('GAIN', typeof params.GAIN === 'number' ? params.GAIN : 0.0, -1.0, 1.0);
+          setParam(nodeRefs.eq?.frequency, cutoffToHz(cutoff), 0.015);
+          setParam(nodeRefs.eq?.Q, Math.max(0.1, q * 10), 0.015);
+          setParam(nodeRefs.eq?.gain, gain * 15, 0.015);
+          break;
+        }
+
+        case 'DIST': {
+          const rawAmount = mod('amount', typeof params.amount === 'number' ? params.amount : 10.0, 0.0, 40.0);
+          const moddedAmount = Math.round(rawAmount * 100) / 100;
+          if (nodeRefs.shaper && nodeRefs.lastAmount !== moddedAmount) {
             nodeRefs.shaper.curve = makeDistortionCurve(moddedAmount) as any;
             nodeRefs.lastAmount = moddedAmount;
           }
-        }
-        if (nodeRefs.wetGain && nodeRefs.dryGain) {
-          const baseMix = toRatio(params.mix, 0.5);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'mix') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'mix') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'mix') delta += lfoDelta;
-          const mix = Math.max(0.0, Math.min(1.0, baseMix + delta));
-          nodeRefs.wetGain.gain.setTargetAtTime(mix, ctx.currentTime, 0.015);
-          nodeRefs.dryGain.gain.setTargetAtTime(1.0 - mix, ctx.currentTime, 0.015);
-        }
-        if (nodeRefs.lpTone) {
-          let lp = toRatio(params['lowpass-cutoff'], 1.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'lowpass-cutoff') lp += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'lowpass-cutoff') lp += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'lowpass-cutoff') lp += lfoDelta;
-          lp = Math.max(0.0, Math.min(1.0, lp));
-          nodeRefs.lpTone.frequency.setTargetAtTime(cutoffToHz(lp), ctx.currentTime, 0.015);
-        }
-        if (nodeRefs.hpTone) {
-          let hp = toRatio(params['highpass-cutoff'], 0.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'highpass-cutoff') hp += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'highpass-cutoff') hp += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'highpass-cutoff') hp += lfoDelta;
-          hp = Math.max(0.0, Math.min(1.0, hp));
-          nodeRefs.hpTone.frequency.setTargetAtTime(cutoffToHz(hp), ctx.currentTime, 0.015);
-        }
-      } else if (effectType === 'DELAY') {
-        if (nodeRefs.feedbackGain) {
-          const baseEcho = toRatio(params.echo, 0.4);
-          let crossFeed = toRatio(params['cross-feed'], 0.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'cross-feed') crossFeed += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'cross-feed') crossFeed += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'cross-feed') crossFeed += lfoDelta;
-          crossFeed = Math.max(0.0, Math.min(1.0, crossFeed));
-
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'echo') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'echo') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'echo') delta += lfoDelta;
-          // Allow up to 1.18 when modulated past 1.0 so SPACE ECHO self-oscillates through tapeLimiter
-          const echo = Math.max(0.0, Math.min(1.18, baseEcho + delta + crossFeed * 0.15));
-          nodeRefs.feedbackGain.gain.setTargetAtTime(echo, ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.delayNode) {
-          const baseTime = typeof params.time === 'number' ? params.time : 0.35;
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'time') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'time') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'time') delta += lfoDelta;
-          const dTime = Math.max(0.01, Math.min(1.2, baseTime + delta));
-          nodeRefs.delayNode.delayTime.setTargetAtTime(dTime, ctx.currentTime, 0.03);
-        }
-        if (nodeRefs.wetGain) {
-          const baseWet = toRatio(params['wet-level'], 0.5);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'wet-level') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'wet-level') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'wet-level') delta += lfoDelta;
-          nodeRefs.wetGain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, baseWet + delta)), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.dryGain) {
-          let dry = toRatio(params['dry-level'], 1.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'dry-level') dry += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'dry-level') dry += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'dry-level') dry += lfoDelta;
-          nodeRefs.dryGain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, dry)), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.lpFilter) {
-          let lp = toRatio(params['lowpass-cutoff'], 1.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'lowpass-cutoff') lp += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'lowpass-cutoff') lp += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'lowpass-cutoff') lp += lfoDelta;
-          lp = Math.max(0.0, Math.min(1.0, lp));
-          nodeRefs.lpFilter.frequency.setTargetAtTime(cutoffToHz(lp), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.hpFilter) {
-          let hp = toRatio(params['highpass-cutoff'], 0.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'highpass-cutoff') hp += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'highpass-cutoff') hp += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'highpass-cutoff') hp += lfoDelta;
-          hp = Math.max(0.0, Math.min(1.0, hp));
-          nodeRefs.hpFilter.frequency.setTargetAtTime(cutoffToHz(hp), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.wetPanner && 'pan' in nodeRefs.wetPanner) {
-          let bal = typeof params.balance === 'number' ? params.balance : 0.5;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'balance') bal += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'balance') bal += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'balance') bal += lfoDelta;
-          bal = Math.max(0.0, Math.min(1.0, bal));
-          nodeRefs.wetPanner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.015);
-        }
-      } else if (effectType === 'HARMONY') {
-        const basePitch = typeof params.pitch === 'number' ? params.pitch : 1.0;
-        let moddedPitch = basePitch;
-
-        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'pitch') {
-          moddedPitch += this.modState.handlePos * (typeof handle.depth === 'number' ? handle.depth : 0.5);
-        }
-        if (shake && shake.row === rowIdx && shake.param === 'pitch') {
-          moddedPitch += this.modState.shakeAmount * (typeof shake.depth === 'number' ? shake.depth : -0.2);
-        }
-        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'pitch') {
-          moddedPitch += lfoWave * (typeof lfo.depth === 'number' ? lfo.depth : 0.1);
-        }
-        moddedPitch = Math.max(0.5, Math.min(2.0, moddedPitch));
-
-        if (nodeRefs.pitchShifter) {
-          nodeRefs.pitchShifter.setPitch(moddedPitch);
+          const mix = mod('mix', toRatio(params.mix, 0.5), 0.0, 1.0);
+          setParam(nodeRefs.wetGain?.gain, mix, 0.015);
+          setParam(nodeRefs.dryGain?.gain, 1.0 - mix, 0.015);
+          setParam(nodeRefs.lpTone?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.015);
+          setParam(nodeRefs.hpTone?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.015);
+          break;
         }
 
-        if (nodeRefs.dryGain) {
-          const baseDry = toRatio(params['dry-level'], 1.0);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'dry-level') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'dry-level') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'dry-level') delta += lfoDelta;
-          nodeRefs.dryGain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, baseDry + delta)), ctx.currentTime, 0.015);
-        }
-      } else if (effectType === 'SAMPLE') {
-        const baseSemitones = typeof params.pitch === 'number' ? params.pitch : 0;
-        let moddedSemitones = baseSemitones;
-        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'pitch') {
-          moddedSemitones += this.modState.handlePos * (typeof handle.depth === 'number' ? handle.depth : 12);
-        }
-        if (shake && shake.row === rowIdx && shake.param === 'pitch') {
-          moddedSemitones += this.modState.shakeAmount * (typeof shake.depth === 'number' ? shake.depth : 12);
-        }
-        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'pitch') {
-          moddedSemitones += lfoWave * (typeof lfo.depth === 'number' ? lfo.depth : 6);
-        }
-        if (nodeRefs.pitchShifter) {
-          nodeRefs.pitchShifter.setPitch(Math.pow(2, moddedSemitones / 12));
-        }
-
-        if (this.sourceNode) {
-          let moddedSpeed = typeof params.speed === 'number' ? params.speed : 1.0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'speed') moddedSpeed += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'speed') moddedSpeed += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'speed') moddedSpeed += lfoDelta;
-          moddedSpeed = Math.max(0.05, Math.min(4.0, moddedSpeed));
-          this.sourceNode.playbackRate.value = moddedSpeed;
-        }
-
-        if (nodeRefs.gain) {
-          let level = toRatio(params.level, 1.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'level') level += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'level') level += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'level') level += lfoDelta;
-          nodeRefs.gain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, level)), ctx.currentTime, 0.015);
-        }
-
-        if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
-          let bal = typeof params.balance === 'number' ? params.balance : 0.5;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'balance') bal += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'balance') bal += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'balance') bal += lfoDelta;
-          bal = Math.max(0.0, Math.min(1.0, bal));
-          nodeRefs.panner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.015);
-        }
-      } else if (effectType === 'RING' || effectType === 'SSB') {
-        if (nodeRefs.osc) {
-          const baseFreq = typeof params.frequency === 'number' ? params.frequency : (effectType === 'RING' ? 440.0 : 0.0);
-          let moddedFreq = baseFreq;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'frequency') {
-            moddedFreq += this.modState.handlePos * (typeof handle.depth === 'number' ? handle.depth : 500.0);
+        case 'DELAY': {
+          const crossFeed = mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0);
+          const echo = mod('echo', toRatio(params.echo, 0.4) + crossFeed * 0.15, 0.0, 1.18);
+          setParam(nodeRefs.feedbackGain?.gain, echo, 0.02);
+          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.2), 0.03);
+          setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
+          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
+          setParam(nodeRefs.lpFilter?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.02);
+          setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
+          if (nodeRefs.wetPanner && 'pan' in nodeRefs.wetPanner) {
+            const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
+            setParam(nodeRefs.wetPanner.pan, (bal - 0.5) * 2, 0.015);
           }
-          if (shake && shake.row === rowIdx && shake.param === 'frequency') {
-            moddedFreq += this.modState.shakeAmount * (typeof shake.depth === 'number' ? shake.depth : 200.0);
-          }
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'frequency') {
-            const rawDepth = typeof lfo.depth === 'number' ? lfo.depth : 50.0;
-            moddedFreq += lfoWave * rawDepth;
-          }
-          nodeRefs.osc.frequency.setTargetAtTime(Math.max(1, Math.abs(moddedFreq)), ctx.currentTime, 0.015);
-          if (effectType === 'SSB' && nodeRefs.dryGain && nodeRefs.wetGain) {
-            const active = Math.abs(moddedFreq) > 2;
-            nodeRefs.dryGain.gain.setTargetAtTime(active ? 0.25 : 1.0, ctx.currentTime, 0.015);
-            nodeRefs.wetGain.gain.setTargetAtTime(active ? 0.75 : 0.0, ctx.currentTime, 0.015);
-          }
+          break;
         }
-        if (effectType === 'RING' && nodeRefs.dryGain && nodeRefs.wetGain) {
-          let mix = toRatio(params.mix, 0.5);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'mix') mix += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'mix') mix += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'mix') mix += lfoDelta;
-          mix = Math.max(0.0, Math.min(1.0, mix));
-          nodeRefs.wetGain.gain.setTargetAtTime(mix, ctx.currentTime, 0.015);
-          nodeRefs.dryGain.gain.setTargetAtTime(1.0 - mix, ctx.currentTime, 0.015);
-        }
-      } else if (effectType === 'REVERB') {
-        if (nodeRefs.wetGain) {
-          const baseWet = toRatio(params['wet-level'], 0.5);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'wet-level') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'wet-level') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'wet-level') delta += lfoDelta;
-          nodeRefs.wetGain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, baseWet + delta)), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.dryGain) {
-          const baseDry = toRatio(params['dry-level'], 1.0);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'dry-level') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'dry-level') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'dry-level') delta += lfoDelta;
-          nodeRefs.dryGain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, baseDry + delta)), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.hpFilter) {
-          let hp = toRatio(params['highpass-cutoff'], 0.0);
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'highpass-cutoff') hp += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'highpass-cutoff') hp += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'highpass-cutoff') hp += lfoDelta;
-          hp = Math.max(0.0, Math.min(1.0, hp));
-          nodeRefs.hpFilter.frequency.setTargetAtTime(cutoffToHz(hp), ctx.currentTime, 0.02);
-        }
-        if (nodeRefs.combFeedbackGains && nodeRefs.combBaseGains) {
-          const baseTime = typeof params.time === 'number' ? params.time : 0.5;
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'time') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'time') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'time') delta += lfoDelta;
-          const timeScale = Math.max(0.0, Math.min(1.0, baseTime + delta));
-          nodeRefs.combFeedbackGains.forEach((fb: GainNode, idx: number) => {
-            const g = Math.min(0.96, nodeRefs.combBaseGains[idx] * (0.6 + timeScale * 0.36));
-            fb.gain.setTargetAtTime(g, ctx.currentTime, 0.02);
-          });
-          if (nodeRefs.combDelays && nodeRefs.combTimes) {
-            nodeRefs.combDelays.forEach((delay: DelayNode, idx: number) => {
-              const dTime = nodeRefs.combTimes[idx] * (0.6 + timeScale * 0.8);
-              delay.delayTime.setTargetAtTime(dTime, ctx.currentTime, 0.02);
+
+        case 'REVERB': {
+          setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
+          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
+          setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
+          const timeScale = mod('time', typeof params.time === 'number' ? params.time : 0.5, 0.0, 1.0);
+          if (nodeRefs.combFeedbackGains && nodeRefs.combBaseGains) {
+            nodeRefs.combFeedbackGains.forEach((fb: GainNode, idx: number) => {
+              const g = Math.min(0.96, nodeRefs.combBaseGains[idx] * (0.6 + timeScale * 0.36));
+              setParam(fb.gain, g, 0.02);
             });
           }
+          if (nodeRefs.combDelays && nodeRefs.combTimes) {
+            nodeRefs.combDelays.forEach((delay: DelayNode, idx: number) => {
+              setParam(delay.delayTime, nodeRefs.combTimes[idx] * (0.6 + timeScale * 0.8), 0.02);
+            });
+          }
+          const spring = mod('spring-mix', toRatio(params['spring-mix'], 0.0), 0.0, 1.0);
+          setParam(nodeRefs.combSum?.gain, 0.28 + spring * 0.55, 0.02);
+          break;
         }
-        if (nodeRefs.combSum) {
-          const baseSpring = toRatio(params['spring-mix'], 0.0);
-          let delta = 0;
-          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'spring-mix') delta += handleDelta;
-          if (shake && shake.row === rowIdx && shake.param === 'spring-mix') delta += shakeDelta;
-          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'spring-mix') delta += lfoDelta;
-          const spring = Math.max(0.0, Math.min(1.0, baseSpring + delta));
-          nodeRefs.combSum.gain.setTargetAtTime(0.28 + spring * 0.55, ctx.currentTime, 0.02);
+
+        case 'RING':
+        case 'SSB': {
+          const defaultFreq = effectType === 'RING' ? 440.0 : 0.0;
+          const moddedFreq = mod('frequency', typeof params.frequency === 'number' ? params.frequency : defaultFreq, -20000, 20000);
+          if (effectType === 'SSB' && nodeRefs.ssbShifter) {
+            nodeRefs.ssbShifter.setFrequency(moddedFreq);
+          } else if (nodeRefs.osc) {
+            setParam(nodeRefs.osc.frequency, Math.max(1, Math.abs(moddedFreq)), 0.015);
+          }
+          if (effectType === 'RING') {
+            const mix = mod('mix', toRatio(params.mix, 0.5), 0.0, 1.0);
+            setParam(nodeRefs.wetGain?.gain, mix, 0.015);
+            setParam(nodeRefs.dryGain?.gain, 1.0 - mix, 0.015);
+          }
+          break;
         }
-      } else if (effectType === 'BALANCE') {
-        const baseBal = typeof params.balance === 'number' ? params.balance : 0.5;
-        let delta = 0;
-        if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'balance') delta += handleDelta;
-        if (shake && shake.row === rowIdx && shake.param === 'balance') delta += shakeDelta;
-        if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'balance') delta += lfoDelta;
-        const rawBal = baseBal + delta;
-        const bal = Math.max(0.0, Math.min(1.0, rawBal));
-        if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
-          nodeRefs.panner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.01);
+
+        case 'HARMONY': {
+          const moddedPitch = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 1.0, 0.5, 2.0);
+          nodeRefs.pitchShifter?.setPitch(moddedPitch);
+          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.015);
+          break;
         }
-        // When LFO square-modulates balance across extremes (like LOSING SIGNAL), impart choppy gate pulse
-        if (nodeRefs.chopperGain) {
-          const isChopped = lfo && lfo.row === rowIdx && lfo.param === 'balance' && lfoWave < 0;
-          nodeRefs.chopperGain.gain.setTargetAtTime(isChopped ? 0.18 : 1.0, ctx.currentTime, 0.008);
+
+        case 'SAMPLE': {
+          const moddedSemitones = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 0, -24, 24);
+          nodeRefs.pitchShifter?.setPitch(Math.pow(2, moddedSemitones / 12));
+          const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
+          nodeRefs.lastSpeed = moddedSpeed;
+          if (this.sampleSourceNode) {
+            this.sampleSourceNode.playbackRate.value = moddedSpeed;
+          }
+          if (this.sourceNode) {
+            this.sourceNode.playbackRate.value = moddedSpeed;
+          }
+          setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);
+          if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
+            const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
+            setParam(nodeRefs.panner.pan, (bal - 0.5) * 2, 0.015);
+          }
+          break;
+        }
+
+        case 'BALANCE': {
+          const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
+          if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
+            setParam(nodeRefs.panner.pan, (bal - 0.5) * 2, 0.01);
+          }
+          if (nodeRefs.chopperGain) {
+            const isChopped = lfo && lfo.row === rowIdx && lfo.param === 'balance' && lfoWave < 0;
+            setParam(nodeRefs.chopperGain.gain, isChopped ? 0.18 : 1.0, 0.008);
+          }
+          break;
         }
       }
     });

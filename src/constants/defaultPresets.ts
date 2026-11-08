@@ -53,10 +53,10 @@ export const createEmptyPack = (): PackConfig => {
     name: 'NEW PACK',
     useBuiltInSamples: true,
     samples: [
-      { id: `s-0-${now}`, pos: 0, file: '1.wav', playmode: 'oneshot' },
-      { id: `s-1-${now}`, pos: 1, file: '2.wav', playmode: 'oneshot' },
-      { id: `s-2-${now}`, pos: 2, file: '3.wav', playmode: 'hold' },
-      { id: `s-3-${now}`, pos: 3, file: '4.wav', playmode: 'startstop' }
+      { id: `s-0-${now}`, pos: 0, file: 'kara-te.wav', playmode: 'oneshot' },
+      { id: `s-1-${now}`, pos: 1, file: 'shouty.wav', playmode: 'oneshot' },
+      { id: `s-2-${now}`, pos: 2, file: 'slion.wav', playmode: 'hold' },
+      { id: `s-3-${now}`, pos: 3, file: 'alert.wav', playmode: 'startstop' }
     ],
     presets: [0, 1, 2, 3].map((slot) => ({
       id: `preset-${slot}-${now}`,
