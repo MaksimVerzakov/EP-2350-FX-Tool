@@ -669,9 +669,15 @@ export class DspAudioEngine {
 
       case 'SAMPLE': {
         const input = ctx.createGain();
-        const output = ctx.createGain();
+        const gain = ctx.createGain();
         const level = toRatio(fx.level, 1.0);
-        output.gain.value = level;
+        gain.gain.value = level;
+
+        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+        const bal = typeof fx.balance === 'number' ? fx.balance : 0.5;
+        if ('pan' in panner) {
+          panner.pan.value = Math.max(-1.0, Math.min(1.0, (bal - 0.5) * 2));
+        }
 
         // Only SAMPLE.speed changes playback speed; SAMPLE.pitch shifts pitch at constant speed
         if (this.sourceNode && typeof fx.speed === 'number' && fx.speed > 0) {
@@ -683,9 +689,10 @@ export class DspAudioEngine {
         const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
 
         input.connect(pitchShifter.processor);
-        pitchShifter.processor.connect(output);
+        pitchShifter.processor.connect(gain);
+        gain.connect(panner);
 
-        return { input, output, nodeRefs: { gain: output, pitchShifter, rowIdx } };
+        return { input, output: panner, nodeRefs: { gain, panner, pitchShifter, rowIdx } };
       }
 
       case 'SSB': {
@@ -981,6 +988,15 @@ export class DspAudioEngine {
           if (shake && shake.row === rowIdx && shake.param === 'level') level += shakeDelta;
           if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'level') level += lfoDelta;
           nodeRefs.gain.gain.setTargetAtTime(Math.max(0.0, Math.min(1.0, level)), ctx.currentTime, 0.015);
+        }
+
+        if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
+          let bal = typeof params.balance === 'number' ? params.balance : 0.5;
+          if (handle && handle.target !== 'lfo' && handle.row === rowIdx && handle.param === 'balance') bal += handleDelta;
+          if (shake && shake.row === rowIdx && shake.param === 'balance') bal += shakeDelta;
+          if (lfo && lfo.target !== 'lfo' && lfo.row === rowIdx && lfo.param === 'balance') bal += lfoDelta;
+          bal = Math.max(0.0, Math.min(1.0, bal));
+          nodeRefs.panner.pan.setTargetAtTime((bal - 0.5) * 2, ctx.currentTime, 0.015);
         }
       } else if (effectType === 'RING' || effectType === 'SSB') {
         if (nodeRefs.osc) {
