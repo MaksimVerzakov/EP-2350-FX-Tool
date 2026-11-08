@@ -458,8 +458,8 @@ assert.ok(
   'MicDevice must render two horizontal orange arrows ("Push ->" to middle of lever and "Shake ->" to middle of Mic FX block)'
 );
 assert.ok(
-  micDeviceSrc.includes('isInMotion') && micDeviceSrc.includes('!isInMotion'),
-  'Orange indicator arrows must be hidden during motion (shaking or lever movement)'
+  !micDeviceSrc.includes('!isInMotion') && micDeviceSrc.includes('y1="116"'),
+  'Orange indicator arrows must remain visible during push/shake and Push arrow must sit at the visual middle of the lever'
 );
 
 // 4. Shake is triggered on the lower chassis faceplate block (Mic FX / Ting FX), NOT on wire or buttons
