@@ -1,6 +1,7 @@
 import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import {
+  NoiseGateKernel,
   PitchShiftKernel,
   SsbFrequencyShiftKernel,
   computeLfoWave,
@@ -174,7 +175,55 @@ class Ep2350SsbShiftProcessor extends AudioWorkletProcessor {
 
 registerProcessor('ep2350-pitch-shifter', Ep2350PitchShiftProcessor);
 registerProcessor('ep2350-ssb-shifter', Ep2350SsbShiftProcessor);
+
+class Ep2350NoiseGateProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    const sr = typeof sampleRate === 'number' && sampleRate > 0 ? sampleRate : 48000;
+    this.openThreshold = Math.pow(10, -46 / 20);
+    this.closeThreshold = Math.pow(10, -52 / 20);
+    this.floorGain = 0.05;
+    this.attackCoeff = Math.exp(-1.0 / (0.002 * sr));
+    this.releaseCoeff = Math.exp(-1.0 / (0.06 * sr));
+    this.gainAttackCoeff = Math.exp(-1.0 / (0.003 * sr));
+    this.gainReleaseCoeff = Math.exp(-1.0 / (0.08 * sr));
+    this.env = 0;
+    this.gateGain = 1.0;
+    this.isOpen = true;
+  }
+  process(inputs, outputs) {
+    const input = inputs[0]?.[0];
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    for (let i = 0; i < output.length; i++) {
+      const x = input ? input[i] : 0;
+      const absX = Math.abs(x);
+      if (absX > this.env) {
+        this.env = this.attackCoeff * this.env + (1.0 - this.attackCoeff) * absX;
+      } else {
+        this.env = this.releaseCoeff * this.env + (1.0 - this.releaseCoeff) * absX;
+      }
+      if (!this.isOpen && this.env >= this.openThreshold) {
+        this.isOpen = true;
+      } else if (this.isOpen && this.env < this.closeThreshold) {
+        this.isOpen = false;
+      }
+      const targetGain = this.isOpen ? 1.0 : this.floorGain;
+      if (targetGain > this.gateGain) {
+        this.gateGain = this.gainAttackCoeff * this.gateGain + (1.0 - this.gainAttackCoeff) * targetGain;
+      } else {
+        this.gateGain = this.gainReleaseCoeff * this.gateGain + (1.0 - this.gainReleaseCoeff) * targetGain;
+      }
+      output[i] = x * this.gateGain;
+    }
+    return true;
+  }
+}
+
+registerProcessor('ep2350-noisegate', Ep2350NoiseGateProcessor);
 `;
+
+export type InputMode = 'sample' | 'mic';
 
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
@@ -186,12 +235,18 @@ export class DspAudioEngine {
   private isRunning: boolean = false;
   private isStarting: boolean = false;
   private startGen: number = 0;
+  private inputMode: InputMode = 'sample';
+  private micStream: MediaStream | null = null;
+  private micSourceNode: MediaStreamAudioSourceNode | null = null;
+  private lastMicError: string | null = null;
   private currentBuffer: AudioBuffer | null = null;
   private sampleBuffers: AudioBuffer[] = [];
   private activeSampleSlot: number = 0;
   private sampleSourceNode: AudioBufferSourceNode | null = null;
   private isSamplePlaying: boolean = false;
   private sourceNode: AudioBufferSourceNode | null = null;
+  private inputCompressor: DynamicsCompressorNode | null = null;
+  private inputNoiseGate: (AudioNode & { onaudioprocess?: any }) | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
@@ -280,6 +335,80 @@ export class DspAudioEngine {
     return this.safetyLimiter;
   }
 
+  public getInputCompressor(): DynamicsCompressorNode | null {
+    return this.inputCompressor;
+  }
+
+  public getInputNoiseGate(): (AudioNode & { onaudioprocess?: any }) | null {
+    return this.inputNoiseGate;
+  }
+
+  public getInputMode(): InputMode {
+    return this.inputMode;
+  }
+
+  public getLastMicError(): string | null {
+    return this.lastMicError;
+  }
+
+  public async setInputMode(mode: InputMode): Promise<boolean> {
+    if (this.inputMode === mode) return true;
+    this.inputMode = mode;
+    this.lastMicError = null;
+    if (this.isRunning) {
+      this.stop();
+      await this.start();
+      return this.isRunning && this.inputMode === mode;
+    }
+    return true;
+  }
+
+  private createInputNoiseGate(ctx: AudioContext): AudioNode & { onaudioprocess?: any } {
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      return new AudioWorkletNode(ctx, 'ep2350-noisegate', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1]
+      }) as AudioNode & { onaudioprocess?: any };
+    }
+    const processor = ctx.createScriptProcessor(512, 1, 1);
+    const kernel = new NoiseGateKernel(ctx.sampleRate);
+    processor.onaudioprocess = (e: AudioProcessingEvent) => {
+      kernel.process(e.inputBuffer.getChannelData(0), e.outputBuffer.getChannelData(0));
+    };
+    return processor;
+  }
+
+  private ensureInputPreChain(ctx: AudioContext): AudioNode {
+    if (!this.sourceHub) {
+      this.sourceHub = ctx.createGain();
+      this.sourceHub.gain.value = 1.0;
+    }
+    if (!this.inputCompressor) {
+      // Hardware RP2350 pre-chain `compressor` stage (fx.timing(): ~1195 cycles)
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -18.0;
+      comp.knee.value = 12.0;
+      comp.ratio.value = 4.0;
+      comp.attack.value = 0.005;
+      comp.release.value = 0.12;
+      this.inputCompressor = comp;
+    }
+    if (!this.inputNoiseGate) {
+      // Hardware RP2350 pre-chain `noisegate` stage (fx.timing(): ~2231 cycles)
+      this.inputNoiseGate = this.createInputNoiseGate(ctx);
+    }
+    try {
+      this.inputCompressor.disconnect();
+    } catch {}
+    try {
+      this.inputNoiseGate.disconnect();
+    } catch {}
+    this.inputCompressor.connect(this.inputNoiseGate);
+    this.inputNoiseGate.connect(this.sourceHub);
+    return this.inputCompressor;
+  }
+
   public setActiveSampleSlot(slot: number) {
     const clamped = Math.max(0, Math.min(3, Math.floor(slot)));
     if (clamped !== this.activeSampleSlot) {
@@ -328,8 +457,7 @@ export class DspAudioEngine {
     if (!this.ctx || !this.gainMaster) return;
 
     if (!this.sourceHub) {
-      this.sourceHub = this.ctx.createGain();
-      this.sourceHub.gain.value = 1.0;
+      this.ensureInputPreChain(this.ctx);
     }
     if (this.activeNodes.length === 0) {
       this.rebuildChain();
@@ -466,6 +594,19 @@ export class DspAudioEngine {
         this.sourceNode.stop();
         this.sourceNode.disconnect();
       } catch (e) {}
+      this.sourceNode = null;
+    }
+    if (this.micSourceNode) {
+      try {
+        this.micSourceNode.disconnect();
+      } catch (e) {}
+      this.micSourceNode = null;
+    }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+      this.micStream = null;
     }
     if (this.sourceHub) {
       try {
@@ -473,16 +614,53 @@ export class DspAudioEngine {
       } catch (e) {}
     }
 
-    this.sourceNode = this.ctx.createBufferSource();
-    this.sourceNode.buffer = this.currentBuffer;
-    this.sourceNode.loop = this.loopSource;
+    const preChainInput = this.ensureInputPreChain(this.ctx);
 
-    this.sourceHub = this.ctx.createGain();
-    this.sourceHub.gain.value = 1.0;
-    this.sourceNode.connect(this.sourceHub);
+    if (this.inputMode === 'mic') {
+      const canGetMic =
+        typeof navigator !== 'undefined' &&
+        navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === 'function' &&
+        typeof (this.ctx as any).createMediaStreamSource === 'function';
+
+      if (canGetMic) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          });
+          if (myGen !== this.startGen || !this.isRunning) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          this.micStream = stream;
+          this.micSourceNode = this.ctx.createMediaStreamSource(stream);
+          this.micSourceNode.connect(preChainInput);
+          this.lastMicError = null;
+        } catch (err: any) {
+          this.lastMicError = err?.message || 'Microphone access denied';
+          this.inputMode = 'sample';
+        }
+      } else {
+        this.lastMicError = 'Live microphone capture not supported in this environment';
+        this.inputMode = 'sample';
+      }
+    }
+
+    if (this.inputMode === 'sample') {
+      this.sourceNode = this.ctx.createBufferSource();
+      this.sourceNode.buffer = this.currentBuffer;
+      this.sourceNode.loop = this.loopSource;
+      this.sourceNode.connect(preChainInput);
+    }
 
     this.rebuildChain();
-    this.sourceNode.start(0);
+    if (this.sourceNode) {
+      this.sourceNode.start(0);
+    }
     this.startModulationLoop();
   }
 
@@ -593,6 +771,19 @@ export class DspAudioEngine {
     this.stopSample();
     this.stopModulationLoop();
     this.cleanupActiveNodes();
+    if (this.inputCompressor) {
+      try {
+        this.inputCompressor.disconnect();
+      } catch (e) {}
+      this.inputCompressor = null;
+    }
+    if (this.inputNoiseGate) {
+      try {
+        this.inputNoiseGate.onaudioprocess = null;
+        this.inputNoiseGate.disconnect();
+      } catch (e) {}
+      this.inputNoiseGate = null;
+    }
     if (this.sourceHub) {
       try {
         this.sourceHub.disconnect();
@@ -604,6 +795,18 @@ export class DspAudioEngine {
         this.busSummer.disconnect();
       } catch (e) {}
       this.busSummer = null;
+    }
+    if (this.micSourceNode) {
+      try {
+        this.micSourceNode.disconnect();
+      } catch (e) {}
+      this.micSourceNode = null;
+    }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+      this.micStream = null;
     }
     if (this.sourceNode) {
       try {
@@ -1042,7 +1245,7 @@ export class DspAudioEngine {
           const crossFeed = mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0);
           const echo = mod('echo', toRatio(params.echo, 0.4) + crossFeed * 0.15, 0.0, 1.18);
           setParam(nodeRefs.feedbackGain?.gain, echo, 0.02);
-          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.2), 0.03);
+          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1), 0.03);
           setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
           setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
           setParam(nodeRefs.lpFilter?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.02);

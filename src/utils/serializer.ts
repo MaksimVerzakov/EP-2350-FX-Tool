@@ -1,5 +1,5 @@
 import type { PackConfig } from '../types/config';
-import { isPercentParam, getModDepthConfig } from '../constants/effectsRegistry';
+import { isPercentParam, getModDepthConfig, MAX_EFFECTS_PER_PRESET } from '../constants/effectsRegistry';
 
 export interface ValidationIssue {
   type: 'error' | 'warning';
@@ -22,13 +22,25 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
   const SINGLE_INSTANCE_EFFECTS = new Set(['DELAY', 'REVERB', 'HARMONY', 'SSB']);
 
   pack.presets.forEach((preset) => {
+    if (preset.list.length > MAX_EFFECTS_PER_PRESET) {
+      issues.push({
+        type: 'error',
+        message: `Preset ${preset.pos} (${preset.name || 'Unnamed'}): Exceeds hardware limit of ${MAX_EFFECTS_PER_PRESET} effects per preset (${preset.list.length} configured).`,
+        presetPos: preset.pos
+      });
+    }
+
     // Check single-use effects
     const seenEffects = new Set<string>();
     let hasSampleBlock = false;
+    let hasEqualiser = false;
 
     preset.list.forEach((effect) => {
       if (effect.effect === 'SAMPLE') {
         hasSampleBlock = true;
+      }
+      if (effect.effect === 'EQUALISER') {
+        hasEqualiser = true;
       }
       if (SINGLE_INSTANCE_EFFECTS.has(effect.effect)) {
         if (seenEffects.has(effect.effect)) {
@@ -41,6 +53,14 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
         seenEffects.add(effect.effect);
       }
     });
+
+    if (hasEqualiser) {
+      issues.push({
+        type: 'warning',
+        message: `Preset ${preset.pos} (${preset.name || 'Unnamed'}): 'EQUALISER' is documented in the TE guide but unsupported on stock firmware <= 1.0.8.`,
+        presetPos: preset.pos
+      });
+    }
 
     if (!hasSampleBlock) {
       issues.push({

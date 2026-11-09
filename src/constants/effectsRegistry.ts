@@ -1,5 +1,7 @@
 import type { EffectMeta, EffectType } from '../types/config';
 
+export const MAX_EFFECTS_PER_PRESET = 16;
+
 export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
   DELAY: {
     type: 'DELAY',
@@ -11,7 +13,7 @@ export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
         name: 'time',
         label: 'TIME',
         min: 0.0,
-        max: 1.2,
+        max: 1.1,
         step: 0.01,
         defaultVal: 0.35,
         unit: 's',
@@ -517,8 +519,8 @@ export const getModDepthConfig = (effectType?: string, paramName?: string): ModD
 
   if (effectType === 'DELAY' && paramName === 'time') {
     return {
-      min: -1.2,
-      max: 1.2,
+      min: -1.1,
+      max: 1.1,
       step: 0.005,
       unit: 's',
       defaultVal: 0.2,
