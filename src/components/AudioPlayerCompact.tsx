@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { audioEngine } from '../dsp/AudioEngine';
-import { Play, Square } from 'lucide-react';
+import { audioEngine, type InputMode } from '../dsp/AudioEngine';
+import { Play, Square, Mic } from 'lucide-react';
 import { ThemeMode } from '../types/config';
 
 interface AudioPlayerCompactProps {
@@ -11,21 +11,34 @@ interface AudioPlayerCompactProps {
 export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 'fx', className = '' }) => {
   const isTing = theme === 'ting';
   const [isPlaying, setIsPlaying] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>(() => audioEngine.getInputMode());
 
-  // Sync state if audio stopped externally
+  // Sync state if audio stopped or input mode changed externally
   useEffect(() => {
     const interval = setInterval(() => {
       const running = audioEngine.getIsRunning();
       if (running !== isPlaying) {
         setIsPlaying(running);
       }
+      const currentMode = audioEngine.getInputMode();
+      if (currentMode !== inputMode) {
+        setInputMode(currentMode);
+      }
     }, 200);
     return () => clearInterval(interval);
-  }, [isPlaying]);
+  }, [isPlaying, inputMode]);
 
   const togglePlayback = () => {
     const running = audioEngine.togglePlay();
     setIsPlaying(running);
+    setInputMode(audioEngine.getInputMode());
+  };
+
+  const handleSelectMode = async (mode: InputMode) => {
+    setInputMode(mode);
+    await audioEngine.setInputMode(mode);
+    setInputMode(audioEngine.getInputMode());
+    setIsPlaying(audioEngine.getIsRunning());
   };
 
   return (
@@ -57,13 +70,47 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
             AUDITION MODULE
           </span>
         </div>
-        <span
-          className={`font-mono text-[8px] ${
-            isTing ? 'text-[#5b695e]' : 'text-[#73787a]'
-          } tracking-tight`}
+        <div
+          className={`flex items-center border ${
+            isTing ? 'border-[#00503a] bg-[#ece6d9]' : 'border-[#141617] bg-[#eceeed]'
+          } rounded-[1px] overflow-hidden`}
+          role="group"
+          aria-label="Audition input source"
         >
-          FREE SPEECH SAMPLE
-        </span>
+          <button
+            type="button"
+            onClick={() => handleSelectMode('sample')}
+            className={`px-1.5 py-0.5 font-mono text-[8px] font-bold tracking-tight uppercase cursor-pointer transition-colors ${
+              inputMode === 'sample'
+                ? isTing
+                  ? 'bg-[#00503a] text-white'
+                  : 'bg-[#141617] text-white'
+                : isTing
+                ? 'text-[#5b695e] hover:text-[#00503a]'
+                : 'text-[#73787a] hover:text-[#141617]'
+            }`}
+            title="Use built-in vocal speech loop"
+          >
+            SPEECH
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelectMode('mic')}
+            className={`px-1.5 py-0.5 font-mono text-[8px] font-bold tracking-tight uppercase cursor-pointer transition-colors flex items-center gap-0.5 border-l ${
+              isTing ? 'border-[#00503a]' : 'border-[#141617]'
+            } ${
+              inputMode === 'mic'
+                ? 'bg-[#f15a22] text-white'
+                : isTing
+                ? 'text-[#5b695e] hover:text-[#00503a]'
+                : 'text-[#73787a] hover:text-[#141617]'
+            }`}
+            title="Use live microphone input"
+          >
+            <Mic className="w-2.5 h-2.5" />
+            <span>LIVE MIC</span>
+          </button>
+        </div>
       </div>
 
       {/* Recessed Mechanical Socket Cavity */}
@@ -85,17 +132,31 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
                     : 'bg-[#232424] hover:bg-[#353839] shadow-[2px_2px_0px_#000000]'
                 } text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none`
           }`}
-          title={isPlaying ? 'Stop speech playback' : 'Audition preset with speech sample'}
+          title={
+            isPlaying
+              ? 'Stop audition playback'
+              : inputMode === 'mic'
+              ? 'Audition preset with live microphone input'
+              : 'Audition preset with speech sample'
+          }
         >
           {isPlaying ? (
             <>
               <Square className="w-3.5 h-3.5 fill-current text-white" />
-              <span className="tracking-widest">STOP AUDITION</span>
+              <span className="tracking-widest">
+                {inputMode === 'mic' ? 'STOP LIVE MIC' : 'STOP AUDITION'}
+              </span>
             </>
           ) : (
             <>
-              <Play className="w-3.5 h-3.5 fill-current text-white" />
-              <span className="tracking-widest">AUDITION (SPEECH)</span>
+              {inputMode === 'mic' ? (
+                <Mic className="w-3.5 h-3.5 text-white" />
+              ) : (
+                <Play className="w-3.5 h-3.5 fill-current text-white" />
+              )}
+              <span className="tracking-widest">
+                {inputMode === 'mic' ? 'AUDITION (LIVE MIC)' : 'AUDITION (SPEECH)'}
+              </span>
             </>
           )}
         </button>

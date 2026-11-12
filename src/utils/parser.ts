@@ -1,11 +1,10 @@
 import type { AnyEffect, EffectType, PackConfig, PresetConfig, SampleSlotConfig } from '../types/config';
-import { isPercentParam, getModDepthConfig } from '../constants/effectsRegistry';
+import { isPercentParam, getModDepthConfig, MAX_EFFECTS_PER_PRESET } from '../constants/effectsRegistry';
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_JSON_BYTES = 5_000_000;
 const MAX_SAMPLES = 64;
 const MAX_PRESETS = 32;
-const MAX_EFFECTS_PER_PRESET = 32;
 
 function sanitizeEffectObject(rawItem: unknown): Record<string, any> {
   if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
@@ -74,6 +73,16 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
                 id: `fx-${pIdx}-${itemIdx}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
                 effect: effectType
               };
+
+              // Sanitize BUS to valid hardware buses {1, 2}; drop invalid BUS values
+              if (Object.prototype.hasOwnProperty.call(effectEntry, 'BUS')) {
+                const busNum = Number(effectEntry.BUS);
+                if (busNum === 1 || busNum === 2) {
+                  effectEntry.BUS = busNum;
+                } else {
+                  delete effectEntry.BUS;
+                }
+              }
 
               // Scale percent parameters from JSON (0.0..1.0) to UI percent (0..100)
               Object.keys(effectEntry).forEach((key) => {

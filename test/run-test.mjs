@@ -64,7 +64,7 @@ function buildSourceModulesForTest() {
 buildSourceModulesForTest();
 
 // Load modules
-const { EFFECTS_REGISTRY, isPercentParam, getModDepthConfig } = await import(
+const { EFFECTS_REGISTRY, isPercentParam, getModDepthConfig, MAX_EFFECTS_PER_PRESET } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/constants/effectsRegistry.mjs')).href
 );
 const { OFFICIAL_TE_PACKS, createEmptyPack } = await import(
@@ -77,6 +77,7 @@ const { serializeToConfigJson, validatePackConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/serializer.mjs')).href
 );
 const {
+  NoiseGateKernel,
   PitchShiftKernel,
   SsbFrequencyShiftKernel,
   computeLfoWave,
@@ -147,8 +148,11 @@ for (const fxName of expectedEffects) {
   assert.ok(EFFECTS_REGISTRY[fxName], `EFFECTS_REGISTRY must define ${fxName}`);
 }
 
+assert.strictEqual(MAX_EFFECTS_PER_PRESET, 16, 'Hardware limit MAX_EFFECTS_PER_PRESET must be 16');
 const delayTimeParam = EFFECTS_REGISTRY.DELAY.params.find((p) => p.name === 'time');
-assert.strictEqual(delayTimeParam.max, 1.2, 'DELAY.time max must be 1.2s');
+assert.strictEqual(delayTimeParam.max, 1.1, 'DELAY.time max must be 1.1s per fx.map() hardware ceiling');
+assert.strictEqual(getModDepthConfig('DELAY', 'time').max, 1.1, 'DELAY.time mod depth max must be 1.1s');
+assert.strictEqual(getModDepthConfig('DELAY', 'time').min, -1.1, 'DELAY.time mod depth min must be -1.1s');
 
 // Native units
 assert.strictEqual(getModDepthConfig('SSB', 'frequency').isNormalizedPercent, false);
@@ -207,7 +211,36 @@ assert.ok(issues.some((i) => i.type === 'error' && i.message.includes("'HARMONY'
 assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('Handle targets row 9')));
 assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('Shake targets row -1')));
 assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('LFO targets row 8')));
-console.log('✓ Suite 3: Validator constraints & out-of-bounds modulation checks verified');
+
+// Verify 16-row hardware limit and EQUALISER firmware compatibility warning
+const oversizedPresetPack = {
+  name: 'OVERSIZED',
+  useBuiltInSamples: true,
+  samples: [],
+  presets: [
+    {
+      id: 'p-over',
+      pos: 0,
+      name: 'TOO MANY FX',
+      comment: '',
+      list: [
+        ...Array.from({ length: 16 }, (_, idx) => ({ id: `fx-${idx}`, effect: 'LOWPASS', cutoff: 0.5 })),
+        { id: 'fx-eq', effect: 'EQUALISER', CUTOFF: 0.5, Q: 0.5, GAIN: 0.0 },
+        { id: 'fx-s', effect: 'SAMPLE' }
+      ]
+    }
+  ]
+};
+const oversizedIssues = validatePackConfig(oversizedPresetPack);
+assert.ok(
+  oversizedIssues.some((i) => i.type === 'error' && i.message.includes('Exceeds hardware limit of 16 effects')),
+  'Validator must report an error when a preset exceeds 16 effects'
+);
+assert.ok(
+  oversizedIssues.some((i) => i.type === 'warning' && i.message.includes("'EQUALISER' is documented in the TE guide")),
+  'Validator must warn about EQUALISER firmware <= 1.0.8 compatibility'
+);
+console.log('✓ Suite 3: Validator constraints, 16-row hardware limit & out-of-bounds modulation checks verified');
 
 // ---------------------------------------------------------------------------
 // SUITE 4: Parser Resilience, Custom Samples, Parallel Buses & Bipolar Depths
@@ -298,11 +331,21 @@ assert.ok(parseConfigJson('42').error, 'Primitive JSON root must return error');
 const pollutedRaw =
   '{"name":"SEC","samples":' +
   JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ pos: i, file: `${i}.wav` }))) +
-  ',"presets":[{"pos":0,"list":[{"effect":"DIST","mix":0.5,"__proto__":{"polluted":true},"constructor":{"bad":1},"nested":{"drop":true}}],"handle":{"target":"lfo"}}]}';
+  ',"presets":[{"pos":0,"list":' +
+  JSON.stringify([
+    { effect: 'DIST', mix: 0.5, BUS: '2', __proto__: { polluted: true }, constructor: { bad: 1 }, nested: { drop: true } },
+    { effect: 'LOWPASS', cutoff: 0.5, BUS: 99 },
+    ...Array.from({ length: 20 }, () => ({ effect: 'HIGHPASS', cutoff: 0.2, BUS: 0 }))
+  ]) +
+  ',"handle":{"target":"lfo"}}]}';
 const secParsed = parseConfigJson(pollutedRaw);
 assert.strictEqual(secParsed.error, undefined);
 assert.strictEqual(({}).polluted, undefined, 'Object.prototype must not be polluted');
 assert.strictEqual(secParsed.pack.samples.length, 64, 'Samples array must be capped at 64 items');
+assert.strictEqual(secParsed.pack.presets[0].list.length, 16, 'Effect list must be capped at 16 items per hardware limit');
+assert.strictEqual(secParsed.pack.presets[0].list[0].BUS, 2, 'Numeric string BUS "2" must coerce to number 2');
+assert.strictEqual(secParsed.pack.presets[0].list[1].BUS, undefined, 'Invalid BUS 99 must be stripped');
+assert.strictEqual(secParsed.pack.presets[0].list[2].BUS, undefined, 'Invalid BUS 0 must be stripped');
 assert.strictEqual(secParsed.pack.presets[0].list[0].nested, undefined, 'Nested object properties on effects must be stripped');
 assert.strictEqual(secParsed.pack.presets[0].handle.param, 'speed', 'LFO-targeted handle must default param to speed');
 console.log('✓ Suite 4: Parser resilience, 1% round-trip, security hardening & bipolar depths verified');
@@ -345,7 +388,20 @@ assert.ok(Math.max(...clipCurve) <= Math.tanh(1.4) + 1e-6);
 for (let p = 0; p < 1; p += 0.05) {
   assert.ok(Math.abs(hann(p) + hann((p + 0.5) % 1) - 1.0) < 1e-12);
 }
-console.log('✓ Suite 5: Pure DSP Math functions verified (cutoff, resolveModDepth, LFO shapes, waveshapers)');
+
+// 5f. NoiseGateKernel hysteresis & noise floor suppression
+const gate = new NoiseGateKernel(48000, -46, -52, 0.05);
+const silentBlock = new Float32Array(24000); // 0.5s of silence
+const gateOutSilent = new Float32Array(24000);
+gate.process(silentBlock, gateOutSilent);
+assert.ok(gate.getGain() < 0.06, `NoiseGateKernel must close to ~0.05 floor on silence (got ${gate.getGain().toFixed(4)})`);
+
+const loudBlock = new Float32Array(4800); // 0.1s of loud signal
+loudBlock.fill(0.5);
+const gateOutLoud = new Float32Array(4800);
+gate.process(loudBlock, gateOutLoud);
+assert.ok(gate.getGain() > 0.99, `NoiseGateKernel must open to ~1.0 on active signal (got ${gate.getGain().toFixed(4)})`);
+console.log('✓ Suite 5: Pure DSP Math functions verified (cutoff, resolveModDepth, LFO shapes, waveshapers, NoiseGateKernel)');
 
 // ---------------------------------------------------------------------------
 // SUITE 6: PitchShiftKernel Constant Speed & Accurate Pitch Shifting
@@ -679,6 +735,11 @@ class MockAudioContext {
     node.onaudioprocess = null;
     return node;
   }
+  createMediaStreamSource(stream) {
+    const node = new MockAudioNode();
+    node.mediaStream = stream;
+    return node;
+  }
 }
 
 globalThis.window = { AudioContext: MockAudioContext };
@@ -722,6 +783,15 @@ engine.updatePreset(testPreset);
 engine.updateModulation({ handlePos: 0.0, shakeAmount: 0.0 });
 await engine.start();
 assert.strictEqual(engine.getIsRunning(), true, 'Engine must be running after start()');
+
+// Verify RP2350 pre-chain inputCompressor + inputNoiseGate routing ahead of sourceHub
+const inputComp = engine.getInputCompressor();
+const inputGate = engine.getInputNoiseGate();
+assert.ok(inputComp, 'Engine must instantiate hardware pre-chain inputCompressor');
+assert.ok(inputGate, 'Engine must instantiate hardware pre-chain inputNoiseGate');
+assert.ok(engine.sourceNode.connections.includes(inputComp), 'sourceNode must feed into inputCompressor');
+assert.ok(inputComp.connections.includes(inputGate), 'inputCompressor must feed into inputNoiseGate');
+assert.ok(inputGate.connections.includes(engine.sourceHub), 'inputNoiseGate must feed into sourceHub');
 
 const distNode = engine.activeNodes.find((n) => n.effectType === 'DIST');
 const delayNode = engine.activeNodes.find((n) => n.effectType === 'DELAY');
@@ -887,9 +957,63 @@ const workletHarmony = workletEngine.activeNodes.find((n) => n.effectType === 'H
 const workletSsb = workletEngine.activeNodes.find((n) => n.effectType === 'SSB');
 assert.strictEqual(workletHarmony.nodeRefs.pitchShifter.processor.name, 'ep2350-pitch-shifter');
 assert.strictEqual(workletSsb.nodeRefs.ssbShifter.processor.name, 'ep2350-ssb-shifter');
+assert.strictEqual(workletEngine.getInputNoiseGate().name, 'ep2350-noisegate');
 workletEngine.stop();
 delete globalThis.AudioWorkletNode;
 delete MockAudioContext.prototype.audioWorklet;
+
+// 8f. Live Microphone Input mode (`setInputMode('mic')`) & fallback when permission denied
+let trackStopped = false;
+const mockMicStream = {
+  getTracks: () => [
+    {
+      stop: () => {
+        trackStopped = true;
+      }
+    }
+  ]
+};
+Object.defineProperty(globalThis, 'navigator', {
+  value: {
+    mediaDevices: {
+      getUserMedia: async () => mockMicStream
+    }
+  },
+  configurable: true,
+  writable: true
+});
+const micEngine = new DspAudioEngine();
+micEngine.updatePreset(testPreset);
+await micEngine.setInputMode('mic');
+assert.strictEqual(micEngine.getInputMode(), 'mic', 'getInputMode() must return "mic"');
+await micEngine.start();
+assert.strictEqual(micEngine.getIsRunning(), true, 'micEngine must run in live mic mode');
+assert.strictEqual(micEngine.sourceNode, null, 'mic mode must not start speech buffer sourceNode');
+assert.ok(micEngine.micSourceNode, 'mic mode must create MediaStreamAudioSourceNode');
+assert.ok(
+  micEngine.micSourceNode.connections.includes(micEngine.getInputCompressor()),
+  'micSourceNode must connect into pre-chain inputCompressor'
+);
+await micEngine.setInputMode('sample');
+assert.strictEqual(trackStopped, true, 'Switching from mic to sample mode must stop active mic tracks');
+assert.strictEqual(micEngine.getInputMode(), 'sample');
+assert.ok(micEngine.sourceNode, 'Switching to sample mode while running must start speech sourceNode');
+micEngine.stop();
+
+// Verify graceful fallback to 'sample' when getUserMedia rejects
+globalThis.navigator = {
+  mediaDevices: {
+    getUserMedia: async () => {
+      throw new Error('Permission dismissed');
+    }
+  }
+};
+const fallbackEngine = new DspAudioEngine();
+await fallbackEngine.setInputMode('mic');
+await fallbackEngine.start();
+assert.strictEqual(fallbackEngine.getInputMode(), 'sample', 'Denied mic permission must fall back to sample mode');
+assert.strictEqual(fallbackEngine.getLastMicError(), 'Permission dismissed');
+fallbackEngine.stop();
 
 // 8f. Async start() / stop() race protection & remaining parser/serializer edge branches
 engine.stop();

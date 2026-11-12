@@ -74,6 +74,72 @@ export function hann(p: number): number {
 }
 
 /**
+ * Hardware-accurate RP2350 pre-chain Noise Gate kernel (`noisegate` stage in `fx.timing()`).
+ * Uses an envelope follower with hysteresis (open threshold vs close threshold) to suppress
+ * background mic noise before high-gain effects like `DIST` (up to 40x) and `DELAY`.
+ */
+export class NoiseGateKernel {
+  private readonly openThreshold: number;
+  private readonly closeThreshold: number;
+  private readonly attackCoeff: number;
+  private readonly releaseCoeff: number;
+  private readonly gainAttackCoeff: number;
+  private readonly gainReleaseCoeff: number;
+  private readonly floorGain: number;
+  private env = 0;
+  private gateGain = 1.0;
+  private isOpen = true;
+
+  constructor(
+    sampleRate = 48000,
+    openThresholdDb = -46,
+    closeThresholdDb = -52,
+    floorGain = 0.05
+  ) {
+    const sr = sampleRate > 0 ? sampleRate : 48000;
+    this.openThreshold = Math.pow(10, openThresholdDb / 20);
+    this.closeThreshold = Math.pow(10, closeThresholdDb / 20);
+    this.floorGain = Math.max(0, Math.min(1, floorGain));
+    this.attackCoeff = Math.exp(-1.0 / (0.002 * sr));
+    this.releaseCoeff = Math.exp(-1.0 / (0.06 * sr));
+    this.gainAttackCoeff = Math.exp(-1.0 / (0.003 * sr));
+    this.gainReleaseCoeff = Math.exp(-1.0 / (0.08 * sr));
+  }
+
+  getGain(): number {
+    return this.gateGain;
+  }
+
+  process(input: Float32Array, output: Float32Array): void {
+    const len = input.length;
+    for (let i = 0; i < len; i++) {
+      const x = input[i];
+      const absX = Math.abs(x);
+      if (absX > this.env) {
+        this.env = this.attackCoeff * this.env + (1.0 - this.attackCoeff) * absX;
+      } else {
+        this.env = this.releaseCoeff * this.env + (1.0 - this.releaseCoeff) * absX;
+      }
+
+      if (!this.isOpen && this.env >= this.openThreshold) {
+        this.isOpen = true;
+      } else if (this.isOpen && this.env < this.closeThreshold) {
+        this.isOpen = false;
+      }
+
+      const targetGain = this.isOpen ? 1.0 : this.floorGain;
+      if (targetGain > this.gateGain) {
+        this.gateGain = this.gainAttackCoeff * this.gateGain + (1.0 - this.gainAttackCoeff) * targetGain;
+      } else {
+        this.gateGain = this.gainReleaseCoeff * this.gateGain + (1.0 - this.gainReleaseCoeff) * targetGain;
+      }
+
+      output[i] = x * this.gateGain;
+    }
+  }
+}
+
+/**
  * Constant-speed, phase-aligned dual-grain pitch shifter kernel.
  * Shifts pitch by `pitch` (0.25x..4.0x) while keeping playback duration at 1.0x.
  * Use `process(input, output)` per audio block; `setPitch()` changes the target ratio.

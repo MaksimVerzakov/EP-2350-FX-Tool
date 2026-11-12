@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { AnyEffect, EffectType, PresetConfig, LfoShape, ThemeMode } from '../types/config';
-import { EFFECTS_REGISTRY, getModDepthConfig } from '../constants/effectsRegistry';
+import { EFFECTS_REGISTRY, getModDepthConfig, MAX_EFFECTS_PER_PRESET } from '../constants/effectsRegistry';
 import { Knob } from './Knob';
 import {
   Plus,
@@ -184,7 +184,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   const currentBusItems = activeBus === 1 ? bus1Items : bus2Items;
 
   // 1-Click Smart Effect Addition
+  const isAtEffectLimit = preset.list.length >= MAX_EFFECTS_PER_PRESET;
+
   const handleAddEffect = (effectType: EffectType, insertBusIndex?: number) => {
+    if (preset.list.length >= MAX_EFFECTS_PER_PRESET) {
+      setAddMenuTarget(null);
+      return;
+    }
     const meta = EFFECTS_REGISTRY[effectType];
     const newEffect: AnyEffect = {
       id: `fx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -1035,15 +1041,17 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             </div>
             <button
               data-add-effect-trigger="true"
+              disabled={isAtEffectLimit}
               onClick={(e) => openAddMenu(e, undefined, 'empty')}
               className={`px-4 py-1.5 text-[10px] font-mono font-bold text-white ${
                 isTing
                   ? 'bg-[#00503a] hover:bg-[#f15a22]'
                   : 'bg-[#141617] hover:bg-[#f15a22]'
-              } rounded-[1px] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs`}
+              } rounded-[1px] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs disabled:opacity-40 disabled:pointer-events-none`}
+              title={isAtEffectLimit ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached` : 'Add effect'}
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>ADD EFFECT</span>
+              <span>{isAtEffectLimit ? `MAX ${MAX_EFFECTS_PER_PRESET} FX REACHED` : 'ADD EFFECT'}</span>
             </button>
           </div>
         ) : (
@@ -1061,13 +1069,18 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     />
                     <button
                       data-add-effect-trigger="true"
+                      disabled={isAtEffectLimit}
                       onClick={(e) => openAddMenu(e, bIdx + 1, `mid-${bIdx + 1}`)}
-                      className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center shadow-xs cursor-pointer text-[9px] font-bold transition-transform hover:scale-125 z-10 ${
+                      className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center shadow-xs cursor-pointer text-[9px] font-bold transition-transform hover:scale-125 z-10 disabled:opacity-30 disabled:pointer-events-none ${
                         activeBus === 1
                           ? 'border-[#00a69c] text-[#00a69c] hover:bg-[#00a69c] hover:text-white'
                           : 'border-[#d99b26] text-[#d99b26] hover:bg-[#d99b26] hover:text-white'
                       }`}
-                      title={`Insert effect here in Bus ${activeBus}`}
+                      title={
+                        isAtEffectLimit
+                          ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached`
+                          : `Insert effect here in Bus ${activeBus}`
+                      }
                     >
                       +
                     </button>
@@ -1085,15 +1098,21 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               />
               <button
                 data-add-effect-trigger="true"
+                disabled={isAtEffectLimit}
                 onClick={(e) => openAddMenu(e, undefined, 'bottom')}
                 className={`px-4 py-1.5 text-[10px] font-mono font-bold rounded-[0px] border ${
                   isTing
                     ? 'border-[#00503a] bg-[#ece6d9] hover:bg-[#00503a] text-[#00503a] shadow-[2px_2px_0px_#003828]'
                     : 'border-[#141617] bg-[#f8f9f8] hover:bg-[#141617] text-[#141617] shadow-[2px_2px_0px_#141617]'
-                } hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors active:translate-x-[1px] active:translate-y-[1px] active:shadow-none`}
+                } hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors active:translate-x-[1px] active:translate-y-[1px] active:shadow-none disabled:opacity-40 disabled:pointer-events-none`}
+                title={
+                  isAtEffectLimit
+                    ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached`
+                    : `Add effect (${preset.list.length}/${MAX_EFFECTS_PER_PRESET})`
+                }
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>ADD EFFECT</span>
+                <span>{isAtEffectLimit ? `MAX ${MAX_EFFECTS_PER_PRESET} FX REACHED` : 'ADD EFFECT'}</span>
               </button>
             </div>
           </div>
