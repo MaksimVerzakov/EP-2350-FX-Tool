@@ -28,6 +28,117 @@ const TING_LOUVER_Y = [
   171.235
 ];
 
+interface SideButtonProps {
+  cy: number;
+  title: string;
+  bodyFill: string;
+  highlightFill: string;
+  shadowFill: string;
+  capFill: string;
+  isPressed?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+  onMouseDown?: (e: React.MouseEvent) => void;
+  onMouseUp?: (e: React.MouseEvent) => void;
+  onMouseLeave?: () => void;
+}
+
+/**
+ * 3D cylindrical push-button mounted on the 45° axonometric right side wall of the mic,
+ * matching the physical EP-2350 / TE hardware silhouette.
+ */
+const SideButton: React.FC<SideButtonProps> = ({
+  cy,
+  title,
+  bodyFill,
+  highlightFill,
+  shadowFill,
+  capFill,
+  isPressed = false,
+  onClick,
+  onMouseDown,
+  onMouseUp,
+  onMouseLeave
+}) => {
+  const capCy = cy + 2.5;
+  const barrelPath = `M 555 ${cy - 10} L 568.5 ${cy - 10} A 4.6 12.5 0 0 1 568.5 ${cy + 15} L 555 ${cy + 15} A 3.0 12.5 0 0 1 555 ${cy - 10} Z`;
+
+  return (
+    <g>
+      {/* Recessed Mounting Collar on the 45° Side Wall */}
+      <ellipse
+        cx={555.5}
+        cy={cy + 3.2}
+        rx={3.4}
+        ry={13.5}
+        fill="#141617"
+        stroke="#000000"
+        strokeWidth="0.9"
+      />
+      {/* Hard TE Drop Shadow behind protruding cylinder */}
+      <path
+        d={`M 556 ${cy - 7} L 570.5 ${cy - 7} A 4.6 12.5 0 0 1 570.5 ${cy + 18} L 556 ${cy + 18} Z`}
+        fill="#141617"
+        opacity="0.85"
+      />
+      {/* Interactive 3D Cylindrical Button (presses inward toward chassis) */}
+      <g
+        onClick={onClick}
+        onMouseDown={onMouseDown}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        className={`cursor-pointer group transition-transform duration-75 ${
+          isPressed ? '-translate-x-[2.5px]' : 'active:-translate-x-[2.5px]'
+        }`}
+      >
+        <title>{title}</title>
+        {/* Invisible expanded hit area */}
+        <rect x="550" y={cy - 14} width="26" height="33" fill="transparent" />
+        {/* Cylindrical Barrel Base */}
+        <path
+          d={barrelPath}
+          fill={bodyFill}
+          className="group-hover:brightness-105 group-active:brightness-95"
+        />
+        {/* Upper Specular Highlight Band */}
+        <path
+          d={`M 553.8 ${cy - 8.2} L 568.5 ${cy - 8.2} L 568.5 ${cy - 3.6} L 553.0 ${cy - 3.6} Z`}
+          fill={highlightFill}
+          opacity="0.7"
+        />
+        {/* Lower Cylindrical Shadow Band */}
+        <path
+          d={`M 553.2 ${cy + 7.5} L 568.5 ${cy + 7.5} A 4.6 12.5 0 0 1 568.5 ${cy + 15} L 555 ${cy + 15} A 3.0 12.5 0 0 1 553.2 ${cy + 7.5} Z`}
+          fill={shadowFill}
+        />
+        {/* Crisp Barrel Contour */}
+        <path d={barrelPath} fill="none" stroke="#000000" strokeWidth="1.2" strokeLinejoin="round" />
+        {/* Outer 3D Elliptical End Cap */}
+        <ellipse
+          cx={568.5}
+          cy={capCy}
+          rx={4.6}
+          ry={12.5}
+          fill={capFill}
+          stroke="#000000"
+          strokeWidth="1.2"
+          className="group-hover:brightness-105 group-active:brightness-95"
+        />
+        {/* Subtle Inner Molded Cap Ring */}
+        <ellipse
+          cx={568.7}
+          cy={capCy}
+          rx={2.3}
+          ry={7.8}
+          fill="none"
+          stroke="#000000"
+          strokeOpacity="0.22"
+          strokeWidth="0.8"
+        />
+      </g>
+    </g>
+  );
+};
+
 export const MicDevice: React.FC<MicDeviceProps> = ({
   activeSlot,
   onSelectSlot,
@@ -379,57 +490,40 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
           <path stroke="#000" strokeWidth="1.2" strokeMiterlimit="10" d="M353.679 70.65a9.494 9.494 0 1 0 0-18.99 9.494 9.494 0 0 0 0 18.99Z" />
 
           {/* ========================================================= */}
-          {/* 2. RECESSED HARDWARE BUTTONS WITH RECESSED CAVITY SOCKETS */}
+          {/* 2. 3D SIDE-MOUNTED CYLINDRICAL HARDWARE BUTTONS           */}
           {/* ========================================================= */}
 
           {/* BUTTON 1: PRESET SELECTOR (Orange) */}
-          {/* Recessed Socket */}
-          <rect x="550" y="36.5" width="18" height="34" rx="2" fill="#141617" stroke="#000000" strokeWidth="0.8" />
-          <g
+          <SideButton
+            cy={51}
+            title="Preset Selector Button"
+            bodyFill="#F15A22"
+            highlightFill="#ff7d4d"
+            shadowFill="#b53708"
+            capFill="#f56a36"
             onClick={cyclePreset}
-            className="cursor-pointer group active:translate-x-[1px] active:translate-y-[1px] transition-transform"
-          >
-            <title>Preset Selector Button</title>
-            {/* 45° Extruded Facets */}
-            <polygon points="562.725 42.318 565.725 45.318 565.725 64.815 562.725 61.815" fill="#ba3807" stroke="#000" strokeWidth="0.8" />
-            <polygon points="551.476 64.815 554.476 67.815 565.725 67.815 562.725 64.815" fill="#8c2603" stroke="#000" strokeWidth="0.8" />
-            {/* Front Keycap */}
-            <path
-              fill="#F15A22"
-              stroke="#000"
-              strokeWidth="1.2"
-              strokeMiterlimit="10"
-              d="M551.476 38.645h11.249a3.675 3.675 0 0 1 3.673 3.673v22.497a3.675 3.675 0 0 1-3.673 3.674h-11.249z"
-              className="group-hover:brightness-110 group-active:brightness-95"
-            />
-          </g>
+          />
 
           {/* BUTTON 2: SAMPLE SLOT SELECTOR (White on FX / Green on Ting) */}
-          {/* Recessed Socket */}
-          <rect x="550" y="112.5" width="18" height="34" rx="2" fill="#141617" stroke="#000000" strokeWidth="0.8" />
-          <g
+          <SideButton
+            cy={127}
+            title="Sample Selector Button (Slots 1-4)"
+            bodyFill={isTing ? '#00503A' : '#E4E3DF'}
+            highlightFill={isTing ? '#006e50' : '#f5f4f0'}
+            shadowFill={isTing ? '#002d20' : '#a8aaa5'}
+            capFill={isTing ? '#005c43' : '#ecebe7'}
             onClick={cycleSampleSlot}
-            className="cursor-pointer group active:translate-x-[1px] active:translate-y-[1px] transition-transform"
-          >
-            <title>Sample Selector Button (Slots 1-4)</title>
-            {/* 45° Extruded Facets */}
-            <polygon points="562.725 118.191 565.725 121.191 565.725 140.688 562.725 137.688" fill={isTing ? '#003d2c' : '#bcbeb9'} stroke="#000" strokeWidth="0.8" />
-            <polygon points="551.476 140.688 554.476 143.688 565.725 143.688 562.725 140.688" fill={isTing ? '#00291d' : '#949692'} stroke="#000" strokeWidth="0.8" />
-            {/* Front Keycap */}
-            <path
-              fill={isTing ? '#00503A' : '#E4E3DF'}
-              stroke="#000"
-              strokeWidth="1.2"
-              strokeMiterlimit="10"
-              d="M551.476 114.518h11.249a3.674 3.674 0 0 1 3.673 3.673v22.497a3.675 3.675 0 0 1-3.673 3.673h-11.249z"
-              className="group-hover:brightness-105 group-active:brightness-95"
-            />
-          </g>
+          />
 
           {/* BUTTON 3: SAMPLE TRIGGER (Grey on FX / Off-White on Ting) */}
-          {/* Recessed Socket */}
-          <rect x="550" y="241.5" width="18" height="36" rx="2" fill="#141617" stroke="#000000" strokeWidth="0.8" />
-          <g
+          <SideButton
+            cy={256}
+            title="Sample Trigger Button (Play Selected Sample)"
+            bodyFill={isTing ? '#E8E9E4' : '#D1D3D4'}
+            highlightFill={isTing ? '#f7f8f4' : '#e6e8e9'}
+            shadowFill={isTing ? '#b2b5ad' : '#8c8f92'}
+            capFill={isTing ? '#eff0ec' : '#dcdfe0'}
+            isPressed={isSamplePressing}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => {
               e.stopPropagation();
@@ -449,22 +543,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                 onSampleTrigger?.(false);
               }
             }}
-            className={`cursor-pointer group transition-transform ${isSamplePressing ? 'translate-x-[1px] translate-y-[1px]' : ''}`}
-          >
-            <title>Sample Trigger Button (Play Selected Sample)</title>
-            {/* 45° Extruded Facets */}
-            <polygon points="562.725 247.401 565.725 250.401 565.725 273.573 562.725 270.573" fill={isTing ? '#c5c7c0' : '#a8aaac'} stroke="#000" strokeWidth="0.8" />
-            <polygon points="551.476 273.573 554.476 276.573 565.725 276.573 562.725 273.573" fill={isTing ? '#9e9f99' : '#7a7d80'} stroke="#000" strokeWidth="0.8" />
-            {/* Front Keycap */}
-            <path
-              fill={isTing ? '#E8E9E4' : '#D1D3D4'}
-              stroke="#000"
-              strokeWidth="1.2"
-              strokeMiterlimit="10"
-              d="M551.476 243.728h11.249a3.675 3.675 0 0 1 3.673 3.673v22.497a3.676 3.676 0 0 1-3.673 3.674h-11.249v-29.845z"
-              className="group-hover:brightness-105 group-active:brightness-95"
-            />
-          </g>
+          />
 
           {/* 3. MICROPHONE GRILLE (Acoustic Top Section) */}
           <path
