@@ -114,6 +114,9 @@ const {
   matchReferenceAudio,
   synthesizePresetFromDescription
 } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
+const { handleMcpJsonRpcRequest } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
+);
 
 // Clean up on exit
 process.on('exit', () => {
@@ -1552,4 +1555,102 @@ console.log(
   `✓ Suite 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matcher verified (loss ${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss}, similarity ${optResult.finalDistance.similarityScore}%)`
 );
 
-console.log('\n=== ALL 12 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 13: MCP Server JSON-RPC 2.0 Tools, Resources & Prompts (mcp/server.mjs)
+// ============================================================================
+// 13a. initialize
+const initRes = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2024-11-05' }
+});
+assert.strictEqual(initRes.result.serverInfo.name, 'ep2350-fx-mcp-server');
+
+// 13b. resources/list & resources/read
+const resList = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 2,
+  method: 'resources/list'
+});
+assert.strictEqual(resList.result.resources.length, 2);
+
+const schemaRead = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 3,
+  method: 'resources/read',
+  params: { uri: 'ep2350://schema/effects-registry' }
+});
+const schemaJson = JSON.parse(schemaRead.result.contents[0].text);
+assert.strictEqual(schemaJson.maxEffectsPerPreset, 16);
+assert.strictEqual(schemaJson.effects.length, 11);
+
+// 13c. tools/list
+const toolsList = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 4,
+  method: 'tools/list'
+});
+assert.strictEqual(toolsList.result.tools.length, 7, 'MCP server must expose 7 sound-design tools');
+
+// 13d. tools/call -> design_preset_from_description
+const designCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 5,
+  method: 'tools/call',
+  params: {
+    name: 'design_preset_from_description',
+    arguments: {
+      description: 'gritty cyberpunk walkie talkie radio with dub echo on handle and ssb scramble on shake',
+      name: 'CYBER WALKIE',
+      slot: 0,
+      simulate: true
+    }
+  }
+});
+assert.strictEqual(designCall.result.isError, false);
+const designPayload = JSON.parse(designCall.result.content[0].text);
+assert.strictEqual(designPayload.preset.name, 'CYBER WALKIE');
+assert.strictEqual(
+  designPayload.validationIssues.filter((i) => i.type === 'error').length,
+  0,
+  'AI-synthesized preset must have 0 hardware validation errors'
+);
+assert.ok(designPayload.simulation.idle && designPayload.simulation.handle_pushed && designPayload.simulation.shake_burst);
+
+// 13e. tools/call -> analyze_reference_audio & optimize_preset_parameters on a temporary WAV file
+const tmpRefWavPath = path.join(TMP_TEST_BUILD, 'target_ref.wav');
+fs.writeFileSync(tmpRefWavPath, encodeWavBuffer(targetRefPcm));
+
+const analyzeCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 6,
+  method: 'tools/call',
+  params: {
+    name: 'analyze_reference_audio',
+    arguments: { referenceWavPath: tmpRefWavPath }
+  }
+});
+const analyzePayload = JSON.parse(analyzeCall.result.content[0].text);
+assert.ok(analyzePayload.analysis.inferredCues.length > 0, 'Reference analysis must produce diagnostic cues');
+
+const optCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 7,
+  method: 'tools/call',
+  params: {
+    name: 'optimize_preset_parameters',
+    arguments: {
+      referenceWavPath: tmpRefWavPath,
+      candidatePreset: perturbedCandidate,
+      maxIterations: 24
+    }
+  }
+});
+const optPayload = JSON.parse(optCall.result.content[0].text);
+assert.ok(optPayload.finalDistance.similarityScore > optPayload.initialDistance.similarityScore);
+assert.ok(optPayload.hardwarePresetJson.list.length > 0);
+
+console.log('✓ Suite 13: MCP Server JSON-RPC 2.0 resources, prompts & tools verified');
+
+console.log('\n=== ALL 13 PRODUCTION TEST SUITES PASSED (100%) ===');
