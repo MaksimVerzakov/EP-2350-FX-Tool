@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "node test/run-test.mjs",
     "test:e2e": "playwright test",
+    "mcp": "node --no-warnings mcp/server.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version"
