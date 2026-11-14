@@ -123,11 +123,7 @@ const { BiquadFilterKernel, renderPresetOffline } = await import(
 const { analyzePcmAudio, computeAudioDistance, estimateFundamentalPitchHz, fftRadix2 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/analyzer.mjs')).href
 );
-const {
-  optimizePresetParameters,
-  matchReferenceAudio,
-  synthesizePresetFromDescription
-} = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
+const { optimizePresetParameters, matchReferenceAudio } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
 const { handleMcpJsonRpcRequest } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
 );
@@ -1710,15 +1706,6 @@ assert.ok(
   `Blind reference match must achieve >65% similarity (got ${blindMatch.finalDistance.similarityScore}%)`
 );
 
-// Semantic synthesizer verification
-const synthDesc = synthesizePresetFromDescription(
-  'gritty cyberpunk walkie talkie radio with dub echo on handle and ssb scramble on shake',
-  0,
-  'CYBER WALKIE'
-);
-assert.strictEqual(synthDesc.preset.name, 'CYBER WALKIE');
-assert.ok(synthDesc.preset.list.some((fx) => fx.effect === 'SAMPLE'));
-assert.ok(synthDesc.rationale.length > 0);
 console.log(
   `✓ Suite 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matcher verified (loss ${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss}, similarity ${optResult.finalDistance.similarityScore}%)`
 );
@@ -1760,31 +1747,48 @@ const toolsList = await handleMcpJsonRpcRequest({
   method: 'tools/list'
 });
 assert.strictEqual(toolsList.result.tools.length, 7, 'MCP server must expose 7 sound-design tools');
+assert.ok(
+  !toolsList.result.tools.some((t) => t.name === 'design_preset_from_description'),
+  'The keyword designer was removed: models write presets themselves'
+);
+assert.ok(toolsList.result.tools.some((t) => t.name === 'get_effects_reference'));
 
-// 13d. tools/call -> design_preset_from_description
-const designCall = await handleMcpJsonRpcRequest({
+// 13d. A hand-written preset (what a model writes after get_effects_reference) validates and simulates
+const cyberWalkiePreset = {
+  name: 'CYBER WALKIE',
+  pos: 0,
+  list: [
+    { effect: 'HIGHPASS', cutoff: 0.45 },
+    { effect: 'DIST', amount: 11, mix: 75, 'lowpass-cutoff': 78, 'highpass-cutoff': 22 },
+    { effect: 'DELAY', time: 0.35, echo: 50, 'wet-level': 45, 'dry-level': 90 },
+    { effect: 'SSB', frequency: 0 },
+    { effect: 'SAMPLE' }
+  ],
+  handle: { row: 2, param: 'wet-level', depth: 45 },
+  shake: { row: 3, param: 'frequency', depth: 900 }
+};
+const validateCall = await handleMcpJsonRpcRequest({
   jsonrpc: '2.0',
   id: 5,
   method: 'tools/call',
-  params: {
-    name: 'design_preset_from_description',
-    arguments: {
-      description: 'gritty cyberpunk walkie talkie radio with dub echo on handle and ssb scramble on shake',
-      name: 'CYBER WALKIE',
-      slot: 0,
-      simulate: true
-    }
-  }
+  params: { name: 'validate_preset', arguments: { preset: cyberWalkiePreset } }
 });
-assert.strictEqual(designCall.result.isError, false);
-const designPayload = JSON.parse(designCall.result.content[0].text);
-assert.strictEqual(designPayload.preset.name, 'CYBER WALKIE');
-assert.strictEqual(
-  designPayload.validationIssues.filter((i) => i.type === 'error').length,
-  0,
-  'AI-synthesized preset must have 0 hardware validation errors'
+assert.strictEqual(validateCall.result.isError, false);
+const validatePayload = validateCall.result.structuredContent;
+assert.strictEqual(validatePayload.isValid, true, 'Hand-written preset must have 0 hardware validation errors');
+assert.deepStrictEqual(validatePayload.warnings, [], 'Hand-written preset must lint clean');
+const simulateCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 51,
+  method: 'tools/call',
+  params: { name: 'simulate_preset', arguments: { preset: cyberWalkiePreset } }
+});
+const designPayload = { preset: cyberWalkiePreset, ...simulateCall.result.structuredContent };
+assert.ok(designPayload.scenarios.idle && designPayload.scenarios.handle_pushed && designPayload.scenarios.shake_burst);
+assert.ok(
+  Math.abs(designPayload.scenarios.idle.estimatedDelayMs - 350) <= 10,
+  'Simulation must measure the 350 ms delay of the hand-written preset'
 );
-assert.ok(designPayload.simulation.idle && designPayload.simulation.handle_pushed && designPayload.simulation.shake_burst);
 
 // 13e. tools/call -> analyze_reference_audio & optimize_preset_parameters on a temporary WAV file
 const tmpRefWavPath = path.join(TMP_TEST_BUILD, 'target_ref.wav');
@@ -1841,7 +1845,7 @@ assert.ok(
 );
 assert.ok(
   skillMdSrc.includes('name: ep2350-sound-designer') &&
-    skillMdSrc.includes('design_preset_from_description'),
+    skillMdSrc.includes('get_effects_reference'),
   'Antigravity SKILL.md must document the ep2350-sound-designer workflow and MCP tools'
 );
 console.log('✓ Suite 14: Live Web UI Sync Bridge & Antigravity Skill verified');
@@ -1896,7 +1900,7 @@ assert.strictEqual(decodeHashPayload('#unknown=123'), null);
 // 15e. MCP tools return shareUrl and shareHash
 assert.ok(
   typeof designPayload.shareUrl === 'string' && designPayload.shareUrl.includes('#preset='),
-  'design_preset_from_description must return shareUrl with #preset= deep-link'
+  'simulate_preset must return shareUrl with #preset= deep-link'
 );
 assert.ok(
   typeof optPayload.shareUrl === 'string' && optPayload.shareUrl.includes('#preset='),
@@ -1960,7 +1964,17 @@ const getStatus = await getRes.json();
 assert.strictEqual(getStatus.name, 'ep2350-fx-mcp-server');
 assert.strictEqual(getStatus.endpoint, 'https://ep2350-fx.pages.dev/mcp');
 
-// 16c. POST /mcp -> tools/call (design_preset_from_description) with same-origin shareUrl
+// 16c. POST /mcp -> tools/call (validate_preset) with same-origin shareUrl
+const daftVocoderPreset = {
+  name: 'DAFT VOCODER',
+  pos: 1,
+  list: [
+    { effect: 'HARMONY', pitch: 1.0, 'dry-level': 40 },
+    { effect: 'RING', frequency: 180, mix: 45 },
+    { effect: 'LOWPASS', cutoff: 0.7 },
+    { effect: 'SAMPLE' }
+  ]
+};
 const postDesignRes = await cfWorker.fetch(
   new Request('https://ep2350-fx.pages.dev/mcp', {
     method: 'POST',
@@ -1969,20 +1983,13 @@ const postDesignRes = await cfWorker.fetch(
       jsonrpc: '2.0',
       id: 101,
       method: 'tools/call',
-      params: {
-        name: 'design_preset_from_description',
-        arguments: {
-          description: 'daft punk vocoder talkbox synth voice',
-          name: 'DAFT VOCODER',
-          slot: 1
-        }
-      }
+      params: { name: 'validate_preset', arguments: { preset: daftVocoderPreset } }
     })
   })
 );
 assert.strictEqual(postDesignRes.status, 200);
 const postDesignRpc = await postDesignRes.json();
-const cfDesignOut = JSON.parse(postDesignRpc.result.content[0].text);
+const cfDesignOut = { preset: daftVocoderPreset, ...JSON.parse(postDesignRpc.result.content[0].text) };
 assert.ok(
   cfDesignOut.shareUrl.startsWith('https://ep2350-fx.pages.dev/#preset=') &&
     cfDesignOut.shareUrl.endsWith('&slot=1'),
@@ -2192,7 +2199,7 @@ assert.strictEqual(
   'serverInfo.version must come from the shared app version (git tag / package.json)'
 );
 assert.strictEqual(initKnown.result.serverInfo.title, 'EP-2350 FX Tool');
-assert.ok(initKnown.result.instructions.includes('ep2350://schema/effects-registry'));
+assert.ok(initKnown.result.instructions.includes('get_effects_reference'));
 
 // 18b. Notifications, client responses and malformed messages
 assert.strictEqual(
@@ -2356,7 +2363,8 @@ for (const t of stdioTools) {
 assert.ok(allPropNames(stdioByName.simulate_preset).includes('outputWavPath'));
 assert.strictEqual(stdioByName.validate_preset.annotations.readOnlyHint, true);
 assert.strictEqual(stdioByName.export_pack_config.annotations.destructiveHint, true);
-assert.strictEqual(stdioByName.design_preset_from_description.inputSchema.properties.slot.type, 'integer');
+assert.strictEqual(stdioByName.push_to_live_ui.inputSchema.properties.slot.type, 'integer');
+assert.strictEqual(stdioByName.get_effects_reference.annotations.readOnlyHint, true);
 
 // 19b. HTTP tool lists hide path args; annotations reflect the transport
 const httpToolsRes = await handleLocalMcpHttpFetch(
@@ -2424,14 +2432,9 @@ const checkStructured = (toolName, res) => {
   );
   return res.result.structuredContent;
 };
-const sDesign = checkStructured(
-  'design_preset_from_description',
-  await rpc('tools/call', {
-    name: 'design_preset_from_description',
-    arguments: { description: 'dark dub radio with echo on handle', simulate: true }
-  })
-);
-assert.deepStrictEqual(checkSchema(presetSchema, sDesign.preset), [], 'Designed preset must match PRESET_SCHEMA');
+const sDesign = { preset: cyberWalkiePreset };
+checkStructured('get_effects_reference', await rpc('tools/call', { name: 'get_effects_reference', arguments: {} }));
+assert.deepStrictEqual(checkSchema(presetSchema, sDesign.preset), [], 'Hand-written preset must match PRESET_SCHEMA');
 checkStructured('validate_preset', await rpc('tools/call', { name: 'validate_preset', arguments: { preset: sDesign.preset } }));
 checkStructured(
   'validate_preset',
@@ -2487,15 +2490,39 @@ const badParam = await lintOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effec
 assert.ok(badParam.some((m) => m.includes('unknown parameter "cutof"')), 'Typo in param name must warn');
 const outOfRange = await lintOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
 assert.ok(outOfRange.some((m) => m.includes('"amount"=99 is outside')), 'Out-of-range value must warn');
-const hwScale = await lintOf({
-  list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }]
-});
-assert.ok(hwScale.some((m) => m.includes('editor scale (0..100)')), 'Hardware 0..1 scale must warn');
+const hwScaleRes = (
+  await rpc('tools/call', {
+    name: 'validate_preset',
+    arguments: { preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }] } }
+  })
+).result.structuredContent;
+assert.strictEqual(hwScaleRes.inputScale, 'config', 'A 0..1 preset is detected as config.json scale');
+assert.deepStrictEqual(hwScaleRes.warnings, [], '...and converted instead of warned about');
 const badMod = await lintOf({
   list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
   handle: { row: 0, param: 'cutoff', depth: 50 }
 });
 assert.ok(badMod.some((m) => m.includes('has no parameter "cutoff"')), 'Mod param mismatch must warn');
+// 19g. get_effects_reference: full list, single effect, unknown effect
+const fullRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: {} })).result.structuredContent;
+assert.strictEqual(fullRef.effects.length, 11);
+assert.ok(fullRef.rules.some((r) => r.includes('editor scale')), 'Reference must explain the editor scale');
+const ringRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: { effect: 'ring' } })).result.structuredContent;
+assert.deepStrictEqual(ringRef.effects.map((e) => e.type), ['RING']);
+assert.deepStrictEqual(ringRef.effects[0].params.find((p) => p.name === 'frequency').modDepth, { min: -5000, max: 5000, unit: 'Hz' });
+const badRef = await rpc('tools/call', { name: 'get_effects_reference', arguments: { effect: 'FLANGER' } });
+assert.strictEqual(badRef.result.isError, true);
+
+// 19h. push_to_live_ui without a reachable dev server delivers the shareUrl and is not an error
+const pushNoServer = await rpc('tools/call', {
+  name: 'push_to_live_ui',
+  arguments: { preset: cyberWalkiePreset, uiUrl: 'http://127.0.0.1:9' }
+});
+assert.strictEqual(pushNoServer.result.isError, false, 'A shareUrl delivery is a success');
+assert.strictEqual(pushNoServer.result.structuredContent.pushed, false);
+assert.strictEqual(pushNoServer.result.structuredContent.deliveryMode, 'shareUrl');
+assert.ok(pushNoServer.result.structuredContent.shareUrl.includes('#preset='));
+assert.deepStrictEqual(checkSchema(stdioByName.push_to_live_ui.outputSchema, pushNoServer.result.structuredContent), []);
 console.log('✓ Suite 19: Typed MCP tool schemas, annotations & structuredContent verified');
 
 // ============================================================================
@@ -2758,4 +2785,134 @@ assert.ok(
 );
 console.log('✓ Suite 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder)
+// ============================================================================
+{
+  const simIdle = async (list) => {
+    const res = await handleMcpJsonRpcRequest({
+      jsonrpc: '2.0',
+      id: 600,
+      method: 'tools/call',
+      params: { name: 'simulate_preset', arguments: { preset: { list: [...list, { effect: 'SAMPLE' }] }, scenarios: ['idle'] } }
+    });
+    return res.result.structuredContent;
+  };
+  const rt60 = (t, fb) => (t * 60) / (-20 * Math.log10(fb / 100));
+
+  // No echo and no tail for effects without time-domain memory (the old analyzer reported a
+  // ~400 ms "DELAY" on all of these: the test phrase's syllable rhythm)
+  for (const [label, fx] of [
+    ['dry', []],
+    ['RING', [{ effect: 'RING', frequency: 400, mix: 100 }]],
+    ['LOWPASS', [{ effect: 'LOWPASS', cutoff: 30 }]],
+    ['DIST (DC offset after signal)', [{ effect: 'DIST', amount: 20, mix: 80 }]],
+    ['HARMONY', [{ effect: 'HARMONY', pitch: 0.6, 'dry-level': 30 }]],
+    ['SSB', [{ effect: 'SSB', frequency: 300 }]]
+  ]) {
+    const sim = await simIdle(fx);
+    const a = sim.scenarios.idle;
+    assert.strictEqual(a.estimatedDelayMs, null, `${label}: must not report an echo (got ${a.estimatedDelayMs} ms)`);
+    assert.strictEqual(a.estimatedTailDecaySec, 0, `${label}: must not report a tail (got ${a.estimatedTailDecaySec} s)`);
+    assert.ok(!a.inferredCues.some((c) => /DELAY|REVERB/.test(c)), `${label}: no DELAY/REVERB cue`);
+    assert.strictEqual(sim.dryBaseline.estimatedDelayMs, null, 'Dry baseline must not report an echo');
+  }
+
+  // Delay times are measured exactly and feedback decay matches theory (RT60 = t·60 / −20·log10(fb))
+  for (const [t, fb] of [[0.15, 20], [0.3, 60], [0.5, 40], [0.6, 10], [1.1, 20]]) {
+    const a = (await simIdle([{ effect: 'DELAY', time: t, echo: fb, 'wet-level': 50 }])).scenarios.idle;
+    assert.ok(Math.abs(a.estimatedDelayMs - t * 1000) <= 10, `DELAY ${t}s: echo at ${a.estimatedDelayMs} ms`);
+    const expected = rt60(t, fb);
+    assert.ok(
+      Math.abs(a.estimatedTailDecaySec - expected) <= Math.max(0.2, expected * 0.15),
+      `DELAY ${t}s fb${fb}: RT60 ${a.estimatedTailDecaySec}s vs theory ${expected.toFixed(2)}s`
+    );
+    assert.ok(a.inferredCues.some((c) => c.includes('indicates DELAY')), `DELAY ${t}s: DELAY cue`);
+  }
+  const noFeedback = (await simIdle([{ effect: 'DELAY', time: 0.25, echo: 0, 'wet-level': 60 }])).scenarios.idle;
+  assert.strictEqual(noFeedback.estimatedDelayMs, 250);
+  assert.strictEqual(noFeedback.estimatedTailDecaySec, 0, 'A single echo without feedback has no tail');
+  const longFeedback = (await simIdle([{ effect: 'DELAY', time: 0.9, echo: 60, 'wet-level': 50 }])).scenarios.idle;
+  assert.ok(longFeedback.tailDecayIsLowerBound && longFeedback.estimatedTailDecaySec === 10, 'RT60 beyond 10 s is a lower bound');
+
+  // Reverb: a tail but no discrete echo; combined delay + reverb finds both
+  const reverb = (await simIdle([{ effect: 'REVERB', time: 90, 'wet-level': 80 }])).scenarios.idle;
+  assert.strictEqual(reverb.estimatedDelayMs, null, 'REVERB must not be reported as a DELAY');
+  assert.ok(reverb.estimatedTailDecaySec >= 0.5 && reverb.estimatedTailDecaySec <= 3, `REVERB RT60 ${reverb.estimatedTailDecaySec}s`);
+  assert.ok(reverb.inferredCues.some((c) => c.includes('indicates REVERB')), 'REVERB cue');
+  const both = (
+    await simIdle([
+      { effect: 'DELAY', time: 0.5, echo: 50, 'wet-level': 50 },
+      { effect: 'REVERB', time: 60, 'wet-level': 50 }
+    ])
+  ).scenarios.idle;
+  assert.strictEqual(both.estimatedDelayMs, 500, 'DELAY+REVERB: echo at 500 ms');
+  assert.ok(both.estimatedTailDecaySec > 3, 'DELAY+REVERB: long tail');
+
+  // Phrase-based analysis (references): no echo or tail on an unprocessed phrase, even blind
+  const phrase = generateSyntheticVocalPcm(48000, 1.6, 0.8);
+  const dryRef = analyzePcmAudio(phrase, phrase);
+  assert.strictEqual(dryRef.estimatedDelayMs, null);
+  assert.strictEqual(dryRef.estimatedTailDecaySec, 0);
+  assert.strictEqual(dryRef.isBlindEstimate, false);
+  const blind = analyzePcmAudio(phrase);
+  assert.strictEqual(blind.isBlindEstimate, true);
+  assert.strictEqual(blind.estimatedTailDecaySec, 0, 'Blind analysis of a dry phrase has no tail');
+}
+console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder) verified');
+
+// ============================================================================
+// SUITE 23: Presets accepted in either scale (editor 0..100 or config.json 0..1)
+// ============================================================================
+{
+  const callTool = async (name, args) =>
+    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 700, method: 'tools/call', params: { name, arguments: args } }))
+      .result.structuredContent;
+  const sortKeys = (v) =>
+    Array.isArray(v)
+      ? v.map(sortKeys)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]))
+        : v;
+  const packsDoc = JSON.parse(
+    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 701, method: 'resources/read', params: { uri: 'ep2350://presets/official-packs' } }))
+      .result.contents[0].text
+  );
+
+  // Every official TE preset, passed exactly as the resource shows it (config scale), is detected,
+  // converted, lints clean and serializes back to the identical hardware JSON.
+  let checked = 0;
+  for (const pk of packsDoc) {
+    for (const hw of pk.config.presets) {
+      const v = await callTool('validate_preset', { preset: hw });
+      assert.strictEqual(v.inputScale, 'config', `${hw.name}: config scale detected`);
+      assert.deepStrictEqual(v.warnings, [], `${hw.name}: no warnings`);
+      for (const key of ['list', 'handle', 'shake', 'lfo', 'trigger']) {
+        assert.deepStrictEqual(sortKeys(v.normalizedPresetJson[key]), sortKeys(hw[key]), `${hw.name}: ${key} round-trips`);
+      }
+      checked++;
+    }
+  }
+  assert.strictEqual(checked, 12);
+
+  // Simulation and export use the converted values (SPACE ECHO: 0.9 s delay, 60% feedback)
+  const spaceEcho = packsDoc[1].config.presets[0];
+  const simSpace = await callTool('simulate_preset', { preset: spaceEcho, scenarios: ['idle'] });
+  assert.strictEqual(simSpace.inputScale, 'config');
+  assert.strictEqual(simSpace.scenarios.idle.estimatedDelayMs, 900);
+  assert.deepStrictEqual(simSpace.presetWarnings, []);
+  const exported = await callTool('export_pack_config', { presets: [spaceEcho] });
+  assert.deepStrictEqual(sortKeys(exported.configJson.presets[0].list), sortKeys(spaceEcho.list), 'Export keeps config values');
+
+  // hardwarePresetJson / normalizedPresetJson outputs can be passed straight back in
+  const editorPreset = { list: [{ effect: 'DELAY', time: 0.3, echo: 40, 'wet-level': 50 }, { effect: 'SAMPLE' }] };
+  const fromEditor = await callTool('validate_preset', { preset: editorPreset });
+  assert.strictEqual(fromEditor.inputScale, 'editor');
+  assert.deepStrictEqual(fromEditor.normalizedPresetJson.list[0], { effect: 'DELAY', time: 0.3, echo: 0.4, 'wet-level': 0.5 });
+  const roundTrip = await callTool('validate_preset', { preset: fromEditor.normalizedPresetJson });
+  assert.strictEqual(roundTrip.inputScale, 'config');
+  assert.deepStrictEqual(roundTrip.normalizedPresetJson.list, fromEditor.normalizedPresetJson.list);
+}
+console.log('✓ Suite 23: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
+
+console.log('\n=== ALL 23 PRODUCTION TEST SUITES PASSED (100%) ===');

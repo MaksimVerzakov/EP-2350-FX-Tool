@@ -21,13 +21,9 @@ import {
 } from '../utils/wavCodec';
 import type { ModulationScenario } from '../dsp/offlineRenderer';
 import { renderPresetOffline } from '../dsp/offlineRenderer';
-import { analyzePcmAudio } from '../dsp/analyzer';
-import {
-  matchReferenceAudio,
-  optimizePresetParameters,
-  synthesizePresetFromDescription
-} from '../dsp/optimizer';
-import { MCP_TOOL_NAMES, buildToolList, lintPresetAgainstRegistry } from './toolSchemas';
+import { analyzeImpulseResponse, analyzePcmAudio, generateImpulseProbePcm } from '../dsp/analyzer';
+import { matchReferenceAudio, optimizePresetParameters } from '../dsp/optimizer';
+import { MCP_TOOL_NAMES, buildToolList, detectPresetScale, lintPresetAgainstRegistry } from './toolSchemas';
 
 export interface McpRuntimeOptions {
   /** Base URL of the web UI for generating #preset= shareable deep-links */
@@ -74,7 +70,56 @@ export const MCP_SERVER_INFO = {
 };
 
 const MCP_SERVER_INSTRUCTIONS =
-  'Designs and verifies effect presets for the Teenage Engineering EP-2350 fx mic. Read ep2350://schema/effects-registry for effect parameters and hardware limits, then design (design_preset_from_description or a hand-written preset), check with validate_preset and simulate_preset, and deliver with export_pack_config or push_to_live_ui. Every preset tool returns a shareUrl that opens the preset in the web app.';
+  'Designs and verifies effect presets for the Teenage Engineering EP-2350 fx mic. Call get_effects_reference for the effects, parameter ranges, modulation rules and hardware limits, write the preset yourself, check it with validate_preset and simulate_preset (echo times, tail decay, spectrum, pitch per handle/shake scenario) and adjust, then deliver it with export_pack_config (config.json) or push_to_live_ui. Every preset tool returns a shareUrl that opens the preset in the web app. To match a recording, use analyze_reference_audio and optimize_preset_parameters.';
+
+/** Rules that are not expressed by parameter ranges alone. */
+const EFFECTS_REFERENCE_RULES = [
+  `A preset has at most ${MAX_EFFECTS_PER_PRESET} effect rows; signal flows top to bottom through \`list\`.`,
+  'DELAY, REVERB, HARMONY and SSB may each appear at most once per preset.',
+  'SAMPLE marks where the trigger sample is injected into the chain; it is appended automatically if missing.',
+  'Rows with BUS 1 and BUS 2 run in parallel and are summed back together.',
+  'Preset objects passed to the tools use the editor scale: percent (%) parameters are 0..100 and percent modulation depths -100..100. Hardware config.json stores them as 0.0..1.0; presets in that scale (e.g. hardwarePresetJson or the official packs) are detected and converted automatically, and the tools report inputScale.'
+];
+
+const MODULATION_REFERENCE = {
+  handle:
+    'Squeeze handle. { row, param, depth } sweeps a parameter of the effect on `row` (zero-based) by `depth` at full squeeze, or { target: "lfo", param: "speed", depth } adds `depth` Hz to the LFO rate.',
+  shake: 'Accelerometer burst. { row, param, depth } kicks a parameter of the effect on `row` by `depth`.',
+  lfo: 'Continuous LFO. { row, param, depth, shape: sine|square|sawtooth|random, speed (Hz), phase? (0..1) }.',
+  trigger: '{ row } of the SAMPLE block fired by the trigger button.',
+  depthRanges: 'Each parameter lists its modulation depth range in `modDepth` (min, max, unit).'
+};
+
+/** Effects, parameters (editor scale), modulation depth ranges and hardware rules. */
+export function buildEffectsReference(effect?: string) {
+  const wanted = effect ? String(effect).toUpperCase() : undefined;
+  const metas = Object.values(EFFECTS_REGISTRY).filter((meta) => !wanted || meta.type === wanted);
+  return {
+    maxEffectsPerPreset: MAX_EFFECTS_PER_PRESET,
+    parallelBuses: [1, 2],
+    rules: EFFECTS_REFERENCE_RULES,
+    modulation: MODULATION_REFERENCE,
+    effects: metas.map((meta) => ({
+      type: meta.type,
+      displayName: meta.displayName,
+      description: meta.description,
+      singleInstance: meta.singleInstance,
+      params: meta.params.map((p) => {
+        const depth = getModDepthConfig(meta.type, p.name);
+        return {
+          name: p.name,
+          label: p.label,
+          min: p.min,
+          max: p.max,
+          step: p.step,
+          defaultVal: p.defaultVal,
+          unit: p.unit,
+          modDepth: { min: depth.min, max: depth.max, unit: depth.unit }
+        };
+      })
+    }))
+  };
+}
 
 /** Picks the protocol version to answer `initialize` with (spec version negotiation). */
 export function negotiateProtocolVersion(requested: unknown): string {
@@ -137,7 +182,7 @@ export const MCP_RESOURCES = [
     uri: 'ep2350://presets/official-packs',
     name: 'Official Teenage Engineering EP-2350 Preset Packs',
     description:
-      'All 3 official TE preset packs (BROKEN RADIO, DUB, MYSTERIOUS = 12 hardware presets) for few-shot sound design reference.',
+      'All 3 official TE preset packs (BROKEN RADIO, DUB, MYSTERIOUS = 12 hardware presets) for few-shot sound design reference. Values are in hardware config.json scale (0.0..1.0): pass a pack to validate_preset as configJson, or multiply percent values by 100 for a `preset`.',
     mimeType: 'application/json'
   }
 ];
@@ -206,6 +251,29 @@ export function normalizeSinglePreset(rawPreset: Record<string, any>, pos = 0): 
     lfo: rawPreset?.lfo,
     trigger: rawPreset?.trigger
   };
+}
+
+/**
+ * Read a preset argument in either scale. Config-scale presets (0.0..1.0, e.g. copied from
+ * hardwarePresetJson or the official packs) are converted with the same parser the web app uses
+ * for imported config.json files.
+ */
+export function readPreset(
+  raw: Record<string, any>,
+  pos = 0
+): { preset: PresetConfig; inputScale: 'editor' | 'config' } {
+  const slot = Math.max(0, Math.min(3, typeof raw?.pos === 'number' ? raw.pos : pos));
+  if (detectPresetScale(raw) === 'config') {
+    const parsed = parseConfigJson(JSON.stringify({ name: 'MCP INPUT', presets: [{ ...raw, pos: slot }] }));
+    const converted = parsed.pack?.presets.find((p) => p.pos === slot);
+    if (converted) {
+      return {
+        preset: normalizeSinglePreset({ ...converted, id: raw.id, name: raw.name ?? converted.name }, slot),
+        inputScale: 'config'
+      };
+    }
+  }
+  return { preset: normalizeSinglePreset(raw, slot), inputScale: 'editor' };
 }
 
 function wrapPresetInPack(preset: PresetConfig, packName = 'AI CUSTOM PACK'): PackConfig {
@@ -287,26 +355,7 @@ export async function handleMcpCoreRequest(
     if (method === 'resources/read') {
       const uri = params?.uri;
       if (uri === 'ep2350://schema/effects-registry') {
-        const schemaDoc = {
-          maxEffectsPerPreset: MAX_EFFECTS_PER_PRESET,
-          parallelBuses: [1, 2],
-          effects: Object.values(EFFECTS_REGISTRY).map((meta) => ({
-            type: meta.type,
-            displayName: meta.displayName,
-            description: meta.description,
-            singleInstance: meta.singleInstance,
-            params: meta.params.map((p) => ({
-              name: p.name,
-              label: p.label,
-              min: p.min,
-              max: p.max,
-              step: p.step,
-              defaultVal: p.defaultVal,
-              unit: p.unit,
-              modDepth: getModDepthConfig(meta.type, p.name)
-            }))
-          }))
-        };
+        const schemaDoc = buildEffectsReference();
         return {
           jsonrpc: '2.0',
           id,
@@ -383,7 +432,7 @@ export async function handleMcpCoreRequest(
                 role: 'user',
                 content: {
                   type: 'text',
-                  text: `Design an EP-2350 vocal effect preset for: "${args.description || ''}". First call design_preset_from_description or read ep2350://schema/effects-registry, then run simulate_preset to verify the acoustic telemetry across idle, handle_pushed, and shake_burst, and finally output the validated config.json and shareUrl.`
+                  text: `Design an EP-2350 vocal effect preset for: "${args.description || ''}". Call get_effects_reference first, then write the preset (effect chain plus handle/shake/lfo modulation) yourself. Check it with validate_preset and fix any errors or warnings, then run simulate_preset and confirm the telemetry matches the description across idle, handle_pushed and shake_burst (echo time, tail decay, spectrum, pitch); adjust and re-simulate if it does not. Finally deliver it with export_pack_config and give the user the shareUrl.`
                 }
               }
             ]
@@ -482,6 +531,19 @@ async function executeMcpToolCall(
   const defaultSampleRate = isEdge ? 24000 : 48000;
   const defaultTotalSec = isEdge ? 0.35 : 1.6;
   const defaultVoiceSec = isEdge ? 0.2 : 0.8;
+  // Echo/decay are measured on an impulse probe (a short burst then silence), long enough for a
+  // 1.1 s delay plus its first repeat locally; on the edge it is shorter to save CPU.
+  const probeSec = isEdge ? 1.3 : 2.4;
+  const analyzeScenario = (
+    preset: PresetConfig,
+    dryPcm: ReturnType<typeof generateSyntheticVocalPcm>,
+    scenario: ModulationScenario
+  ) => {
+    const rendered = renderPresetOffline(preset, dryPcm, { scenario });
+    const probe = generateImpulseProbePcm(dryPcm.sampleRate, probeSec);
+    const impulse = analyzeImpulseResponse(renderPresetOffline(preset, probe, { scenario }));
+    return { rendered, report: analyzePcmAudio(rendered, dryPcm, impulse) };
+  };
 
   // Local filesystem access is only wired up for trusted transports (stdio). Over HTTP the
   // callbacks are stripped, so reject path arguments explicitly instead of silently ignoring them.
@@ -497,51 +559,14 @@ async function executeMcpToolCall(
   }
 
   switch (toolName) {
-    case 'design_preset_from_description': {
-      const description = String(args.description || '').trim();
-      if (!description) {
-        return { error: 'description is required.' };
-      }
-      const slot = typeof args.slot === 'number' ? args.slot : 0;
-      const { preset, rationale } = synthesizePresetFromDescription(description, slot, args.name);
-      const pack = wrapPresetInPack(preset, args.name || 'AI DESIGNED PACK');
-      const issues = validatePackConfig(pack).filter((i) => i.presetPos === preset.pos);
-      const serializedPack = JSON.parse(serializeToConfigJson(pack));
-      const hardwarePresetJson = serializedPack.presets[preset.pos];
-      const shareHash = encodePresetToHash(hardwarePresetJson, preset.pos);
-      const shareUrl = buildPresetShareUrl(shareBaseUrl, hardwarePresetJson, preset.pos);
-
-      let simulation: Record<string, any> | undefined = undefined;
-      if (args.simulate !== false) {
-        const dryPcm = generateSyntheticVocalPcm(
-          defaultSampleRate,
-          defaultTotalSec,
-          defaultVoiceSec
-        );
-        const idlePcm = renderPresetOffline(preset, dryPcm, { scenario: 'idle' });
-        const handlePcm = renderPresetOffline(preset, dryPcm, { scenario: 'handle_pushed' });
-        const shakePcm = renderPresetOffline(preset, dryPcm, { scenario: 'shake_burst' });
-
-        if (args.outputWavPath && options.writeLocalFile) {
-          options.writeLocalFile(args.outputWavPath, encodeWavBuffer(handlePcm));
+    case 'get_effects_reference': {
+      if (args.effect !== undefined) {
+        const wanted = String(args.effect).toUpperCase();
+        if (!Object.prototype.hasOwnProperty.call(EFFECTS_REGISTRY, wanted)) {
+          return { error: `Unknown effect "${args.effect}". Valid: ${Object.keys(EFFECTS_REGISTRY).join(', ')}.` };
         }
-
-        simulation = {
-          idle: analyzePcmAudio(idlePcm, dryPcm),
-          handle_pushed: analyzePcmAudio(handlePcm, dryPcm),
-          shake_burst: analyzePcmAudio(shakePcm, dryPcm)
-        };
       }
-
-      return {
-        preset,
-        hardwarePresetJson,
-        shareHash,
-        shareUrl,
-        rationale,
-        validationIssues: issues,
-        simulation
-      };
+      return buildEffectsReference(args.effect);
     }
 
     case 'validate_preset': {
@@ -567,7 +592,7 @@ async function executeMcpToolCall(
       }
 
       if (args.preset && typeof args.preset === 'object') {
-        const normPreset = normalizeSinglePreset(args.preset, args.preset.pos ?? 0);
+        const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
         const pack = wrapPresetInPack(normPreset);
         const issues = [
           ...validatePackConfig(pack).filter(
@@ -580,6 +605,7 @@ async function executeMcpToolCall(
         const normalizedPresetJson = serializedPack.presets[normPreset.pos];
         return {
           isValid: errors.length === 0,
+          inputScale,
           errors,
           warnings: issues.filter((i) => i.type === 'warning'),
           normalizedPresetJson,
@@ -595,7 +621,7 @@ async function executeMcpToolCall(
       if (!args.preset || typeof args.preset === 'object' === false) {
         return { error: '`preset` object is required.' };
       }
-      const normPreset = normalizeSinglePreset(args.preset, args.preset.pos ?? 0);
+      const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
       let dryPcm;
       if (typeof args.inputWavBase64 === 'string' && args.inputWavBase64.trim()) {
         dryPcm = decodeWavBuffer(decodeBase64Bytes(args.inputWavBase64));
@@ -610,14 +636,15 @@ async function executeMcpToolCall(
           ? args.scenarios
           : ['idle', 'handle_pushed', 'shake_burst'];
 
-      const dryReport = analyzePcmAudio(dryPcm);
+      // Analyse the dry input against itself so its own rhythm is not reported as an echo.
+      const dryReport = analyzePcmAudio(dryPcm, dryPcm);
       const reports: Record<string, any> = {};
       let lastRenderedPcm = null;
 
       for (const sc of scenarios) {
-        const rendered = renderPresetOffline(normPreset, dryPcm, { scenario: sc });
+        const { rendered, report } = analyzeScenario(normPreset, dryPcm, sc);
         lastRenderedPcm = rendered;
-        reports[sc] = analyzePcmAudio(rendered, dryPcm);
+        reports[sc] = report;
       }
 
       let savedWavPath: string | undefined = undefined;
@@ -630,6 +657,7 @@ async function executeMcpToolCall(
 
       return {
         presetName: normPreset.name,
+        inputScale,
         shareHash,
         shareUrl,
         presetWarnings: lintPresetAgainstRegistry(normPreset),
@@ -722,7 +750,7 @@ async function executeMcpToolCall(
           : defaultIter;
 
       const optResult = args.candidatePreset
-        ? optimizePresetParameters(normalizeSinglePreset(args.candidatePreset, 0), targetPcm, {
+        ? optimizePresetParameters(readPreset(args.candidatePreset, 0).preset, targetPcm, {
             dryPcm,
             maxIterations
           })
@@ -761,7 +789,7 @@ async function executeMcpToolCall(
       if (Array.isArray(args.presets)) {
         args.presets.slice(0, 4).forEach((p: Record<string, any>, idx: number) => {
           const slot = typeof p.pos === 'number' ? Math.max(0, Math.min(3, p.pos)) : idx;
-          pack.presets[slot] = normalizeSinglePreset(p, slot);
+          pack.presets[slot] = readPreset(p, slot).preset;
         });
       }
       for (let i = 0; i < 4; i++) {
@@ -801,7 +829,7 @@ async function executeMcpToolCall(
         shareUrl = buildPackShareUrl(shareBaseUrl, args.pack, args.slot);
       } else if (args.preset && typeof args.preset === 'object') {
         const slot = typeof args.slot === 'number' ? args.slot : args.preset.pos ?? 0;
-        payload.preset = normalizeSinglePreset(args.preset, slot);
+        payload.preset = readPreset({ ...args.preset, pos: slot }, slot).preset;
         payload.slot = slot;
         shareHash = encodePresetToHash(payload.preset, slot);
         shareUrl = buildPresetShareUrl(shareBaseUrl, payload.preset, slot);
@@ -848,10 +876,11 @@ async function executeMcpToolCall(
         if (!res.ok) {
           return {
             pushed: false,
+            deliveryMode: 'shareUrl',
             endpoint,
             shareHash,
             shareUrl,
-            error: `UI server responded with status ${res.status}`
+            message: `The web app at ${baseUrl} responded with status ${res.status}, so nothing was pushed live. Open shareUrl to load this preset in your browser.`
           };
         }
         const data = await res.json();
@@ -864,12 +893,14 @@ async function executeMcpToolCall(
           response: data
         };
       } catch (err) {
+        // Not an error: the shareUrl is the normal delivery when no local dev server is running.
         return {
           pushed: false,
+          deliveryMode: 'shareUrl',
           endpoint,
           shareHash,
           shareUrl,
-          error: `Could not reach running Vite UI at ${endpoint} (${err instanceof Error ? err.message : String(err)}). Open shareUrl directly to load this preset in your browser.`
+          message: `No local dev server at ${baseUrl} (${err instanceof Error ? err.message : String(err)}), so nothing was pushed live. Open shareUrl to load this preset in your browser.`
         };
       }
     }

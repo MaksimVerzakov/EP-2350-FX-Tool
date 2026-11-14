@@ -31,10 +31,17 @@ export interface AudioAnalysisReport {
   estimatedPitchRatio: number;
   estimatedSemitones: number;
   inharmonicityScore: number; // 0..1 (elevated by SSB / RING)
+  /** Level (dB) of the output just after the dry phrase ends; very low when there is no tail. */
   tailRmsDb: number;
+  /** RT60-style tail time (s) measured after the dry phrase ends; 0 when there is no tail. Capped at 10. */
   estimatedTailDecaySec: number;
+  /** True when the tail barely decays within the analysed window, so the value is a lower bound. */
+  tailDecayIsLowerBound: boolean;
   estimatedDelayMs: number | null;
-  echoStrength: number; // 0..1
+  /** Echo-to-direct level ratio at `estimatedDelayMs` (0..1); ~0 when there is no discrete echo. */
+  echoStrength: number;
+  /** True when no dry reference was available, so echo/tail figures are blind estimates. */
+  isBlindEstimate: boolean;
   inferredCues: string[];
 }
 
@@ -219,62 +226,192 @@ function computeInharmonicity(powerSpec: Float64Array, sampleRate: number, f0: n
   return round2(Math.min(1, interHarmonicEnergy / total));
 }
 
+/** Short-time power envelope (mean square per frame) of a mono signal. */
+function powerEnvelope(mono: Float32Array, hopSamples: number): Float64Array {
+  const n = Math.floor(mono.length / hopSamples);
+  const env = new Float64Array(n);
+  for (let f = 0; f < n; f++) {
+    let sumSq = 0;
+    const base = f * hopSamples;
+    for (let i = 0; i < hopSamples; i++) {
+      const v = mono[base + i] || 0;
+      sumSq += v * v;
+    }
+    env[f] = sumSq / hopSamples;
+  }
+  return env;
+}
+
+const toMono = (pcm: StereoPcmBuffer): Float32Array => {
+  const n = Math.min(pcm.left.length, pcm.right.length);
+  const mono = new Float32Array(n);
+  for (let i = 0; i < n; i++) mono[i] = ((pcm.left[i] || 0) + (pcm.right[i] || 0)) * 0.5;
+  return mono;
+};
+
 /**
- * Estimate echo delay lag (ms) and echo strength (0..1) from amplitude envelope autocorrelation.
- * If `dryMono` is provided, cross-correlates the residual wet envelope against the dry envelope
- * for sharp delay-time localization even on rhythmic vocal phrases.
+ * One-pole DC blocker (≈20 Hz high-pass). Effects such as DIST leave a constant DC offset after
+ * the signal stops; it is inaudible but would otherwise read as a tail that never decays.
+ */
+function removeDc(mono: Float32Array, sampleRate: number): Float32Array {
+  const r = 1 - (2 * Math.PI * 20) / sampleRate;
+  const out = new Float32Array(mono.length);
+  let prevX = 0;
+  let prevY = 0;
+  for (let i = 0; i < mono.length; i++) {
+    const y = mono[i] - prevX + r * prevY;
+    prevX = mono[i];
+    prevY = y;
+    out[i] = y;
+  }
+  return out;
+}
+
+const pDb = (p: number): number => 10 * Math.log10(Math.max(1e-14, p));
+const median = (values: ArrayLike<number>): number => {
+  const sorted = Array.from(values).sort((x, y) => x - y);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+};
+
+const ENV_HOP_SEC = 0.005;
+const ECHO_MIN_LAG_SEC = 0.08;
+const ECHO_MAX_LAG_SEC = 1.1;
+const TAIL_MAX_SEC = 10;
+/** Minimum echo/direct level ratio reported as a discrete echo. */
+const ECHO_MIN_RATIO = 0.1;
+
+/**
+ * RT60-style decay time from Schroeder backward integration of a (floor-subtracted) power
+ * envelope: the slope of the energy decay curve between −3 dB and −33 dB is extrapolated to
+ * 60 dB. Backward integration copes with the silent gaps between delay repeats. Returns a
+ * capped lower bound when the energy barely decays inside the window.
+ */
+function schroederDecay(post: ArrayLike<number>, hopSec: number): { decaySec: number; isLowerBound: boolean } {
+  const n = post.length;
+  if (n < 8) return { decaySec: 0, isLowerBound: false };
+  const edc = new Float64Array(n);
+  let acc = 0;
+  for (let i = n - 1; i >= 0; i--) {
+    acc += post[i];
+    edc[i] = acc;
+  }
+  if (edc[0] <= 0) return { decaySec: 0, isLowerBound: false };
+  const lim = Math.floor(n * 0.9); // the end of the curve is biased by truncation
+  let sx = 0;
+  let sy = 0;
+  let sxx = 0;
+  let sxy = 0;
+  let count = 0;
+  for (let i = 0; i < lim; i++) {
+    const y = pDb(edc[i] / edc[0]);
+    if (y > -3) continue;
+    if (y < -33) break;
+    const t = i * hopSec;
+    sx += t;
+    sy += y;
+    sxx += t * t;
+    sxy += t * y;
+    count++;
+  }
+  if (count < 4) {
+    // Never fell 3 dB before the window ended: very long tail.
+    return pDb(edc[Math.max(0, lim - 1)] / edc[0]) > -3
+      ? { decaySec: TAIL_MAX_SEC, isLowerBound: true }
+      : { decaySec: 0, isLowerBound: false };
+  }
+  const slope = (count * sxy - sx * sy) / Math.max(1e-12, count * sxx - sx * sx); // dB per second
+  if (slope > -60 / TAIL_MAX_SEC) return { decaySec: TAIL_MAX_SEC, isLowerBound: true };
+  const decaySec = 60 / -slope;
+  return decaySec < 0.15 ? { decaySec: 0, isLowerBound: false } : { decaySec: round2(decaySec), isLowerBound: false };
+}
+
+/**
+ * Tail measured after a dry phrase ends (where the dry reference falls silent; without one,
+ * after the last frame within 20 dB of the output's loudest frame). A tail only counts when it
+ * starts within 35 dB of the phrase level, which also rejects steady hiss such as distortion noise.
+ */
+function estimatePhraseTail(
+  mono: Float32Array,
+  sampleRate: number,
+  dryMono?: Float32Array
+): { tailDb: number; decaySec: number; isLowerBound: boolean } {
+  const hop = Math.max(1, Math.floor(sampleRate * ENV_HOP_SEC));
+  const wet = powerEnvelope(removeDc(mono, sampleRate), hop);
+  const n = wet.length;
+  const none = { tailDb: -120, decaySec: 0, isLowerBound: false };
+  if (n < 16) return none;
+
+  let end = -1;
+  if (dryMono) {
+    const dry = powerEnvelope(dryMono, hop);
+    let dryPeak = 0;
+    for (const v of dry) dryPeak = Math.max(dryPeak, v);
+    for (let f = Math.min(n, dry.length) - 1; f >= 0; f--) {
+      if (pDb(dry[f]) > pDb(dryPeak) - 45) {
+        end = f;
+        break;
+      }
+    }
+  } else {
+    let wetPeak = 0;
+    for (const v of wet) wetPeak = Math.max(wetPeak, v);
+    for (let f = n - 1; f >= 0; f--) {
+      if (pDb(wet[f]) > pDb(wetPeak) - 20) {
+        end = f;
+        break;
+      }
+    }
+  }
+  const start = end + 4; // skip the release of the last syllable (20 ms)
+  if (end < 0 || n - start < 16) return none;
+
+  let phrase = 0;
+  for (let f = 0; f <= end; f++) phrase += wet[f];
+  phrase /= end + 1;
+  // No floor subtraction here: in a short window a long delay tail would be mistaken for the
+  // floor. Steady hiss (e.g. distortion) is rejected by the 35 dB rule below instead.
+  const post = Array.from(wet.subarray(start));
+  let head = 0;
+  for (let i = 0; i < Math.min(10, post.length); i++) head += post[i];
+  head /= Math.min(10, post.length);
+  const tailDb = round2(pDb(head));
+  if (head <= 0 || pDb(head) < pDb(phrase) - 35) return { tailDb, decaySec: 0, isLowerBound: false };
+  return { tailDb, ...schroederDecay(post, ENV_HOP_SEC) };
+}
+
+/**
+ * Echo lag (ms) and strength from envelope correlation. With a dry reference the scaled dry
+ * envelope is removed first. Only meaningful when the output actually has a tail; callers gate
+ * on that, because rhythm in the source (e.g. syllables every 400 ms) also correlates.
  */
 function estimateEchoLag(
   mono: Float32Array,
   sampleRate: number,
   dryMono?: Float32Array
 ): { delayMs: number | null; strength: number } {
-  const hopSamples = Math.max(1, Math.floor(sampleRate * 0.005)); // 5ms envelope resolution
-  const numEnvFrames = Math.floor(mono.length / hopSamples);
+  const hopSamples = Math.max(1, Math.floor(sampleRate * ENV_HOP_SEC));
+  const wetEnv = Array.from(powerEnvelope(mono, hopSamples), Math.sqrt);
+  const numEnvFrames = wetEnv.length;
   if (numEnvFrames < 40) return { delayMs: null, strength: 0 };
-
-  const wetEnv = new Float64Array(numEnvFrames);
   const dryEnv = new Float64Array(numEnvFrames);
-  let maxWet = 0;
-  let maxDry = 0;
-
-  for (let f = 0; f < numEnvFrames; f++) {
-    let sumSqW = 0;
-    let sumSqD = 0;
-    const base = f * hopSamples;
-    for (let i = 0; i < hopSamples; i++) {
-      const s = mono[base + i] || 0;
-      sumSqW += s * s;
-      if (dryMono && base + i < dryMono.length) {
-        const d = dryMono[base + i] || 0;
-        sumSqD += d * d;
-      }
-    }
-    wetEnv[f] = Math.sqrt(sumSqW / hopSamples);
-    if (wetEnv[f] > maxWet) maxWet = wetEnv[f];
-    if (dryMono) {
-      dryEnv[f] = Math.sqrt(sumSqD / hopSamples);
-      if (dryEnv[f] > maxDry) maxDry = dryEnv[f];
-    }
+  if (dryMono) {
+    const d = powerEnvelope(dryMono, hopSamples);
+    for (let f = 0; f < numEnvFrames && f < d.length; f++) dryEnv[f] = Math.sqrt(d[f]);
   }
-
+  const maxWet = Math.max(...wetEnv);
   if (maxWet < 1e-5) return { delayMs: null, strength: 0 };
+  const minLag = Math.round(ECHO_MIN_LAG_SEC / ENV_HOP_SEC);
+  const maxLag = Math.min(numEnvFrames - 10, Math.round(ECHO_MAX_LAG_SEC / ENV_HOP_SEC));
 
-  // Search lags between 80ms and 1100ms (16 .. 220 frames at 5ms resolution)
-  const minLag = Math.max(16, Math.floor(0.08 / 0.005));
-  const maxLag = Math.min(numEnvFrames - 10, Math.ceil(1.1 / 0.005));
-
-  // If dry reference is available, subtract scaled dry envelope so only delayed echo repeats remain,
-  // then cross-correlate dryEnv[f] against residualEchoEnv[f + lag]
-  if (dryMono && maxDry > 1e-5) {
-    // Estimate direct pass-through gain at lag=0
+  if (dryMono) {
     let dot0 = 0;
     let dryE = 0;
     for (let f = 0; f < numEnvFrames; f++) {
       dot0 += wetEnv[f] * dryEnv[f];
       dryE += dryEnv[f] * dryEnv[f];
     }
-    const directGain = dryE > 1e-9 ? dot0 / dryE : 0;
+    if (dryE < 1e-12) return { delayMs: null, strength: 0 };
+    const directGain = dot0 / dryE;
     const residual = new Float64Array(numEnvFrames);
     let resE = 0;
     for (let f = 0; f < numEnvFrames; f++) {
@@ -283,24 +420,18 @@ function estimateEchoLag(
     }
     const normDenom = Math.sqrt(dryE * Math.max(1e-9, resE));
     if (normDenom < 1e-7) return { delayMs: null, strength: 0 };
-
     const corrByLag = new Float64Array(maxLag + 1);
     let bestLag = -1;
     let bestCorr = 0;
     for (let lag = minLag; lag <= maxLag; lag++) {
       let c = 0;
-      for (let f = 0; f + lag < numEnvFrames; f++) {
-        c += dryEnv[f] * residual[f + lag];
-      }
-      const normC = c / normDenom;
-      corrByLag[lag] = normC;
-      if (normC > bestCorr) {
-        bestCorr = normC;
+      for (let f = 0; f + lag < numEnvFrames; f++) c += dryEnv[f] * residual[f + lag];
+      corrByLag[lag] = c / normDenom;
+      if (corrByLag[lag] > bestCorr) {
+        bestCorr = corrByLag[lag];
         bestLag = lag;
       }
     }
-
-    // Prefer fundamental echo lag over 2x harmonic lag if a strong local peak exists at lag/2
     if (bestLag >= minLag * 2) {
       const halfLag = Math.round(bestLag / 2);
       for (let l = Math.max(minLag, halfLag - 3); l <= Math.min(maxLag, halfLag + 3); l++) {
@@ -311,50 +442,161 @@ function estimateEchoLag(
         }
       }
     }
-
-    if (bestLag < 0 || bestCorr < 0.14) {
-      return { delayMs: null, strength: round2(Math.max(0, bestCorr)) };
-    }
-    return {
-      delayMs: Math.round(bestLag * 5),
-      strength: round2(Math.min(1, bestCorr))
-    };
+    if (bestLag < 0 || bestCorr < 0.14) return { delayMs: null, strength: round2(Math.max(0, bestCorr)) };
+    return { delayMs: Math.round(bestLag * ENV_HOP_SEC * 1000), strength: round2(Math.min(1, bestCorr)) };
   }
 
-  // Blind envelope autocorrelation (when no dry reference is provided)
   let mean = 0;
-  for (let f = 0; f < numEnvFrames; f++) mean += wetEnv[f];
+  for (const v of wetEnv) mean += v;
   mean /= numEnvFrames;
-
   let energy0 = 0;
   for (let f = 0; f < numEnvFrames; f++) {
     wetEnv[f] = Math.max(0, wetEnv[f] - mean * 0.6);
     energy0 += wetEnv[f] * wetEnv[f];
   }
   if (energy0 < 1e-8) return { delayMs: null, strength: 0 };
-
   let bestLag = -1;
   let bestCorr = 0;
   for (let lag = minLag; lag <= maxLag; lag++) {
     let corr = 0;
-    for (let f = 0; f + lag < numEnvFrames; f++) {
-      corr += wetEnv[f] * wetEnv[f + lag];
-    }
-    const normCorr = corr / energy0;
-    if (normCorr > bestCorr) {
-      bestCorr = normCorr;
+    for (let f = 0; f + lag < numEnvFrames; f++) corr += wetEnv[f] * wetEnv[f + lag];
+    if (corr / energy0 > bestCorr) {
+      bestCorr = corr / energy0;
       bestLag = lag;
     }
   }
+  if (bestLag < 0 || bestCorr < 0.14) return { delayMs: null, strength: round2(Math.max(0, bestCorr)) };
+  return { delayMs: Math.round(bestLag * ENV_HOP_SEC * 1000), strength: round2(Math.min(1, bestCorr)) };
+}
 
-  if (bestLag < 0 || bestCorr < 0.14) {
-    return { delayMs: null, strength: round2(Math.max(0, bestCorr)) };
+/** Echo and decay measured from a probe render (see {@link analyzeImpulseResponse}). */
+export interface ImpulseMeasurement {
+  delayMs: number | null;
+  echoStrength: number;
+  tailDecaySec: number;
+  tailDecayIsLowerBound: boolean;
+}
+
+/**
+ * A 40 ms band-limited noise burst followed by silence, used as a measurement signal: rendered
+ * through a preset it behaves like an impulse response, so echoes show up as isolated repeats of
+ * the burst and the decay can be read directly, with no rhythm in the source to confuse them.
+ */
+export function generateImpulseProbePcm(sampleRate = 48000, totalSec = 2.4): StereoPcmBuffer {
+  const n = Math.round(sampleRate * totalSec);
+  const burst = Math.round(sampleRate * 0.04);
+  const left = new Float32Array(n);
+  const right = new Float32Array(n);
+  let seed = 0x2350;
+  let lp = 0;
+  for (let i = 0; i < burst; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    lp += 0.35 * ((seed / 4294967296) * 2 - 1 - lp);
+    const v = lp * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (burst - 1))) * 0.9;
+    left[i] = v;
+    right[i] = v;
+  }
+  return { sampleRate, left, right, durationSec: totalSec };
+}
+
+/**
+ * Measure the first discrete echo (delay time and echo/direct level ratio) and the RT60-style
+ * decay of a rendered impulse probe. An echo is the first local peak at least 6 dB above the
+ * preceding valley, 80–1100 ms after the burst, with a level ratio of at least 0.1 (diffuse
+ * reverb bumps are far weaker); its lag is refined by correlating with the direct burst.
+ */
+export function analyzeImpulseResponse(wet: StereoPcmBuffer): ImpulseMeasurement {
+  const hop = Math.max(1, Math.floor(wet.sampleRate * ENV_HOP_SEC));
+  const w = powerEnvelope(removeDc(toMono(wet), wet.sampleRate), hop);
+  const n = w.length;
+  const burstF = Math.ceil((wet.sampleRate * 0.04) / hop);
+  const none: ImpulseMeasurement = { delayMs: null, echoStrength: 0, tailDecaySec: 0, tailDecayIsLowerBound: false };
+  if (n < burstF + 20) return none;
+
+  let direct = 0;
+  let peakF = 0;
+  for (let f = 0; f <= burstF + 1; f++) {
+    direct += w[f];
+    if (w[f] > w[peakF]) peakF = f;
+  }
+  if (direct <= 0) return none;
+  // Noise floor from the end of the window. If the output after the burst is no louder early on
+  // than at the end, it is a steady floor (e.g. distortion hiss) and is removed entirely;
+  // otherwise it is a tail still ringing, so only a floor far below the burst is removed.
+  const endLevel = median(w.subarray(Math.floor(n * 0.85)));
+  const postStart = burstF + 2;
+  const halfEnd = postStart + Math.floor((n - postStart) / 2);
+  const earlyLevel = median(w.subarray(postStart, Math.max(postStart + 1, halfEnd)));
+  const isSteadyFloor = earlyLevel <= endLevel * 2;
+  const floor = isSteadyFloor ? endLevel : Math.min(endLevel, w[peakF] * 1e-5);
+  const smooth = new Float64Array(n);
+  for (let f = 0; f < n; f++) smooth[f] = (w[Math.max(0, f - 1)] + w[f] + w[Math.min(n - 1, f + 1)]) / 3;
+
+  const minLag = Math.round(ECHO_MIN_LAG_SEC / ENV_HOP_SEC);
+  const maxLag = Math.round(ECHO_MAX_LAG_SEC / ENV_HOP_SEC);
+  let delayMs: number | null = null;
+  let echoStrength = 0;
+  let valley = Infinity;
+  for (let f = burstF + 2; f < Math.min(n - 1, peakF + maxLag + 1); f++) {
+    valley = Math.min(valley, smooth[f]);
+    if (f - peakF < minLag) continue;
+    const isPeak = smooth[f] >= smooth[f - 1] && smooth[f] >= smooth[f + 1];
+    if (!isPeak || smooth[f] <= floor * 4) continue;
+    if (pDb(smooth[f]) - pDb(Math.max(valley, floor)) < 6) continue;
+    // Refine the lag and measure the repeat's energy against the direct burst
+    let lag = f - peakF;
+    let bestC = -1;
+    for (let l = Math.max(minLag, lag - 6); l <= lag + 6; l++) {
+      let c = 0;
+      for (let k = 0; k <= burstF + 1; k++) c += w[k] * (w[k + l] || 0);
+      if (c > bestC) {
+        bestC = c;
+        lag = l;
+      }
+    }
+    let repeat = 0;
+    for (let k = 0; k <= burstF + 1; k++) repeat += w[k + lag] || 0;
+    const ratio = Math.sqrt(repeat / direct);
+    if (ratio >= ECHO_MIN_RATIO) {
+      delayMs = Math.round(lag * ENV_HOP_SEC * 1000);
+      echoStrength = round2(Math.min(1, ratio));
+      break;
+    }
+    valley = smooth[f]; // weak bump (e.g. reverb): keep scanning past it
   }
 
-  return {
-    delayMs: Math.round(bestLag * 5),
-    strength: round2(Math.min(1, bestCorr))
-  };
+  // Feedback delay: the response is a staircase of discrete repeats, where a straight-line fit of
+  // the Schroeder curve is unreliable. With two or more repeats inside the window, extrapolate
+  // the per-repeat level drop to 60 dB instead.
+  if (delayMs !== null) {
+    const lagF = Math.round(delayMs / 1000 / ENV_HOP_SEC);
+    const repeats: number[] = [];
+    for (let k = 1; k * lagF + burstF + 1 < n; k++) {
+      let e = 0;
+      for (let j = 0; j <= burstF + 1; j++) e += Math.max(0, w[peakF - Math.floor(burstF / 2) + k * lagF + j] - floor || 0);
+      repeats.push(e);
+    }
+    if (repeats.length >= 2 && repeats[0] > 0) {
+      const dropDb = pDb(Math.max(repeats[1], repeats[0] * 1e-6)) - pDb(repeats[0]); // dB per repeat (≤ 0)
+      const lagSec = delayMs / 1000;
+      if (dropDb >= -0.5) return { delayMs, echoStrength, tailDecaySec: TAIL_MAX_SEC, tailDecayIsLowerBound: true };
+      if (dropDb <= -40) return { delayMs, echoStrength, tailDecaySec: 0, tailDecayIsLowerBound: false }; // single echo, no feedback
+      const rt = (lagSec * 60) / -dropDb;
+      return {
+        delayMs,
+        echoStrength,
+        tailDecaySec: rt >= TAIL_MAX_SEC ? TAIL_MAX_SEC : rt < 0.15 ? 0 : round2(rt),
+        tailDecayIsLowerBound: rt >= TAIL_MAX_SEC
+      };
+    }
+  }
+
+  const post = Array.from(w.subarray(burstF + 2), (v) => Math.max(0, v - floor));
+  let postEnergy = 0;
+  for (const v of post) postEnergy += v;
+  const decay =
+    postEnergy > direct * 1e-3 ? schroederDecay(post, ENV_HOP_SEC) : { decaySec: 0, isLowerBound: false };
+  return { delayMs, echoStrength, tailDecaySec: decay.decaySec, tailDecayIsLowerBound: decay.isLowerBound };
 }
 
 /**
@@ -362,7 +604,9 @@ function estimateEchoLag(
  */
 export function analyzePcmAudio(
   pcm: StereoPcmBuffer,
-  dryReferencePcm?: StereoPcmBuffer
+  dryReferencePcm?: StereoPcmBuffer,
+  /** Echo/decay measured from an impulse-probe render; overrides the phrase-based estimates. */
+  impulse?: ImpulseMeasurement
 ): AudioAnalysisReport {
   const { sampleRate, left, right } = pcm;
   const numFrames = Math.min(left.length, right.length);
@@ -476,22 +720,19 @@ export function analyzePcmAudio(
   const estimatedSemitones = round2(12 * Math.log2(Math.max(0.25, estimatedPitchRatio)));
   const inharmonicityScore = computeInharmonicity(powerSpec, sampleRate, fundamentalHz);
 
-  // Tail energy (last 28% of buffer)
-  const tailStart = Math.floor(numFrames * 0.72);
-  let tailSumSq = 0;
-  for (let i = tailStart; i < numFrames; i++) {
-    tailSumSq += mono[i] * mono[i];
-  }
-  const tailRms = Math.sqrt(tailSumSq / Math.max(1, numFrames - tailStart));
-  const tailRmsDb = round2(linToDb(tailRms));
-
-  // Estimate tail decay (RT60 approximation from active vs tail drop)
-  const tailDropDb = Math.max(0.1, rmsDb - tailRmsDb);
-  const tailDuration = ((numFrames - tailStart) / sampleRate) * 2.0;
-  const estimatedTailDecaySec =
-    tailRmsDb > -52 ? round2(Math.min(6.0, (tailDuration * 40) / tailDropDb)) : 0;
-
-  const echo = estimateEchoLag(mono, sampleRate, dryMono);
+  const phraseTail = estimatePhraseTail(mono, sampleRate, dryMono);
+  const tail = impulse
+    ? { tailDb: phraseTail.tailDb, decaySec: impulse.tailDecaySec, isLowerBound: impulse.tailDecayIsLowerBound }
+    : phraseTail;
+  // A real echo leaves energy after the phrase ends; without a tail, correlation peaks are just
+  // rhythm in the source, so they are not reported.
+  const phraseEcho =
+    phraseTail.decaySec > 0 ? estimateEchoLag(mono, sampleRate, dryMono) : { delayMs: null, strength: 0 };
+  const echo = impulse ? { delayMs: impulse.delayMs, strength: impulse.echoStrength } : phraseEcho;
+  const tailRmsDb = tail.tailDb;
+  const estimatedTailDecaySec = tail.decaySec;
+  const isBlindEstimate = !dryMono && !impulse;
+  const blindNote = isBlindEstimate ? ' (blind estimate: pass the dry recording for accuracy)' : '';
 
   // Generate human/AI diagnostic cues
   const inferredCues: string[] = [];
@@ -523,14 +764,18 @@ export function analyzePcmAudio(
       `Elevated inharmonic sidebands (${inharmonicityScore}) -> indicates SSB frequency shifter or RING modulator.`
     );
   }
-  if (echo.delayMs !== null && echo.strength >= 0.18) {
+  const hasEcho = echo.delayMs !== null && echo.strength >= ECHO_MIN_RATIO;
+  if (hasEcho) {
     inferredCues.push(
-      `Periodic echo peak detected at ~${echo.delayMs} ms (strength ${echo.strength}) -> indicates DELAY (time ~${(echo.delayMs / 1000).toFixed(2)}s).`
+      `Discrete echo at ~${echo.delayMs} ms (echo/direct ratio ${echo.strength})${blindNote} -> indicates DELAY (time ~${((echo.delayMs as number) / 1000).toFixed(2)}s).`
     );
   }
-  if (tailRmsDb > -42 && estimatedTailDecaySec >= 0.4) {
+  if (estimatedTailDecaySec >= 0.3) {
+    const decayText = tail.isLowerBound ? `>${estimatedTailDecaySec}s` : `~${estimatedTailDecaySec}s`;
     inferredCues.push(
-      `Sustained post-phrase tail (${tailRmsDb} dB, decay ~${estimatedTailDecaySec}s) -> indicates REVERB or high-feedback DELAY.`
+      `Tail continues after the phrase ends (RT60 ${decayText}, starts ${round2(rmsDb - tailRmsDb)} dB below the phrase level)${blindNote} -> indicates ${
+        hasEcho ? 'DELAY feedback (echo) and/or REVERB' : 'REVERB'
+      }.`
     );
   }
   if (Math.abs(stereoBalance) >= 0.15) {
@@ -558,8 +803,10 @@ export function analyzePcmAudio(
     inharmonicityScore,
     tailRmsDb,
     estimatedTailDecaySec,
+    tailDecayIsLowerBound: tail.isLowerBound,
     estimatedDelayMs: echo.delayMs,
     echoStrength: echo.strength,
+    isBlindEstimate,
     inferredCues
   };
 }

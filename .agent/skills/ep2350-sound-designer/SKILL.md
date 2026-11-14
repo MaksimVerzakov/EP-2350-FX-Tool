@@ -19,32 +19,32 @@ The repository includes a Model Context Protocol (MCP) server at `mcp/server.mjs
 - `ep2350://presets/official-packs` — All 12 official Teenage Engineering presets across `BROKEN RADIO`, `DUB`, and `MYSTERIOUS`.
 
 ### MCP Tools
-1. **`design_preset_from_description`**
-   - Synthesizes a hardware-valid `PresetConfig` from a text prompt, validates it against hardware constraints, and runs offline 48 kHz DSP simulation across `idle`, `handle_pushed`, and `shake_burst`.
+1. **`get_effects_reference`**
+   - All 11 effects with parameters (editor scale), modulation depth ranges, modulation syntax and hardware rules. Call it before writing a preset.
 2. **`validate_preset`**
-   - Validates a single preset or full 4-preset `config.json` pack (checks 16-row hardware limit, single-instance `DELAY`/`REVERB`/`HARMONY`/`SSB`, valid modulation row targets, and `SAMPLE` injector presence).
+   - Validates a single preset or full 4-preset `config.json` pack (16-row limit, single-instance `DELAY`/`REVERB`/`HARMONY`/`SSB`, valid modulation rows, known parameter names and ranges, `SAMPLE` presence).
 3. **`simulate_preset`**
-   - Renders a preset offline through the 48 kHz DSP engine and returns quantitative acoustic telemetry (`rmsDb`, `peakDb`, `crestFactorDb`, 6-band spectral profile, `spectralCentroidHz`, `spectralRolloff85Hz`, `fundamentalHz`, `estimatedSemitones`, `inharmonicityScore`, `estimatedDelayMs`, `estimatedTailDecaySec`, and `inferredCues`).
+   - Renders a preset offline per scenario and returns telemetry (`rmsDb`, `peakDb`, 6-band spectrum, `spectralCentroidHz`, `estimatedSemitones`, `inharmonicityScore`, `estimatedDelayMs` (first discrete echo), `estimatedTailDecaySec` (RT60), `inferredCues`).
 4. **`analyze_reference_audio`**
-   - Extracts the acoustic fingerprint and inferred effect cues from any target `.wav` file.
+   - Acoustic fingerprint and effect cues of a target `.wav` file.
 5. **`optimize_preset_parameters`**
-   - Runs automated multi-scale STFT spectral + temporal envelope optimization to discover and tune EP-2350 knob values to match a reference `.wav` file.
+   - Discovers and tunes an effect chain to match a reference `.wav`.
 6. **`export_pack_config`**
-   - Serializes a 4-preset pack losslessly to hardware `config.json`.
+   - Serializes up to 4 presets to hardware `config.json` with a shareable `#pack=` URL.
 7. **`push_to_live_ui`**
-   - Pushes a preset or pack directly to the running Vite Web UI (`http://localhost:3000/__mcp_sync`) via Server-Sent Events so the user immediately sees and hears it in the browser.
+   - Returns a `#preset=` share link; with the Vite dev server running it also loads the preset into the open Web UI.
 
-> **Scale:** `preset` objects passed to tools use the editor scale (percent knobs `0..100`, percent mod depths `-100..100`). Hardware `config.json` files use `0.0..1.0`; pass those as `configJson` to `validate_preset`. Read `warnings` / `presetWarnings` and fix them before exporting.
+> **Scale:** tools accept presets in the editor scale (percent knobs `0..100`, percent mod depths `-100..100`) or in hardware `config.json` scale (`0.0..1.0`, as in the official packs and `hardwarePresetJson`); the latter is detected and converted, and `inputScale` says which was used. Read `warnings` / `presetWarnings` and fix them before exporting.
 
 ## Recommended Agent Workflow
 
 ### Workflow A: Text Description -> Verified Preset
-1. Call `design_preset_from_description` (or craft a custom `PresetConfig` using `ep2350://schema/effects-registry`).
-2. Inspect the `simulation` telemetry (`idle` vs `handle_pushed` vs `shake_burst`):
-   - Verify `isSilent` is `false` and `isClipping` is `false`.
-   - Confirm spectral and temporal shifts match the prompt (e.g., `handle_pushed` increases `estimatedTailDecaySec` or shifts `spectralCentroidHz`).
-3. If refining parameters manually, re-run `simulate_preset` and `validate_preset`.
-4. Call `push_to_live_ui` (if the dev server is running) or `export_pack_config` to deliver the final `config.json`.
+1. Call `get_effects_reference` and write the `PresetConfig` yourself (effect chain plus handle/shake/lfo modulation).
+2. Call `validate_preset`; fix every error and warning.
+3. Call `simulate_preset` and compare the telemetry with the description:
+   - `isSilent` / `isClipping` are `false`.
+   - Echo time (`estimatedDelayMs`), tail (`estimatedTailDecaySec`), spectrum and pitch change as intended between `idle`, `handle_pushed` and `shake_burst`.
+4. Adjust and re-simulate until it matches, then call `export_pack_config` (or `push_to_live_ui` with the dev server running) and give the user the `shareUrl`.
 
 ### Workflow B: Reference WAV -> Matched Effect Chain
 1. Call `analyze_reference_audio` on the user's `referenceWavPath` (and optional `dryWavPath`).
