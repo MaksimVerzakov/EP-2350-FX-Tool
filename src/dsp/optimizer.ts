@@ -53,6 +53,11 @@ function applyAnalyticalWarmStart(preset: PresetConfig, targetReport: AudioAnaly
   for (const fx of preset.list) {
     if (fx.effect === 'DELAY' && targetReport.estimatedDelayMs !== null && targetReport.echoStrength >= 0.16) {
       fx.time = roundToStep(targetReport.estimatedDelayMs / 1000, 0.0, 1.1, 0.01);
+      if (targetReport.echoStrength >= 0.35) {
+        const estMix = Math.round(Math.min(75, Math.max(35, targetReport.echoStrength * 75)));
+        fx.echo = Math.max(typeof fx.echo === 'number' ? fx.echo : 0, estMix);
+        fx['wet-level'] = Math.max(typeof fx['wet-level'] === 'number' ? fx['wet-level'] : 0, estMix);
+      }
     }
     if (fx.effect === 'HARMONY' && Math.abs(targetReport.estimatedSemitones) >= 1.5) {
       fx.pitch = roundToStep(targetReport.estimatedPitchRatio, 0.5, 2.0, 0.01);

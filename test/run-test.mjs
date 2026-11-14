@@ -459,7 +459,12 @@ const distCurve = makeDistortionCurve(0, 1000);
 assert.strictEqual(distCurve[500], 0, 'Zero-crossing at x=0 must be exactly 0');
 assert.ok(distCurve[750] / 0.5 > distCurve[999] / 1.0, 'amount: 0 must have warm saturation curve');
 const clipCurve = makeSoftClipCurve(512);
-assert.ok(Math.max(...clipCurve) <= Math.tanh(1.4) + 1e-6);
+assert.ok(Math.max(...clipCurve) <= Math.tanh(1.0) + 1e-6);
+const smallSignalX = (264 * 2) / 512 - 1;
+assert.ok(
+  clipCurve[264] <= smallSignalX + 1e-6,
+  'makeSoftClipCurve must have <= 1.0 small-signal gain so DELAY feedback does not amplify below ceiling'
+);
 
 // 5e. Hann window partition of unity
 for (let p = 0; p < 1; p += 0.05) {
@@ -929,9 +934,85 @@ assert.strictEqual(delayNode.nodeRefs.wetPanner.pan.value, 1.0, 'Live DELAY.bala
 assert.ok(Math.abs(reverbNode.nodeRefs.hpFilter.frequency.value - cutoffToHz(0.8)) < 1e-3, 'Live REVERB.highpass-cutoff must update hpFilter');
 assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.75) < 1e-6, 'Live RING.mix must update wetGain');
 assert.ok(Math.abs(eqNode.nodeRefs.eq.Q.value - 9.0) < 1e-6, 'Live EQUALISER.Q must update eq.Q');
-assert.strictEqual(engine.sourceNode.playbackRate.value, 1.75, 'Live SAMPLE.speed must update sourceNode.playbackRate');
+assert.strictEqual(
+  engine.sourceNode.playbackRate.value,
+  1.0,
+  'Live SAMPLE.speed must NOT change vocal audition sourceNode.playbackRate'
+);
+assert.strictEqual(
+  sampleNode.nodeRefs.lastSpeed,
+  1.75,
+  'Live SAMPLE.speed must update sampleNode.nodeRefs.lastSpeed'
+);
 assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.9) < 1e-6, 'Live SAMPLE.level must update gain');
 assert.strictEqual(sampleNode.nodeRefs.panner.pan.value, -1.0, 'Live SAMPLE.balance update must pan StereoPannerNode to -1');
+
+// Verify triggered sample receives SAMPLE.speed live updates while audition speech stays at 1.0x
+await engine.triggerSample(true, 'oneshot');
+assert.ok(engine.sampleSourceNode, 'triggerSample must create sampleSourceNode');
+assert.strictEqual(
+  engine.sampleSourceNode.playbackRate.value,
+  1.75,
+  'Triggered sample playbackRate must reflect SAMPLE.speed'
+);
+engine.updatePreset({
+  ...updatedPreset,
+  list: [
+    ...updatedPreset.list.slice(0, 5),
+    { ...updatedPreset.list[5], speed: 0.65 }
+  ]
+});
+assert.strictEqual(
+  engine.sampleSourceNode.playbackRate.value,
+  0.65,
+  'Live SAMPLE.speed change must update active sampleSourceNode.playbackRate'
+);
+assert.strictEqual(
+  engine.sourceNode.playbackRate.value,
+  1.0,
+  'Audition voice sourceNode.playbackRate must stay 1.0x when SAMPLE.speed changes live'
+);
+assert.ok(
+  Math.abs(reverbNode.nodeRefs.combSum.gain.value - (0.28 + 0.01 * 0.55) * 0.5) < 1e-6,
+  'REVERB combSum.gain must apply 0.5 attenuation matching offlineRenderer to prevent comb buildup'
+);
+
+// Verify DELAY (echo: 80%) and REVERB (time: 0.8) decay rather than growing unboundedly across loops
+{
+  const sr = 48000;
+  const totalSamples = sr * 4;
+  const pulseInput = new Float32Array(totalSamples);
+  for (let i = 0; i < sr; i++) {
+    pulseInput[i] = 0.25 * Math.sin((2 * Math.PI * 330 * i) / sr);
+  }
+  const delayDecayPreset = {
+    id: 'delay-decay-test',
+    pos: 0,
+    name: 'DELAY DECAY',
+    comment: '',
+    list: [
+      { id: 'fx0', effect: 'DELAY', time: 0.25, echo: 80, 'wet-level': 100, 'dry-level': 0, balance: 0, BUS: 1 },
+      { id: 'fx1', effect: 'REVERB', time: 0.8, 'spring-mix': 50, 'highpass-cutoff': 10, 'wet-level': 60, 'dry-level': 0, BUS: 1 }
+    ]
+  };
+  const rendered = renderPresetOffline(
+    delayDecayPreset,
+    { left: pulseInput, right: pulseInput.slice(), sampleRate: sr },
+    { handlePos: 0, shakeAmount: 0 }
+  );
+  const rmsWindow = (buf, start, len) => {
+    let sum = 0;
+    for (let i = start; i < start + len; i++) sum += buf[i] * buf[i];
+    return Math.sqrt(sum / len);
+  };
+  const earlyRms = rmsWindow(rendered.left, sr * 1, sr / 2);
+  const lateRms = rmsWindow(rendered.left, Math.floor(sr * 3.5), sr / 2);
+  assert.ok(earlyRms > 1e-4, 'DELAY/REVERB tail must have audible energy after initial signal');
+  assert.ok(
+    lateRms < earlyRms * 0.5,
+    `DELAY (80% echo) + REVERB must decay monotonically instead of growing (early=${earlyRms.toFixed(5)}, late=${lateRms.toFixed(5)})`
+  );
+}
 
 // Verify Handle & Shake modulation on DIST.amount and RING.mix
 engine.updateModulation({ handlePos: 1.0, shakeAmount: 0.5 });
