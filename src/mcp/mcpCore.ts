@@ -41,6 +41,49 @@ export interface McpRuntimeOptions {
   readLocalFile?: (pathStr: string) => Uint8Array;
   writeLocalFile?: (pathStr: string, data: Uint8Array | string) => string;
   resolveLocalPath?: (pathStr: string) => string;
+  /**
+   * Browser origins allowed to call the Streamable HTTP endpoint. Requests without an
+   * `Origin` header (non-browser MCP clients) are always accepted. Defaults to loopback
+   * origins only (`localhost`, `127.0.0.1`, `[::1]`), which blocks cross-site requests and
+   * DNS-rebinding attacks against a local dev server. Use `'*'` for a public, file-less
+   * deployment such as the Cloudflare Worker.
+   */
+  allowedOrigins?: '*' | string[];
+  /** Maximum accepted HTTP request body size in bytes (default 8 MiB). */
+  maxRequestBytes?: number;
+}
+
+export const DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_OPTIMIZER_ITERATIONS = 200;
+const MAX_OPTIMIZER_ITERATIONS_EDGE = 24;
+const LOCAL_PATH_ARGS = [
+  'inputWavPath',
+  'referenceWavPath',
+  'dryWavPath',
+  'outputWavPath',
+  'outputPath'
+];
+
+/** True when the URL's hostname is a loopback address (localhost, 127.0.0.1, [::1]). */
+export function isLoopbackUrl(rawUrl: string): boolean {
+  try {
+    const { hostname } = new URL(rawUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname === '[::1]' ||
+      hostname === '::1' ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isOriginAllowed(origin: string, allowedOrigins: McpRuntimeOptions['allowedOrigins']) {
+  if (allowedOrigins === '*') return true;
+  if (Array.isArray(allowedOrigins) && allowedOrigins.includes(origin)) return true;
+  return isLoopbackUrl(origin);
 }
 
 export const MCP_RESOURCES = [
@@ -587,6 +630,19 @@ async function executeMcpToolCall(
   const defaultTotalSec = isEdge ? 0.35 : 1.6;
   const defaultVoiceSec = isEdge ? 0.2 : 0.8;
 
+  // Local filesystem access is only wired up for trusted transports (stdio). Over HTTP the
+  // callbacks are stripped, so reject path arguments explicitly instead of silently ignoring them.
+  if (!options.readLocalFile || !options.writeLocalFile) {
+    const pathArgs = LOCAL_PATH_ARGS.filter(
+      (key) => typeof args[key] === 'string' && args[key].trim() !== ''
+    );
+    if (pathArgs.length > 0) {
+      return {
+        error: `Local file paths are not available on this transport (${pathArgs.join(', ')}). Pass input audio as *Base64 arguments and use the returned configJson/shareUrl instead of output paths, or run the stdio server (npm run mcp) for file access.`
+      };
+    }
+  }
+
   switch (toolName) {
     case 'design_preset_from_description': {
       const description = String(args.description || '').trim();
@@ -799,8 +855,11 @@ async function executeMcpToolCall(
       }
 
       const defaultIter = isEdge ? 12 : 48;
+      const iterCap = isEdge ? MAX_OPTIMIZER_ITERATIONS_EDGE : MAX_OPTIMIZER_ITERATIONS;
       const maxIterations =
-        typeof args.maxIterations === 'number' ? args.maxIterations : defaultIter;
+        typeof args.maxIterations === 'number' && Number.isFinite(args.maxIterations)
+          ? Math.max(1, Math.min(iterCap, Math.floor(args.maxIterations)))
+          : defaultIter;
 
       const optResult = args.candidatePreset
         ? optimizePresetParameters(normalizeSinglePreset(args.candidatePreset, 0), targetPcm, {
@@ -890,8 +949,9 @@ async function executeMcpToolCall(
         return { error: 'Provide either `preset` or `pack` to push to the live UI.' };
       }
 
-      // On remote Cloudflare edge, deliver via stateless shareUrl deep-link immediately
-      if (isEdge && !args.uiUrl) {
+      // On remote Cloudflare edge, always deliver via stateless shareUrl deep-link. The edge
+      // never makes outbound requests on behalf of callers (prevents SSRF via `uiUrl`).
+      if (isEdge) {
         return {
           pushed: true,
           deliveryMode: 'shareUrl',
@@ -907,6 +967,17 @@ async function executeMcpToolCall(
         ''
       );
       const endpoint = `${baseUrl}/__mcp_sync`;
+
+      // A caller-supplied uiUrl may only point at a local dev server.
+      if (args.uiUrl && !isLoopbackUrl(baseUrl)) {
+        return {
+          pushed: false,
+          deliveryMode: 'shareUrl',
+          shareHash,
+          shareUrl,
+          error: `Live push is only allowed to a local dev server (localhost / 127.0.0.1); refusing ${endpoint}. Open shareUrl directly to load this preset in your browser.`
+        };
+      }
 
       try {
         const res = await fetch(endpoint, {
@@ -948,30 +1019,73 @@ async function executeMcpToolCall(
 }
 
 export const MCP_CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version',
   'Access-Control-Expose-Headers': 'Mcp-Session-Id'
 };
+
+function buildCorsHeaders(
+  origin: string | null,
+  allowedOrigins: McpRuntimeOptions['allowedOrigins']
+): Record<string, string> {
+  if (allowedOrigins === '*') {
+    return { ...MCP_CORS_HEADERS, 'Access-Control-Allow-Origin': '*' };
+  }
+  const headers: Record<string, string> = { ...MCP_CORS_HEADERS, Vary: 'Origin' };
+  if (origin && isOriginAllowed(origin, allowedOrigins)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
+}
+
+function jsonRpcErrorResponse(
+  status: number,
+  code: number,
+  message: string,
+  headers: Record<string, string>
+): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code, message } }), {
+    status,
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  });
+}
 
 /**
  * Web-standard Fetch handler for MCP Streamable HTTP (`POST /mcp`, `GET /mcp`, `OPTIONS /mcp`).
  * Runs natively in Cloudflare Workers, Cloudflare Pages Functions, and Node 20+.
+ *
+ * Security: local filesystem callbacks are never exposed over HTTP, browser `Origin`s are
+ * validated (loopback-only by default), POST bodies must be `application/json` (so cross-site
+ * "simple" requests cannot trigger tool calls), and request bodies are size-capped.
  */
 export async function handleMcpHttpFetch(
   request: Request,
   options: McpRuntimeOptions = {}
 ): Promise<Response> {
   const url = new URL(request.url);
+  // Never expose local file access over HTTP, whatever the caller passed in.
+  const {
+    readLocalFile: _readLocalFile,
+    writeLocalFile: _writeLocalFile,
+    resolveLocalPath: _resolveLocalPath,
+    ...httpSafeOptions
+  } = options;
   const effectiveOptions: McpRuntimeOptions = {
-    ...options,
+    ...httpSafeOptions,
     uiUrl: options.uiUrl || `${url.protocol}//${url.host}`
   };
+
+  const origin = request.headers.get('origin');
+  const corsHeaders = buildCorsHeaders(origin, options.allowedOrigins);
+
+  if (origin && !isOriginAllowed(origin, options.allowedOrigins)) {
+    return jsonRpcErrorResponse(403, -32600, `Forbidden origin: ${origin}`, corsHeaders);
+  }
 
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
-      headers: MCP_CORS_HEADERS
+      headers: corsHeaders
     });
   }
 
@@ -979,7 +1093,7 @@ export async function handleMcpHttpFetch(
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: {
-        ...MCP_CORS_HEADERS,
+        ...corsHeaders,
         'Content-Type': 'application/json'
       }
     });
@@ -997,7 +1111,7 @@ export async function handleMcpHttpFetch(
       return new Response(stream, {
         status: 200,
         headers: {
-          ...MCP_CORS_HEADERS,
+          ...corsHeaders,
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache'
         }
@@ -1022,7 +1136,7 @@ export async function handleMcpHttpFetch(
       {
         status: 200,
         headers: {
-          ...MCP_CORS_HEADERS,
+          ...corsHeaders,
           'Content-Type': 'application/json'
         }
       }
@@ -1030,25 +1144,41 @@ export async function handleMcpHttpFetch(
   }
 
   if (request.method === 'POST') {
+    const contentType = (request.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      return jsonRpcErrorResponse(
+        415,
+        -32600,
+        'Unsupported Media Type: POST /mcp requires Content-Type: application/json',
+        corsHeaders
+      );
+    }
+
+    const maxBytes = options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
+    const declaredLength = Number(request.headers.get('content-length') || 0);
+    if (declaredLength > maxBytes) {
+      return jsonRpcErrorResponse(
+        413,
+        -32600,
+        `Request body too large (limit ${maxBytes} bytes)`,
+        corsHeaders
+      );
+    }
+
     let bodyJson: unknown;
     try {
       const rawText = await request.text();
+      if (new TextEncoder().encode(rawText).byteLength > maxBytes) {
+        return jsonRpcErrorResponse(
+          413,
+          -32600,
+          `Request body too large (limit ${maxBytes} bytes)`,
+          corsHeaders
+        );
+      }
       bodyJson = JSON.parse(rawText);
     } catch {
-      return new Response(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: null,
-          error: { code: -32700, message: 'Parse error' }
-        }),
-        {
-          status: 400,
-          headers: {
-            ...MCP_CORS_HEADERS,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      return jsonRpcErrorResponse(400, -32700, 'Parse error', corsHeaders);
     }
 
     if (Array.isArray(bodyJson)) {
@@ -1063,14 +1193,14 @@ export async function handleMcpHttpFetch(
       if (responses.length === 0) {
         return new Response(null, {
           status: 202,
-          headers: MCP_CORS_HEADERS
+          headers: corsHeaders
         });
       }
 
       return new Response(JSON.stringify(responses), {
         status: 200,
         headers: {
-          ...MCP_CORS_HEADERS,
+          ...corsHeaders,
           'Content-Type': 'application/json'
         }
       });
@@ -1083,14 +1213,14 @@ export async function handleMcpHttpFetch(
     if (rpcResponse === null) {
       return new Response(null, {
         status: 202,
-        headers: MCP_CORS_HEADERS
+        headers: corsHeaders
       });
     }
 
     return new Response(JSON.stringify(rpcResponse), {
       status: 200,
       headers: {
-        ...MCP_CORS_HEADERS,
+        ...corsHeaders,
         'Content-Type': 'application/json'
       }
     });
@@ -1099,7 +1229,7 @@ export async function handleMcpHttpFetch(
   return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
     status: 405,
     headers: {
-      ...MCP_CORS_HEADERS,
+      ...corsHeaders,
       'Content-Type': 'application/json'
     }
   });

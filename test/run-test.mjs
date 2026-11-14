@@ -2003,4 +2003,145 @@ assert.strictEqual(await assetRes.text(), '<html>EP-2350</html>');
 
 console.log('✓ Suite 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
 
-console.log('\n=== ALL 16 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 17: MCP HTTP Transport Security (file access, Origin, Content-Type, SSRF)
+// ============================================================================
+const { handleMcpHttpFetch: handleLocalMcpHttpFetch } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
+);
+const secOutRel = '.tmp-test-build/security/pwned.json';
+const secOutAbs = path.join(ROOT_DIR, secOutRel);
+const exportCall = (outputPath) =>
+  JSON.stringify({
+    jsonrpc: '2.0',
+    id: 201,
+    method: 'tools/call',
+    params: {
+      name: 'export_pack_config',
+      arguments: { packName: 'PWNED', presets: [], outputPath }
+    }
+  });
+
+// 17a. Cross-site "simple" POST (text/plain, no preflight) is rejected before any tool runs
+const plainRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: exportCall(secOutAbs)
+  })
+);
+assert.strictEqual(plainRes.status, 415, 'POST /mcp without application/json must return 415');
+assert.ok(!fs.existsSync(secOutAbs), 'Rejected text/plain POST must not write any file');
+
+// 17b. Local file paths are never honoured over HTTP, even with a valid JSON request
+const httpWriteRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: exportCall(secOutAbs)
+  })
+);
+const httpWriteRpc = await httpWriteRes.json();
+assert.strictEqual(httpWriteRpc.result.isError, true, 'HTTP outputPath must be reported as an error');
+assert.ok(
+  JSON.parse(httpWriteRpc.result.content[0].text).error.includes('not available on this transport'),
+  'HTTP path arguments must explain that file access is unavailable'
+);
+assert.ok(!fs.existsSync(secOutAbs), 'HTTP /mcp must never write to the local filesystem');
+
+// 17c. stdio transport keeps local file access
+const stdioWrite = await handleMcpJsonRpcRequest(JSON.parse(exportCall(secOutRel)));
+assert.strictEqual(stdioWrite.result.isError, false);
+assert.ok(fs.existsSync(secOutAbs), 'stdio export_pack_config must still write outputPath');
+
+// 17d. Foreign browser Origins are rejected; loopback Origins are allowed and echoed
+const evilRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 202, method: 'ping' })
+  })
+);
+assert.strictEqual(evilRes.status, 403, 'Foreign Origin must be rejected with 403');
+assert.strictEqual(evilRes.headers.get('Access-Control-Allow-Origin'), null);
+const evilPreflight = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://evil.example' }
+  })
+);
+assert.strictEqual(evilPreflight.status, 403, 'Foreign Origin preflight must be rejected');
+const loopbackRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:6274' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 203, method: 'ping' })
+  })
+);
+assert.strictEqual(loopbackRes.status, 200);
+assert.strictEqual(
+  loopbackRes.headers.get('Access-Control-Allow-Origin'),
+  'http://localhost:6274',
+  'Loopback Origin must be echoed instead of a wildcard'
+);
+
+// 17e. Oversized request bodies are rejected
+const bigRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 204, method: 'ping', params: { pad: 'x'.repeat(2048) } })
+  }),
+  { maxRequestBytes: 1024 }
+);
+assert.strictEqual(bigRes.status, 413, 'Body above maxRequestBytes must return 413');
+
+// 17f. push_to_live_ui never fetches a caller-supplied non-loopback uiUrl (no SSRF)
+const realFetch = globalThis.fetch;
+let outboundFetches = 0;
+globalThis.fetch = async (...fetchArgs) => {
+  outboundFetches++;
+  return realFetch(...fetchArgs);
+};
+try {
+  const ssrfCall = (id) =>
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: {
+        name: 'push_to_live_ui',
+        arguments: { preset: cfDesignOut.preset, uiUrl: 'http://169.254.169.254/latest' }
+      }
+    });
+  const edgeSsrf = await cfWorker.fetch(
+    new Request('https://ep2350-fx.pages.dev/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: ssrfCall(205)
+    })
+  );
+  const edgeSsrfOut = JSON.parse((await edgeSsrf.json()).result.content[0].text);
+  assert.strictEqual(edgeSsrfOut.deliveryMode, 'shareUrl', 'Edge must always use shareUrl delivery');
+
+  const localSsrf = await handleMcpJsonRpcRequest(JSON.parse(ssrfCall(206)));
+  const localSsrfOut = JSON.parse(localSsrf.result.content[0].text);
+  assert.strictEqual(localSsrfOut.pushed, false, 'Non-loopback uiUrl live push must be refused');
+  assert.strictEqual(outboundFetches, 0, 'No outbound request may be made to a non-loopback uiUrl');
+} finally {
+  globalThis.fetch = realFetch;
+}
+
+// 17g. Worker stays publicly callable from browser-based MCP clients
+const cfCrossOrigin = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://some-mcp-client.example' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 207, method: 'ping' })
+  })
+);
+assert.strictEqual(cfCrossOrigin.status, 200);
+assert.strictEqual(cfCrossOrigin.headers.get('Access-Control-Allow-Origin'), '*');
+console.log('✓ Suite 17: MCP HTTP transport security (file access, Origin, Content-Type, SSRF) verified');
+
+console.log('\n=== ALL 17 PRODUCTION TEST SUITES PASSED (100%) ===');

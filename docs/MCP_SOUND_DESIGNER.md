@@ -48,6 +48,15 @@ node mcp/server.mjs
 | `export_pack_config` | Losslessly serializes a 4-preset pack to hardware `config.json` and returns a shareable `#pack=` URL. |
 | `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and pushes live over HTTP (`/__mcp_sync`) when connected to a local Vite Web UI. |
 
+### Transport Security
+| Transport | Local file paths (`*WavPath`, `outputPath`) | Browser origins | Live push (`push_to_live_ui`) |
+| :--- | :--- | :--- | :--- |
+| stdio (`npm run mcp`) | Allowed (trusted local process) | n/a | `EP2350_UI_URL` or any loopback `uiUrl` |
+| Vite dev server `/mcp` | **Rejected** — use `*Base64` inputs | Loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Loopback `uiUrl` only |
+| Cloudflare Worker `/mcp` | **Rejected** — use `*Base64` inputs | Any (`*`) — no files, no outbound requests | Always returns `shareUrl` (never fetches) |
+
+All HTTP `POST /mcp` requests must use `Content-Type: application/json` (cross-site `text/plain` requests get `415`) and are capped at 8 MiB (4 MiB on the Worker). `optimize_preset_parameters.maxIterations` is clamped to 200 locally and 24 on the edge.
+
 ---
 
 ## 3. Hosting Website + `/mcp` on the Same URL (Cloudflare Free Tier)
