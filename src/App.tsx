@@ -419,7 +419,7 @@ export const App: React.FC = () => {
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 w-full">
           
           {/* LEFT COLUMN: Hardware Mic Device + Compact Audition Player */}
-          <div className="w-[275px] shrink-0 flex flex-col items-start h-[624px] justify-between">
+          <div className="w-[275px] shrink-0 flex flex-col items-start h-[629px] justify-between">
             <MicDevice
               activeSlot={activeSlot}
               onSelectSlot={handleSelectSlot}

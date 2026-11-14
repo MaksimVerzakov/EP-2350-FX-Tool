@@ -6,7 +6,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveAppVersion } from './scripts/app-version.mjs';
 
-
 const MAX_SYNC_BODY_BYTES = 1024 * 1024;
 const MAX_MCP_BODY_BYTES = 8 * 1024 * 1024;
 

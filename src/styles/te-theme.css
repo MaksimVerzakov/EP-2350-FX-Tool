@@ -326,3 +326,46 @@ html[data-theme='ting'] .te-hardware-chassis {
   box-shadow: none;
 }
 
+/* 5px 45° Axonometric Extruded 3D Bevel Frame (matches TopBanner EP/FX & Import/Export blocks) */
+.te-bevel-frame {
+  position: relative;
+  padding-right: 5px;
+  padding-bottom: 5px;
+}
+
+.te-bevel-frame::before {
+  content: '';
+  position: absolute;
+  left: 2.5px;
+  right: 2.5px;
+  bottom: 0;
+  height: 5px;
+  background-color: #d8dad9;
+  border-left: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewX(45deg);
+  pointer-events: none;
+}
+
+.te-bevel-frame::after {
+  content: '';
+  position: absolute;
+  top: 2.5px;
+  bottom: 2.5px;
+  right: 0;
+  width: 5px;
+  background-color: #d8dad9;
+  border-top: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewY(45deg);
+  pointer-events: none;
+}
+
+html[data-theme='ting'] .te-bevel-frame::before,
+html[data-theme='ting'] .te-bevel-frame::after {
+  background-color: #dbd0b9;
+  border-color: #00503a;
+}
+
