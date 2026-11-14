@@ -9,12 +9,15 @@ import {
   ArrowLeft,
   ArrowRight,
   Trash2,
-  GitBranch
+  GitBranch,
+  PowerOff
 } from 'lucide-react';
 
 interface PresetLedgerProps {
   preset: PresetConfig;
   totalPresets?: number;
+  isEffectsOff?: boolean;
+  presetNames?: string[];
   onUpdatePreset: (updated: PresetConfig) => void;
   onSelectPreset?: (index: number) => void;
   theme?: ThemeMode;
@@ -30,6 +33,8 @@ const TING_KNOB_COLORS = ['#f15a22', '#dbd0b9', '#b2aca1', '#00503a'];
 export const PresetLedger: React.FC<PresetLedgerProps> = ({
   preset,
   totalPresets = 4,
+  isEffectsOff = false,
+  presetNames = [],
   onUpdatePreset,
   onSelectPreset,
   theme = 'fx'
@@ -851,6 +856,155 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     );
   };
 
+  if (isEffectsOff) {
+    return (
+      <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[624px]">
+        {/* 1. TOP HEADER TAB (FX OFF / BYPASS STATE) */}
+        <div
+          className={`relative ${
+            isTing
+              ? 'bg-[#00503a] border-b border-[#00281c]'
+              : 'bg-[#141617] border-b border-[#000000]'
+          } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]`}
+        >
+          {/* 45° Extruded Binder Tab Edge on the Right */}
+          <div className="absolute -right-[12px] top-0 bottom-0 w-[12px] overflow-hidden pointer-events-none hidden sm:block">
+            <svg className="w-full h-full" viewBox="0 0 12 40" preserveAspectRatio="none">
+              <polygon
+                points="0,0 12,12 12,40 0,40"
+                fill={isTing ? '#003828' : '#000000'}
+                stroke={isTing ? '#00281c' : '#141617'}
+                strokeWidth="1"
+              />
+            </svg>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {/* FX OFF Badge with Up/Down Controls */}
+            <div className="flex items-center bg-black/50 border border-white/30 rounded-[0px] font-mono shadow-[1px_1px_0px_rgba(0,0,0,0.5)]">
+              <span className="px-2.5 py-1 font-bold text-xs tracking-wider uppercase text-[#f15a22] flex items-center gap-1.5">
+                <PowerOff className="w-3 h-3" />
+                FX OFF
+              </span>
+              <div className="flex items-center border-l border-white/20 divide-x divide-white/20">
+                <button
+                  onClick={() => onSelectPreset?.(totalPresets - 1)}
+                  className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
+                  title={`Select Preset ${totalPresets}`}
+                >
+                  <ArrowUp className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={() => onSelectPreset?.(0)}
+                  className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
+                  title="Select Preset 1"
+                >
+                  <ArrowDown className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            <span
+              className={`${
+                isTing ? 'bg-[#003828]' : 'bg-black'
+              } text-white/80 px-2.5 py-1 font-mono text-xs font-bold tracking-wider uppercase border border-white/25 shrink-0`}
+            >
+              BYPASS // DRY MIC
+            </span>
+          </div>
+
+          <span className="font-mono text-[10px] tracking-wide text-white/60 uppercase truncate hidden sm:inline">
+            ALL PRESET LEDS OFF ON HARDWARE
+          </span>
+        </div>
+
+        {/* 2. EFFECTS SWITCHED OFF EMPTY STATE BODY */}
+        <div
+          className={`flex-1 min-h-0 p-6 ${
+            isTing ? 'bg-[#f4f1ea]' : 'bg-[#ffffff]'
+          } flex flex-col items-center justify-center`}
+        >
+          <div
+            className={`w-full h-full flex flex-col items-center justify-center gap-5 border border-dashed ${
+              isTing
+                ? 'border-[#b2aca1] bg-[#ede8dd]'
+                : 'border-[#d2d5d2] bg-[#fbfcfb]'
+            } rounded-[2px] p-8 text-center`}
+          >
+            {/* 4 Unlit Hardware LEDs + PowerOff Badge */}
+            <div className="flex flex-col items-center gap-2.5">
+              <div
+                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center ${
+                  isTing
+                    ? 'border-[#00503a]/30 bg-[#e4dac5] text-[#00503a]'
+                    : 'border-[#141617]/25 bg-[#eceeed] text-[#141617]'
+                }`}
+              >
+                <PowerOff className="w-5 h-5 text-[#f15a22]" />
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1 bg-[#181a1c] border border-black rounded-[2px] shadow-[1px_1px_0px_rgba(0,0,0,0.3)]">
+                {[0, 1, 2, 3].map((led) => (
+                  <span
+                    key={led}
+                    className="w-2.5 h-2.5 rounded-full bg-[#2b3034] border border-black"
+                    title={`Preset LED ${led + 1}: OFF`}
+                  />
+                ))}
+                <span className="font-mono text-[9px] font-bold tracking-wider text-white/70 uppercase ml-1">
+                  LED 1-4 OFF
+                </span>
+              </div>
+            </div>
+
+            <div className="max-w-md flex flex-col gap-1.5">
+              <span
+                className={`font-mono text-sm font-bold tracking-wider uppercase ${
+                  isTing ? 'text-[#00503a]' : 'text-[#141617]'
+                }`}
+              >
+                EFFECTS SWITCHED OFF (BYPASS)
+              </span>
+              <span
+                className={`font-mono text-[10px] leading-relaxed ${
+                  isTing ? 'text-[#5b695e]' : 'text-[#73787a]'
+                }`}
+              >
+                No FX preset slot is active on the microphone. Vocal audio passes through dry without effect processing while sample triggers remain available. Press the orange Preset button on the mic or choose a slot below to enable effects.
+              </span>
+            </div>
+
+            {/* Quick Preset Selector Grid (Presets 1-4) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 w-full max-w-lg mt-1">
+              {Array.from({ length: totalPresets }).map((_, idx) => {
+                const label = presetNames[idx] || `PRESET ${idx + 1}`;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => onSelectPreset?.(idx)}
+                    className={`px-3 py-2.5 border ${
+                      isTing
+                        ? 'border-[#00503a] bg-[#f7f5ef] hover:bg-[#00503a] text-[#00503a] shadow-[2px_2px_0px_#003828]'
+                        : 'border-[#141617] bg-white hover:bg-[#141617] text-[#141617] shadow-[2px_2px_0px_#141617]'
+                    } hover:text-white transition-colors cursor-pointer flex flex-col items-start gap-0.5 active:translate-x-[1px] active:translate-y-[1px] active:shadow-none`}
+                    title={`Switch on Preset ${idx + 1} (${label})`}
+                  >
+                    <span className="font-mono text-[9px] font-bold text-[#f15a22] uppercase">
+                      SLOT 0{idx + 1}
+                    </span>
+                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-tight truncate w-full text-left">
+                      {label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[624px]">
       {/* 1. TOP HEADER TAB (With 45° Extruded Right Binder Facet) */}
@@ -874,7 +1028,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Preset Badge with Up/Down Controls */}
+          {/* Preset Badge with Up/Down Controls & FX OFF button */}
           <div
             className={`flex items-center ${
               isTing ? 'bg-[#f15a22] border-white/40' : 'bg-black/40 border-white/30'
@@ -885,18 +1039,35 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             </span>
             <div className="flex items-center border-l border-white/20 divide-x divide-white/20">
               <button
-                onClick={() => onSelectPreset?.((preset.pos - 1 + totalPresets) % totalPresets)}
+                onClick={() => onSelectPreset?.(preset.pos === 0 ? -1 : preset.pos - 1)}
                 className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                title={`Previous Preset (Preset ${((preset.pos - 1 + totalPresets) % totalPresets) + 1})`}
+                title={
+                  preset.pos === 0
+                    ? 'Switch Effects OFF (Bypass)'
+                    : `Previous Preset (Preset ${preset.pos})`
+                }
               >
                 <ArrowUp className="w-3 h-3" />
               </button>
               <button
-                onClick={() => onSelectPreset?.((preset.pos + 1) % totalPresets)}
+                onClick={() => onSelectPreset?.(preset.pos + 1 >= totalPresets ? -1 : preset.pos + 1)}
                 className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                title={`Next Preset (Preset ${((preset.pos + 1) % totalPresets) + 1})`}
+                title={
+                  preset.pos + 1 >= totalPresets
+                    ? 'Switch Effects OFF (Bypass)'
+                    : `Next Preset (Preset ${preset.pos + 2})`
+                }
               >
                 <ArrowDown className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => onSelectPreset?.(-1)}
+                className="px-1.5 py-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer flex items-center gap-1 text-[9px] font-bold uppercase"
+                title="Switch Effects OFF (Bypass)"
+                aria-label="Switch Effects OFF"
+              >
+                <PowerOff className="w-2.5 h-2.5" />
+                <span>OFF</span>
               </button>
             </div>
           </div>

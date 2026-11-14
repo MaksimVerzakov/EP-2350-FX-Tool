@@ -1244,24 +1244,34 @@ const parsedDevice = parseConfigJson(rawDeviceJson);
 assert.ok(parsedDevice.pack, 'Device config.json must parse into a valid PackConfig');
 assert.strictEqual(parsedDevice.pack.name, 'TING HARDWARE PACK', 'Parsed pack must preserve the device pack name');
 
-// Hardware button polling: initial state (-1, 0), then physical button press to preset 1 & sample 3
+// Hardware button polling: initial state (-1, 0), then physical button press to preset 1 & sample 3, then FX OFF (-1)
 await serialClient.pollHardwareSlot();
-assert.deepStrictEqual(observedPresetSlots, [], 'fx_pos=-1 on boot must not emit a preset slot change');
+assert.deepStrictEqual(observedPresetSlots, [-1], 'fx_pos=-1 on boot must emit -1 (FX OFF / bypass state)');
 assert.deepStrictEqual(observedSampleSlots, [0], 'Initial poll syncs sam_pos=0');
 
 mockHwFxPos = 1;
 mockHwSamPos = 3;
 const polledAfterPress = await serialClient.pollHardwareSlot();
 assert.deepStrictEqual(polledAfterPress, { fxSlot: 1, samSlot: 3 }, 'pollHardwareSlot must parse fx_pos and sam_pos');
-assert.deepStrictEqual(observedPresetSlots, [1], 'Physical preset button press on mic must notify onPresetSlotChange(1)');
+assert.deepStrictEqual(observedPresetSlots, [-1, 1], 'Physical preset button press on mic must notify onPresetSlotChange(1)');
 assert.deepStrictEqual(observedSampleSlots, [0, 3], 'Physical sample button press on mic must notify onSampleSlotChange(3)');
 
-// Preset switching via fx.load_preset(slot) and LED sync
+mockHwFxPos = -1;
+await serialClient.pollHardwareSlot();
+assert.deepStrictEqual(observedPresetSlots, [-1, 1, -1], 'Switching off FX on mic (fx_pos=-1) must notify onPresetSlotChange(-1)');
+
+// Preset switching via fx.load_preset(slot) (including -1 FX OFF) and LED sync
 await serialClient.loadPreset(2);
 assert.ok(
   sentCommands.some((c) => c.includes('fx.load_preset(2)') && c.includes('ui.leds(2,')),
   'loadPreset(2) must send fx.load_preset(2) and update hardware LEDs over REPL'
 );
+await serialClient.loadPreset(-1);
+assert.ok(
+  sentCommands.some((c) => c.includes('fx.load_preset(-1)') && c.includes('ui.leds(-1,')),
+  'loadPreset(-1) must send fx.load_preset(-1) and turn off all 4 FX LEDs over REPL'
+);
+await assert.rejects(() => serialClient.loadPreset(-2), /Invalid preset slot/, 'Out-of-range slot -2 must reject');
 await assert.rejects(() => serialClient.loadPreset(4), /Invalid preset slot/, 'Out-of-range slot 4 must reject');
 
 // Sample slot switching from web UI updates hardware sam_pos and LEDs
