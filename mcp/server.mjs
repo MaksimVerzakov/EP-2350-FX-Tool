@@ -43,6 +43,7 @@ export async function loadEp2350EngineModules() {
     'src/constants/defaultPresets.ts',
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
+    'src/utils/presetUrl.ts',
     'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/offlineRenderer.ts',
@@ -81,6 +82,7 @@ export async function loadEp2350EngineModules() {
     defaultPresetsMod,
     parserMod,
     serializerMod,
+    presetUrlMod,
     wavCodecMod,
     offlineRendererMod,
     analyzerMod,
@@ -90,6 +92,7 @@ export async function loadEp2350EngineModules() {
     importMod('src/constants/defaultPresets.mjs'),
     importMod('src/utils/parser.mjs'),
     importMod('src/utils/serializer.mjs'),
+    importMod('src/utils/presetUrl.mjs'),
     importMod('src/utils/wavCodec.mjs'),
     importMod('src/dsp/offlineRenderer.mjs'),
     importMod('src/dsp/analyzer.mjs'),
@@ -101,6 +104,7 @@ export async function loadEp2350EngineModules() {
     ...defaultPresetsMod,
     ...parserMod,
     ...serializerMod,
+    ...presetUrlMod,
     ...wavCodecMod,
     ...offlineRendererMod,
     ...analyzerMod,
@@ -597,6 +601,10 @@ export async function handleMcpJsonRpcRequest(request) {
 }
 
 async function executeToolCall(toolName, args, engine) {
+  const shareBaseUrl = String(
+    args.uiUrl || process.env.EP2350_UI_URL || engine.DEFAULT_PUBLIC_APP_URL
+  ).replace(/\/+$/, '');
+
   switch (toolName) {
     case 'design_preset_from_description': {
       const description = String(args.description || '').trim();
@@ -613,6 +621,8 @@ async function executeToolCall(toolName, args, engine) {
       const issues = engine.validatePackConfig(pack).filter((i) => i.presetPos === preset.pos);
       const serializedPack = JSON.parse(engine.serializeToConfigJson(pack));
       const hardwarePresetJson = serializedPack.presets[preset.pos];
+      const shareHash = engine.encodePresetToHash(hardwarePresetJson, preset.pos);
+      const shareUrl = engine.buildPresetShareUrl(shareBaseUrl, hardwarePresetJson, preset.pos);
 
       let simulation = undefined;
       if (args.simulate !== false) {
@@ -637,6 +647,8 @@ async function executeToolCall(toolName, args, engine) {
       return {
         preset,
         hardwarePresetJson,
+        shareHash,
+        shareUrl,
         rationale,
         validationIssues: issues,
         simulation
@@ -651,11 +663,14 @@ async function executeToolCall(toolName, args, engine) {
         }
         const issues = engine.validatePackConfig(parsed.pack);
         const errors = issues.filter((i) => i.type === 'error');
+        const normalizedConfigJson = JSON.parse(engine.serializeToConfigJson(parsed.pack));
         return {
           isValid: errors.length === 0,
           errors,
           warnings: issues.filter((i) => i.type === 'warning'),
-          normalizedConfigJson: JSON.parse(engine.serializeToConfigJson(parsed.pack))
+          normalizedConfigJson,
+          shareHash: engine.encodePackToHash(normalizedConfigJson),
+          shareUrl: engine.buildPackShareUrl(shareBaseUrl, normalizedConfigJson)
         };
       }
 
@@ -667,11 +682,14 @@ async function executeToolCall(toolName, args, engine) {
         );
         const errors = issues.filter((i) => i.type === 'error');
         const serializedPack = JSON.parse(engine.serializeToConfigJson(pack));
+        const normalizedPresetJson = serializedPack.presets[normPreset.pos];
         return {
           isValid: errors.length === 0,
           errors,
           warnings: issues.filter((i) => i.type === 'warning'),
-          normalizedPresetJson: serializedPack.presets[normPreset.pos]
+          normalizedPresetJson,
+          shareHash: engine.encodePresetToHash(normalizedPresetJson, normPreset.pos),
+          shareUrl: engine.buildPresetShareUrl(shareBaseUrl, normalizedPresetJson, normPreset.pos)
         };
       }
 
@@ -762,6 +780,8 @@ async function executeToolCall(toolName, args, engine) {
 
       const pack = wrapPresetInPack(optResult.optimizedPreset, engine.createEmptyPack, 'MATCHED PACK');
       const hardwarePresetJson = JSON.parse(engine.serializeToConfigJson(pack)).presets[0];
+      const shareHash = engine.encodePresetToHash(hardwarePresetJson, 0);
+      const shareUrl = engine.buildPresetShareUrl(shareBaseUrl, hardwarePresetJson, 0);
 
       let savedWavPath = undefined;
       if (args.outputWavPath) {
@@ -773,6 +793,8 @@ async function executeToolCall(toolName, args, engine) {
       return {
         optimizedPreset: optResult.optimizedPreset,
         hardwarePresetJson,
+        shareHash,
+        shareUrl,
         initialDistance: optResult.initialDistance,
         finalDistance: optResult.finalDistance,
         iterationsRun: optResult.iterationsRun,
@@ -799,6 +821,9 @@ async function executeToolCall(toolName, args, engine) {
 
       const issues = engine.validatePackConfig(pack);
       const configJsonString = engine.serializeToConfigJson(pack);
+      const configJson = JSON.parse(configJsonString);
+      const shareHash = engine.encodePackToHash(configJson);
+      const shareUrl = engine.buildPackShareUrl(shareBaseUrl, configJson);
       let writtenPath = undefined;
       if (args.outputPath) {
         writtenPath = path.resolve(ROOT_DIR, args.outputPath);
@@ -810,7 +835,9 @@ async function executeToolCall(toolName, args, engine) {
         packName: pack.name,
         validationIssues: issues,
         writtenPath,
-        configJson: JSON.parse(configJsonString)
+        shareHash,
+        shareUrl,
+        configJson
       };
     }
 
@@ -821,13 +848,19 @@ async function executeToolCall(toolName, args, engine) {
       );
       const endpoint = `${baseUrl}/__mcp_sync`;
       const payload = {};
+      let shareHash = '';
+      let shareUrl = '';
 
       if (args.pack && typeof args.pack === 'object') {
         payload.pack = args.pack;
+        shareHash = engine.encodePackToHash(args.pack, args.slot);
+        shareUrl = engine.buildPackShareUrl(shareBaseUrl, args.pack, args.slot);
       } else if (args.preset && typeof args.preset === 'object') {
         const slot = typeof args.slot === 'number' ? args.slot : args.preset.pos ?? 0;
         payload.preset = normalizeSinglePreset(args.preset, slot);
         payload.slot = slot;
+        shareHash = engine.encodePresetToHash(payload.preset, slot);
+        shareUrl = engine.buildPresetShareUrl(shareBaseUrl, payload.preset, slot);
       } else {
         return { error: 'Provide either `preset` or `pack` to push to the live UI.' };
       }
@@ -842,6 +875,8 @@ async function executeToolCall(toolName, args, engine) {
           return {
             pushed: false,
             endpoint,
+            shareHash,
+            shareUrl,
             error: `UI server responded with status ${res.status}`
           };
         }
@@ -849,13 +884,17 @@ async function executeToolCall(toolName, args, engine) {
         return {
           pushed: true,
           endpoint,
+          shareHash,
+          shareUrl,
           response: data
         };
       } catch (err) {
         return {
           pushed: false,
           endpoint,
-          error: `Could not reach running Vite UI at ${endpoint} (${err instanceof Error ? err.message : String(err)}). Start the web app with "npm run dev" or use export_pack_config.`
+          shareHash,
+          shareUrl,
+          error: `Could not reach running Vite UI at ${endpoint} (${err instanceof Error ? err.message : String(err)}). Open shareUrl directly to load this preset in your browser.`
         };
       }
     }

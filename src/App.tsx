@@ -4,6 +4,7 @@ import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
+import { decodeHashPayload } from './utils/presetUrl';
 import { ep2350Serial } from './utils/webSerial';
 
 import { TopBanner } from './components/TopBanner';
@@ -110,6 +111,32 @@ export const App: React.FC = () => {
       nav?.serial?.removeEventListener?.('connect', handleSerialConnect);
     };
   }, [syncFromConnectedDevice]);
+
+  // Stateless Shareable Deep-Link Loader (#preset=<base64url> or #pack=<base64url>)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const applyHashPayload = () => {
+      const decoded = decodeHashPayload(window.location.hash);
+      if (!decoded) return;
+      if (decoded.type === 'pack') {
+        setPack(decoded.pack);
+        setActiveSlot(decoded.slot);
+        setIsDevicePack(false);
+      } else if (decoded.type === 'preset') {
+        setPack((prev) => ({
+          ...prev,
+          presets: prev.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
+        }));
+        setActiveSlot(decoded.slot);
+      }
+    };
+
+    applyHashPayload();
+    window.addEventListener('hashchange', applyHashPayload);
+    return () => {
+      window.removeEventListener('hashchange', applyHashPayload);
+    };
+  }, []);
 
   // Live MCP Sound Designer Sync Bridge (/ __mcp_sync SSE)
   useEffect(() => {
