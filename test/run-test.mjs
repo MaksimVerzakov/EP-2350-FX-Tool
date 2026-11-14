@@ -244,7 +244,49 @@ assert.ok(
   oversizedIssues.some((i) => i.type === 'warning' && i.message.includes("'EQUALISER' is documented in the TE guide")),
   'Validator must warn about EQUALISER firmware <= 1.0.8 compatibility'
 );
-console.log('✓ Suite 3: Validator constraints, 16-row hardware limit & out-of-bounds modulation checks verified');
+
+// Verify 16 non-SAMPLE effects triggers 17-effect limit error because SAMPLE is required
+const sixteenWithoutSamplePack = {
+  name: 'SIXTEEN WITHOUT SAMPLE',
+  useBuiltInSamples: true,
+  samples: [],
+  presets: [
+    {
+      id: 'p-16-no-s',
+      pos: 0,
+      name: 'NO SAMPLE 16',
+      comment: '',
+      list: Array.from({ length: 16 }, (_, idx) => ({ id: `fx-${idx}`, effect: 'LOWPASS', cutoff: 50 }))
+    }
+  ]
+};
+const sixteenNoSampleIssues = validatePackConfig(sixteenWithoutSamplePack);
+assert.ok(
+  sixteenNoSampleIssues.some((i) => i.type === 'error' && i.message.includes('17 total including required SAMPLE')),
+  '16 non-SAMPLE effects must fail validation because adding required SAMPLE makes 17 effects'
+);
+
+// Verify serializer auto-appends SAMPLE when missing (within 16-effect limit)
+const missingSamplePack = {
+  name: 'AUTO SAMPLE PACK',
+  useBuiltInSamples: true,
+  samples: [],
+  presets: [
+    {
+      id: 'p-auto-s',
+      pos: 0,
+      name: 'AUTO SAMPLE',
+      comment: '',
+      list: [{ id: 'fx-0', effect: 'DIST', amount: 10, mix: 50 }]
+    }
+  ]
+};
+const serializedAutoSample = JSON.parse(serializeToConfigJson(missingSamplePack));
+assert.strictEqual(serializedAutoSample.presets[0].list.length, 2);
+assert.strictEqual(serializedAutoSample.presets[0].list[1].effect, 'SAMPLE');
+assert.deepStrictEqual(serializedAutoSample.presets[0].trigger, { row: 1 });
+
+console.log('✓ Suite 3: Validator constraints, 16-row hardware limit (incl. SAMPLE) & auto-append verified');
 
 // ---------------------------------------------------------------------------
 // SUITE 4: Parser Resilience, Custom Samples, Parallel Buses & Bipolar Depths
@@ -621,8 +663,14 @@ assert.ok(
   !presetLedgerSrc.includes('phase: 0'),
   'PresetLedger must not inject spurious phase: 0 when toggling LFO ON'
 );
+assert.ok(
+  presetLedgerSrc.includes('isHiddenTrailingSample') &&
+    presetLedgerSrc.includes('visibleBusItems') &&
+    presetLedgerSrc.includes('effectiveEffectCount'),
+  'PresetLedger must skip unchanged trailing SAMPLE and reserve 1 slot toward the 16-effect limit when SAMPLE is missing'
+);
 
-console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake & balanced TopBanner verified');
+console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
 // SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection

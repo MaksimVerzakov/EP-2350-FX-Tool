@@ -63,7 +63,8 @@ export const createEmptyPack = (): PackConfig => {
       pos: slot,
       name: `PRESET ${slot + 1}`,
       comment: '',
-      list: []
+      list: [{ id: `fx-${slot}-s-${now}`, effect: 'SAMPLE' }],
+      trigger: { row: 0 }
     }))
   };
 };
