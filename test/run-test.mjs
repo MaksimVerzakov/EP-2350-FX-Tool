@@ -23,6 +23,7 @@ function buildSourceModulesForTest() {
     'src/constants/defaultPresets.ts',
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
+    'src/utils/presetUrl.ts',
     'src/utils/webSerial.ts',
     'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
@@ -78,6 +79,15 @@ const { OFFICIAL_TE_PACKS, createEmptyPack } = await import(
 const { parseConfigJson } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/parser.mjs')).href
 );
+const {
+  encodeBase64Url,
+  decodeBase64Url,
+  encodePresetToHash,
+  encodePackToHash,
+  buildPresetShareUrl,
+  buildPackShareUrl,
+  decodeHashPayload
+} = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/presetUrl.mjs')).href);
 const { serializeToConfigJson, validatePackConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/serializer.mjs')).href
 );
@@ -1678,4 +1688,70 @@ assert.ok(
 );
 console.log('✓ Suite 14: Live Web UI Sync Bridge & Antigravity Skill verified');
 
-console.log('\n=== ALL 14 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 15: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl
+// ============================================================================
+// 15a. Base64URL Unicode & ASCII round-trip
+const unicodeSample = 'DAFT VOCODER · EP–2350 {"mix":0.75}';
+assert.strictEqual(
+  decodeBase64Url(encodeBase64Url(unicodeSample)),
+  unicodeSample,
+  'encodeBase64Url / decodeBase64Url must round-trip UTF-8 strings losslessly'
+);
+
+// 15b. Single preset round-trip (both UI-scale 0..100 and hardware-scale 0.0..1.0)
+const sharePresetUrl = buildPresetShareUrl(
+  'https://ep2350.example.com/',
+  designPayload.preset,
+  2
+);
+assert.ok(
+  sharePresetUrl.startsWith('https://ep2350.example.com/#preset=') &&
+    sharePresetUrl.endsWith('&slot=2'),
+  'buildPresetShareUrl must produce a clean #preset=<b64url>&slot=2 URL'
+);
+const decodedPresetPayload = decodeHashPayload(sharePresetUrl);
+assert.ok(decodedPresetPayload && decodedPresetPayload.type === 'preset');
+assert.strictEqual(decodedPresetPayload.slot, 2);
+assert.strictEqual(decodedPresetPayload.preset.name, 'CYBER WALKIE');
+assert.strictEqual(
+  decodedPresetPayload.preset.list.length,
+  designPayload.preset.list.length,
+  'Decoded preset from URL hash must preserve all effects in chain'
+);
+
+// 15c. Full pack round-trip (#pack=<b64url>&slot=1)
+const dubPackParsed = parseConfigJson(OFFICIAL_TE_PACKS[1].rawJson).pack;
+const sharePackUrl = buildPackShareUrl('https://ep2350.example.com', dubPackParsed, 1);
+assert.ok(sharePackUrl.includes('#pack=') && sharePackUrl.endsWith('&slot=1'));
+const decodedPackPayload = decodeHashPayload(sharePackUrl);
+assert.ok(decodedPackPayload && decodedPackPayload.type === 'pack');
+assert.strictEqual(decodedPackPayload.slot, 1);
+assert.strictEqual(decodedPackPayload.pack.name, dubPackParsed.name);
+assert.strictEqual(decodedPackPayload.pack.presets.length, 4);
+
+// 15d. Malformed hash resilience
+assert.strictEqual(decodeHashPayload(''), null);
+assert.strictEqual(decodeHashPayload('#preset=!!!not_base64!!!'), null);
+assert.strictEqual(decodeHashPayload('#unknown=123'), null);
+
+// 15e. MCP tools return shareUrl and shareHash
+assert.ok(
+  typeof designPayload.shareUrl === 'string' && designPayload.shareUrl.includes('#preset='),
+  'design_preset_from_description must return shareUrl with #preset= deep-link'
+);
+assert.ok(
+  typeof optPayload.shareUrl === 'string' && optPayload.shareUrl.includes('#preset='),
+  'optimize_preset_parameters must return shareUrl with #preset= deep-link'
+);
+const decodedFromMcpShareUrl = decodeHashPayload(designPayload.shareUrl);
+assert.strictEqual(decodedFromMcpShareUrl.preset.name, 'CYBER WALKIE');
+
+// 15f. App.tsx integrates decodeHashPayload and hashchange listener
+assert.ok(
+  appMcpSrc.includes('decodeHashPayload') && appMcpSrc.includes("addEventListener('hashchange'"),
+  'App.tsx must decode #preset= / #pack= hashes on mount and hashchange'
+);
+console.log('✓ Suite 15: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl verified');
+
+console.log('\n=== ALL 15 PRODUCTION TEST SUITES PASSED (100%) ===');
