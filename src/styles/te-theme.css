@@ -224,7 +224,7 @@ body {
   justify-content: center;
   gap: 5px;
   transition: all 0.06s ease;
-  box-shadow: 2px 2px 0px #000000;
+  box-shadow: none;
 }
 
 .te-btn:hover {
@@ -232,16 +232,15 @@ body {
 }
 
 .te-btn:active, .te-btn.active {
-  transform: translate(2px, 2px);
   background-color: #121212;
-  box-shadow: 0px 0px 0px #000000;
+  box-shadow: none;
 }
 
 .te-btn-orange {
   background-color: var(--accent);
   color: #ffffff;
   border: 1px solid var(--ink-shadow);
-  box-shadow: 2px 2px 0px var(--ink-shadow);
+  box-shadow: none;
 }
 
 .te-btn-orange:hover {
@@ -249,16 +248,15 @@ body {
 }
 
 .te-btn-orange:active {
-  transform: translate(2px, 2px);
   background-color: var(--accent-active);
-  box-shadow: 0px 0px 0px var(--ink-shadow);
+  box-shadow: none;
 }
 
 .te-btn-secondary {
   background-color: #dbdddb;
   color: #192a3c;
   border: 1px solid #000000;
-  box-shadow: 2px 2px 0px #000000;
+  box-shadow: none;
 }
 
 .te-btn-secondary:hover {
@@ -266,8 +264,7 @@ body {
 }
 
 .te-btn-secondary:active {
-  transform: translate(2px, 2px);
-  box-shadow: 0px 0px 0px #000000;
+  box-shadow: none;
 }
 
 html[data-theme='ting'] ::-webkit-scrollbar-thumb {
@@ -282,7 +279,7 @@ html[data-theme='ting'] .te-btn:not(.te-btn-orange):not(.te-btn-secondary) {
   background-color: #00503a;
   color: #ffffff;
   border: 1px solid #003324;
-  box-shadow: 2px 2px 0px #003324;
+  box-shadow: none;
 }
 
 html[data-theme='ting'] .te-btn:not(.te-btn-orange):not(.te-btn-secondary):hover {
@@ -293,79 +290,39 @@ html[data-theme='ting'] .te-btn-secondary {
   background-color: #e8e9e4;
   color: #00503a;
   border: 1px solid #00503a;
-  box-shadow: 2px 2px 0px #003828;
+  box-shadow: none;
 }
 
 html[data-theme='ting'] .te-btn-secondary:hover {
   background-color: #f4f5f1;
 }
 
-/* Authentic Paper Notebook Stack / Ledger Sheet (Right Column)
- * Replicates Teenage Engineering EP Sample Tool's 9-page stacked paper ledger.
- * Uses crisp 45° stepped axonometric page edges with alternating paper tones
- * (#ffffff -> #e5e6e6 -> #d2d3d4 -> #9aa0a9) and hard black shadow facet. Zero blur!
- */
+/* Main Module Card — Clean solid edges, straight corners, zero shadows */
 .te-ledger-card {
   background-color: #ffffff;
   border: 1px solid #141617;
   border-radius: 0px;
   position: relative;
-  box-shadow: 
-    1px 1px 0px 0px #141617,
-    2px 2px 0px 0px #e5e6e6,
-    3px 3px 0px 0px #141617,
-    4px 4px 0px 0px #d2d3d4,
-    5px 5px 0px 0px #141617,
-    6px 6px 0px 0px #d2d3d4,
-    7px 7px 0px 0px #141617,
-    8px 8px 0px 0px #9aa0a9,
-    9px 9px 0px 0px #141617,
-    10px 10px 0px 0px #9aa0a9,
-    11px 11px 0px 0px #141617,
-    12px 12px 0px 0px #141617;
+  box-shadow: none;
 }
 
 html[data-theme='ting'] .te-ledger-card {
   background-color: #f7f5ef;
   border: 1px solid #00503a;
-  box-shadow:
-    1px 1px 0px 0px #00503a,
-    2px 2px 0px 0px #e8e9e4,
-    3px 3px 0px 0px #00503a,
-    4px 4px 0px 0px #dbd0b9,
-    5px 5px 0px 0px #00503a,
-    6px 6px 0px 0px #dbd0b9,
-    7px 7px 0px 0px #00503a,
-    8px 8px 0px 0px #b2aca1,
-    9px 9px 0px 0px #00503a,
-    10px 10px 0px 0px #b2aca1,
-    11px 11px 0px 0px #003828,
-    12px 12px 0px 0px #003828;
+  box-shadow: none;
 }
 
-/* Teenage Engineering Hardware Modular Chassis (45° Axonometric Depth) */
+/* Audition Module Chassis — Clean solid edges, straight corners, zero shadows */
 .te-hardware-chassis {
   border: 1px solid #141617;
   border-radius: 0px;
   background-color: #ffffff;
-  box-shadow: 
-    1px 1px 0px 0px #141617,
-    2px 2px 0px 0px #abb5ba,
-    3px 3px 0px 0px #141617,
-    4px 4px 0px 0px #424143,
-    5px 5px 0px 0px #141617,
-    6px 6px 0px 0px #141617;
+  box-shadow: none;
 }
 
 html[data-theme='ting'] .te-hardware-chassis {
   border: 1px solid #00503a;
   background-color: #e8e9e4;
-  box-shadow:
-    1px 1px 0px 0px #00503a,
-    2px 2px 0px 0px #dbd0b9,
-    3px 3px 0px 0px #00503a,
-    4px 4px 0px 0px #003828,
-    5px 5px 0px 0px #00291d,
-    6px 6px 0px 0px #00291d;
+  box-shadow: none;
 }
 
