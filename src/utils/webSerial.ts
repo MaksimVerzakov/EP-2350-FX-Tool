@@ -367,18 +367,20 @@ export class Ep2350SerialClient {
   }
 
   async saveConfigJson(jsonStr: string, activeSlot?: number): Promise<void> {
-    this.pausePolling(2000);
+    this.pausePolling(15000);
     this.clearPendingParams();
     await this.evalRepl('_f = open("/fat/config.json", "w")');
-    const lines = jsonStr.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const lineWithNewline = i < lines.length - 1 ? `${lines[i]}\n` : lines[i];
-      const escaped = JSON.stringify(lineWithNewline);
-      await this.evalRepl(`_f.write(${escaped})`);
+    try {
+      const CHUNK_SIZE = 512;
+      for (let i = 0; i < jsonStr.length; i += CHUNK_SIZE) {
+        const chunk = jsonStr.slice(i, i + CHUNK_SIZE);
+        const escaped = JSON.stringify(chunk);
+        await this.evalRepl(`_f.write(${escaped})`);
+      }
+    } finally {
+      await this.evalRepl('_f.close()').catch(() => undefined);
     }
-    await this.evalRepl('_f.close()');
     await this.evalRepl('import os; os.sync()');
-    await this.evalRepl('import teenage; teenage.examine_drive(False)');
     if (activeSlot !== undefined && Number.isInteger(activeSlot) && activeSlot >= 0 && activeSlot <= 3) {
       await this.loadPreset(activeSlot);
     }
@@ -477,10 +479,14 @@ export class Ep2350SerialClient {
       const promptIdx = raw.lastIndexOf(REPL_PROMPT);
       const body = promptIdx >= 0 ? raw.slice(0, promptIdx) : raw;
       const firstNewline = body.indexOf('\n');
-      if (firstNewline >= 0) {
-        return body.slice(firstNewline + 1).replace(/\r/g, '').trim();
+      const output = (firstNewline >= 0 ? body.slice(firstNewline + 1) : body).replace(/\r/g, '').trim();
+      if (
+        output.includes('Traceback (most recent call last):') ||
+        /^(SyntaxError|OSError|NameError|ValueError|TypeError|MemoryError):/m.test(output)
+      ) {
+        throw new Error(`EP-2350 REPL error: ${output}`);
       }
-      return body.replace(/\r/g, '').trim();
+      return output;
     });
   }
 
