@@ -496,8 +496,8 @@ export const App: React.FC = () => {
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 w-full">
           
-          {/* LEFT COLUMN: Hardware Mic Device + Compact Audition Player */}
-          <div className="w-[275px] shrink-0 flex flex-col items-start h-[629px] justify-between">
+          {/* LEFT COLUMN: Hardware Mic Device + Floating Playback Controls */}
+          <div className="w-[275px] shrink-0 flex flex-col items-start">
             <MicDevice
               activeSlot={activeSlot}
               onSelectSlot={handleSelectSlot}
@@ -510,7 +510,7 @@ export const App: React.FC = () => {
               theme={theme}
             />
 
-            <AudioPlayerCompact theme={theme} className="-mt-[12px]" />
+            <AudioPlayerCompact theme={theme} className="-mt-[228px]" />
           </div>
 
           {/* RIGHT COLUMN: Preset Details Ledger Sheet */}

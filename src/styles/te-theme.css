@@ -369,6 +369,81 @@ html[data-theme='ting'] .te-bevel-frame::after {
   border-color: #00503a;
 }
 
+/* EP Sample Tool 3px 45° 3D Physical Button (raised by default, flattens when pressed/selected) */
+.te-btn-3d {
+  position: relative;
+  border: 1px solid #141617;
+  transition: transform 75ms ease, background-color 75ms ease, color 75ms ease;
+}
+
+.te-btn-3d::before {
+  content: '';
+  position: absolute;
+  left: 0.5px;
+  right: -2.5px;
+  bottom: -4px;
+  height: 3px;
+  background-color: var(--te-btn-bevel, #cfd1d0);
+  border-left: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewX(45deg);
+  pointer-events: none;
+}
+
+.te-btn-3d::after {
+  content: '';
+  position: absolute;
+  top: 0.5px;
+  bottom: -2.5px;
+  right: -4px;
+  width: 3px;
+  background-color: var(--te-btn-bevel, #cfd1d0);
+  border-top: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewY(45deg);
+  pointer-events: none;
+}
+
+.te-btn-3d--pressed,
+.te-btn-3d--pressable:active {
+  transform: translate(3px, 3px);
+}
+
+.te-btn-3d--pressed::before,
+.te-btn-3d--pressed::after,
+.te-btn-3d--pressable:active::before,
+.te-btn-3d--pressable:active::after {
+  display: none;
+}
+
+.te-btn-3d--dark {
+  --te-btn-bevel: #2c3032;
+}
+
+.te-btn-3d--orange {
+  --te-btn-bevel: #b83d10;
+}
+
+html[data-theme='ting'] .te-btn-3d {
+  border-color: #00503a;
+}
+
+html[data-theme='ting'] .te-btn-3d::before,
+html[data-theme='ting'] .te-btn-3d::after {
+  border-color: #00503a;
+  --te-btn-bevel: #cbc0a7;
+}
+
+html[data-theme='ting'] .te-btn-3d--dark {
+  --te-btn-bevel: #003828;
+}
+
+html[data-theme='ting'] .te-btn-3d--orange {
+  --te-btn-bevel: #b83d10;
+}
+
 
 /* Device connector: on hover the USB-C plug drops into the mic and lifts back out, on a loop. */
 @keyframes epPlugInOut {
