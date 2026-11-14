@@ -650,7 +650,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             { slot: 2, cy: 61.2735 },
             { slot: 3, cy: 76.4465 }
           ].map(({ slot, cy }) => {
-            const isActive = activeSlot === slot;
+            const isActive = slot <= activeSlot;
             return (
               <g
                 key={slot}
@@ -698,7 +698,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             { slot: 2, cy: 137.138 },
             { slot: 3, cy: 152.344 }
           ].map(({ slot, cy }) => {
-            const isActive = activeSampleSlot === slot;
+            const isActive = slot <= activeSampleSlot;
             return (
               <g
                 key={`sample-led-${slot}`}
@@ -727,7 +727,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                   cx={521.08}
                   cy={cy}
                   r={2.8}
-                  fill={isActive ? '#ff3b30' : '#2b3034'}
+                  fill={isActive ? '#ffffff' : '#2b3034'}
                   filter={isActive ? 'url(#ledGlow)' : undefined}
                 />
 

@@ -699,7 +699,18 @@ assert.ok(
   'MicDevice must render 3D side-mounted cylindrical buttons with elliptical end caps and inward press motion'
 );
 
-console.log('✓ Suite 7: UX horizontal Push/Shake arrows, 3D side buttons, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
+// 8. Preset & Sample LEDs light cumulatively as a bar (slot <= activeSlot / activeSampleSlot), orange on top & white on bottom
+assert.ok(
+  micDeviceSrc.includes('const isActive = slot <= activeSlot;') &&
+    micDeviceSrc.includes('const isActive = slot <= activeSampleSlot;') &&
+    !micDeviceSrc.includes('const isActive = activeSlot === slot;') &&
+    !micDeviceSrc.includes('const isActive = activeSampleSlot === slot;') &&
+    micDeviceSrc.includes("fill={isActive ? '#ff3b30' : '#2b3034'}") &&
+    micDeviceSrc.includes("fill={isActive ? '#ffffff' : '#2b3034'}"),
+  'MicDevice must light preset (orange) and sample (white) LEDs cumulatively (bar-style) rather than single-dot'
+);
+
+console.log('✓ Suite 7: UX horizontal Push/Shake arrows, 3D side buttons, cumulative LEDs, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
 // SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection
