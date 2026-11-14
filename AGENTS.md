@@ -13,6 +13,7 @@
      - `chore/<short-name>` or `docs/<short-name>` for maintenance/tooling
    - Push the branch to `origin` (`git push -u origin <branch-name>`).
    - **Always open the Pull Request yourself** using `gh pr create` (or the GitHub API with `GITHUB_TOKEN`/`GH_TOKEN` from `.env.local`). Write a detailed, complete markdown description of changes and output the PR link.
+   - **UI PRs require Before/After screenshots**: Whenever a PR includes UI changes, capture Before (`main`) and After (branch) screenshots, host them on the dedicated `pr-assets` branch (e.g., `pr-<number>/before.png` and `pr-<number>/after.png`) so `main` stays free of binary assets, and embed a Before/After comparison table in the PR description.
 
 3. **Conventional Commits & Tag-Driven Semantic Versioning (SemVer)**:
    - Use Conventional Commit messages (`feat: ...`, `fix: ...`, `feat!: ...` / `BREAKING CHANGE: ...`, `chore: ...`).

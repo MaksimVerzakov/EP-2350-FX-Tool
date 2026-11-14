@@ -670,7 +670,15 @@ assert.ok(
   'PresetLedger must skip unchanged trailing SAMPLE and reserve 1 slot toward the 16-effect limit when SAMPLE is missing'
 );
 
-console.log('✓ Suite 7: UX horizontal Push/Shake arrows, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
+// 7. Side hardware buttons are 3D cylindrical buttons mounted on the right side wall
+assert.ok(
+  micDeviceSrc.includes('const SideButton: React.FC<SideButtonProps>') &&
+    micDeviceSrc.includes('<ellipse') &&
+    micDeviceSrc.includes('-translate-x-[2.5px]'),
+  'MicDevice must render 3D side-mounted cylindrical buttons with elliptical end caps and inward press motion'
+);
+
+console.log('✓ Suite 7: UX horizontal Push/Shake arrows, 3D side buttons, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
 // SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection
