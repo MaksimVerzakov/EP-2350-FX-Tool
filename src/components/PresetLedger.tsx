@@ -856,6 +856,54 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     );
   };
 
+  const renderPresetSelectorBar = (opts: {
+    label: React.ReactNode;
+    onPrev: () => void;
+    prevTitle: string;
+    onNext: () => void;
+    nextTitle: string;
+  }) => (
+    <div className="flex items-start shrink-0 pb-[3px]">
+      <div className="flex items-start" role="group" aria-label="Preset selector">
+        <button
+          type="button"
+          onClick={opts.onPrev}
+          title={opts.prevTitle}
+          aria-label={opts.prevTitle}
+          className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
+            isTing ? 'bg-[#ece6d9] text-[#00503a]' : 'bg-[#e4e5e4] text-[#141617]'
+          }`}
+        >
+          <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
+            <polygon points="6,1 2,4 6,7" />
+          </svg>
+        </button>
+        <div
+          className={`h-[22px] translate-y-[3px] px-2.5 flex items-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
+            isTing
+              ? 'bg-[#dbd0b9] text-[#00503a] border-[#00503a]'
+              : 'bg-[#dbdddb] text-[#141617] border-[#141617]'
+          }`}
+        >
+          {opts.label}
+        </div>
+        <button
+          type="button"
+          onClick={opts.onNext}
+          title={opts.nextTitle}
+          aria-label={opts.nextTitle}
+          className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
+            isTing ? 'bg-[#ece6d9] text-[#00503a]' : 'bg-[#e4e5e4] text-[#141617]'
+          }`}
+        >
+          <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
+            <polygon points="2,1 6,4 2,7" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+
   if (isEffectsOff) {
     return (
       <div className="te-bevel-frame w-full">
@@ -881,29 +929,19 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* FX OFF Badge with Up/Down Controls */}
-            <div className="flex items-center bg-black/50 border border-white/30 rounded-none font-mono">
-              <span className="px-2.5 py-1 font-bold text-xs tracking-wider uppercase text-[#f15a22] flex items-center gap-1.5">
-                <PowerOff className="w-3 h-3" />
-                FX OFF
-              </span>
-              <div className="flex items-center border-l border-white/20 divide-x divide-white/20">
-                <button
-                  onClick={() => onSelectPreset?.(totalPresets - 1)}
-                  className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                  title={`Select Preset ${totalPresets}`}
-                >
-                  <ArrowUp className="w-3 h-3" />
-                </button>
-                <button
-                  onClick={() => onSelectPreset?.(0)}
-                  className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                  title="Select Preset 1"
-                >
-                  <ArrowDown className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
+            {/* FX OFF Selector (EP Sample Tool style) */}
+            {renderPresetSelectorBar({
+              label: (
+                <span className="text-[#f15a22] flex items-center gap-1.5">
+                  <PowerOff className="w-3 h-3" />
+                  FX OFF
+                </span>
+              ),
+              onPrev: () => onSelectPreset?.(totalPresets - 1),
+              prevTitle: `Select Preset ${totalPresets}`,
+              onNext: () => onSelectPreset?.(0),
+              nextTitle: 'Select Preset 1',
+            })}
 
             <span
               className={`${
@@ -1031,49 +1069,20 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Preset Badge with Up/Down Controls & FX OFF button */}
-          <div
-            className={`flex items-center ${
-              isTing ? 'bg-[#f15a22] border-white/40' : 'bg-black/40 border-white/30'
-            } border rounded-none font-mono`}
-          >
-            <span className="px-2.5 py-1 font-bold text-xs tracking-wider uppercase text-white">
-              PRESET {preset.pos + 1}
-            </span>
-            <div className="flex items-center border-l border-white/20 divide-x divide-white/20">
-              <button
-                onClick={() => onSelectPreset?.(preset.pos === 0 ? -1 : preset.pos - 1)}
-                className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                title={
-                  preset.pos === 0
-                    ? 'Switch Effects OFF (Bypass)'
-                    : `Previous Preset (Preset ${preset.pos})`
-                }
-              >
-                <ArrowUp className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => onSelectPreset?.(preset.pos + 1 >= totalPresets ? -1 : preset.pos + 1)}
-                className="p-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
-                title={
-                  preset.pos + 1 >= totalPresets
-                    ? 'Switch Effects OFF (Bypass)'
-                    : `Next Preset (Preset ${preset.pos + 2})`
-                }
-              >
-                <ArrowDown className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => onSelectPreset?.(-1)}
-                className="px-1.5 py-1 hover:bg-white hover:text-black text-white/90 active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer flex items-center gap-1 text-[9px] font-bold uppercase"
-                title="Switch Effects OFF (Bypass)"
-                aria-label="Switch Effects OFF"
-              >
-                <PowerOff className="w-2.5 h-2.5" />
-                <span>OFF</span>
-              </button>
-            </div>
-          </div>
+          {/* Preset Selector (EP Sample Tool PROJECT 07 style) */}
+          {renderPresetSelectorBar({
+            label: `PRESET ${preset.pos + 1}`,
+            onPrev: () => onSelectPreset?.(preset.pos === 0 ? -1 : preset.pos - 1),
+            prevTitle:
+              preset.pos === 0
+                ? 'Switch Effects OFF (Bypass)'
+                : `Previous Preset (Preset ${preset.pos})`,
+            onNext: () => onSelectPreset?.(preset.pos + 1 >= totalPresets ? -1 : preset.pos + 1),
+            nextTitle:
+              preset.pos + 1 >= totalPresets
+                ? 'Switch Effects OFF (Bypass)'
+                : `Next Preset (Preset ${preset.pos + 2})`,
+          })}
 
           {/* Name Field Directly Beside Preset Number (No "NAME:" Label) */}
           <input
