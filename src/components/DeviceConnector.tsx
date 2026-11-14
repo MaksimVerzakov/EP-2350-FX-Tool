@@ -46,20 +46,16 @@ export const EjectIcon: React.FC<{ className?: string }> = ({ className }) => (
 );
 
 /** Plug scale (px per source unit) and geometry of the source drawing (vertical, tip down). */
-const PLUG_SCALE = 1.0;
+const PLUG_SCALE = 0.72;
 const PLUG_TIP_END = 78.0; // source y of the USB-C tip end
 const PLUG_CORD_X = 220.062; // source x of the cord centre line
-const PORT_W = 6;
-const PORT_INSET = 20; // keeps the port clear of the body's right-hand corner rings
-const PLUG_TRAVEL = 7; // gap between tip and port when unplugged; the plug slides this far in
+const PLUG_TRAVEL = 6; // how far the plug drops on hover; the tip then meets the body's bottom edge
 
 /**
- * Horizontal USB-C cable for the connector body. The plug has the same form as the one in
- * Teenage Engineering's EP sample tool (strain relief, boot with 45° bevels, USB-C tip). The
- * source drawing points down, so it is transposed (x↔y): the tip points right into the mic's
- * port and the bevels stay on the bottom/right like every other block. The cord runs in from
- * the left edge between the corner rings. `mode` loops the plug in and out, holds it in, or
- * holds it out.
+ * USB-C cable hanging into the connector body from the top, with the same form as the plug in
+ * Teenage Engineering's EP sample tool (strain relief, boot with 45° bevels, USB-C tip). It is
+ * still at rest; on hover it drops into the mic (the body's bottom edge) and lifts out on a
+ * loop, and while connecting it stays plugged in.
  */
 const UsbCable: React.FC<{
   width: number;
@@ -72,10 +68,8 @@ const UsbCable: React.FC<{
   const contact = '#dbdddb';
   const stroke = { stroke: EDGE, strokeWidth: 0.9, vectorEffect: 'non-scaling-stroke' as const, strokeMiterlimit: 10 };
   const s = PLUG_SCALE;
-  const portRight = width - PORT_INSET;
-  const tx = portRight - PORT_W - PLUG_TRAVEL - PLUG_TIP_END * s;
-  const ty = height / 2 - PLUG_CORD_X * s;
-  const portH = 12;
+  const tx = width / 2 - PLUG_CORD_X * s;
+  const ty = height - PLUG_TRAVEL - PLUG_TIP_END * s;
   const motion = mode === 'loop' ? 'ep-plug-loop' : mode === 'in' ? 'ep-plug-in' : '';
   return (
     <svg
@@ -88,19 +82,17 @@ const UsbCable: React.FC<{
       data-testid="usb-cable"
       data-mode={mode}
     >
-      {/* Port on the mic */}
-      <rect x={portRight - PORT_W} y={height / 2 - portH / 2} width={PORT_W} height={portH} rx="2" fill={EDGE} />
-      <g className={motion} style={{ ['--ep-plug-travel' as string]: `${PLUG_TRAVEL - 0.5}px` }}>
-        <g transform={`translate(${tx} ${ty}) scale(${s}) matrix(0 1 1 0 0 0)`}>
-          {/* Cord (runs off the left edge) */}
-          <line x1="220.062" y1="51.312" x2="220.062" y2="-200" stroke={cordColor} strokeWidth="3.75" />
+      <g className={motion} style={{ ['--ep-plug-travel' as string]: `${PLUG_TRAVEL}px` }}>
+        <g transform={`translate(${tx} ${ty}) scale(${s})`}>
+          {/* Cord (runs up past the top of the body) */}
+          <line x1="220.062" y1="51.312" x2="220.062" y2="-60" stroke={cordColor} strokeWidth="3.75" />
           {/* Strain relief */}
           <path
             d="M220.063,38.812c-2.071,0-3.75,.56-3.75,1.25v17.5h5v-5h2.5v-12.5c0-.69-1.679-1.25-3.75-1.25Z"
             fill={contact}
             {...stroke}
           />
-          {/* Boot + 45° bevels */}
+          {/* Boot + 45° right and bottom bevels */}
           <rect x="212.562" y="52.562" width="12.5" height="17.5" fill={contact} {...stroke} />
           <polygon points="225.062 70.062 225.062 52.562 227.562 55.062 227.562 72.562 225.062 70.062" fill={contact} {...stroke} />
           <polygon points="212.562 70.062 215.062 72.563 227.562 72.562 225.062 70.062 212.562 70.062" fill={contact} {...stroke} />
@@ -151,6 +143,8 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
   }, [isConnected]);
 
   const lightBevel = isTing ? '#dbd0b9' : '#d8dad9';
+  const bodyFace = isTing ? 'bg-[#e8e9e4]' : 'bg-[#e5e6e6]';
+  const bodyHover = isTing ? 'group-hover:bg-[#f0f1ec]' : 'group-hover:bg-[#eeefef]';
   const darkBevel = isTing ? '#003828' : '#000000';
   const ink = isTing ? '#00503a' : '#141617';
   const pageColor = isTing ? '#dbd0b9' : '#abb5ba';
@@ -226,8 +220,8 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               </span>
               <Ring pos="right-[7px] top-[5.5px]" tone="border-[#141617]/55" />
             </span>
-            {/* Body row: white, animated cable only */}
-            <span className="relative w-full flex-1 bg-white overflow-hidden">
+            {/* Body row: grey like the TOOL block, cable only (animates on hover) */}
+            <span className={`relative w-full flex-1 overflow-hidden transition-colors ${bodyFace} ${isSupported && !isConnecting ? bodyHover : ''}`}>
               <Ring pos="top-[7px] left-[7px]" tone={lightRing} />
               <Ring pos="top-[7px] right-[7px]" tone={lightRing} />
               <Ring pos="bottom-[7px] left-[7px]" tone={lightRing} />
@@ -235,7 +229,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               <UsbCable
                 width={BODY_W}
                 height={BODY_H}
-                mode={!isSupported ? 'out' : isConnecting || hovered ? 'in' : 'loop'}
+                mode={!isSupported ? 'out' : isConnecting ? 'in' : hovered ? 'loop' : 'out'}
                 dim={!isSupported}
                 pageColor={pageColor}
                 cordColor={ink}
@@ -244,7 +238,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
           </button>
         ) : (
           <div className="w-full h-full grid grid-cols-2" role="group" aria-label="Connected mic actions">
-            {/* SAVE column: orange header + white body with the floppy icon */}
+            {/* SAVE column: orange header + grey body with the floppy icon */}
             <button
               type="button"
               onClick={handleSave}
@@ -268,7 +262,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                   save
                 </span>
               </span>
-              <span className={`relative flex-1 flex items-center justify-center bg-white transition-colors ${canSave ? 'group-hover:bg-[#fff4ee]' : ''}`}>
+              <span className={`relative flex-1 flex items-center justify-center transition-colors ${bodyFace} ${canSave ? bodyHover : ''}`}>
                 <Ring pos="top-[7px] left-[7px]" tone={lightRing} />
                 <Ring pos="bottom-[7px] left-[7px]" tone={lightRing} />
                 {saveState === 'saved' ? (
@@ -276,13 +270,13 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 ) : (
                   <FloppyIcon
                     className={`w-[22px] h-[22px] transition-colors ${saveState === 'saving' ? 'animate-pulse' : ''}`}
-                    style={{ color: hasUnsavedChanges ? '#f15a22' : '#c4c8c7' }}
+                    style={{ color: hasUnsavedChanges ? '#f15a22' : '#b7bcbb' }}
                   />
                 )}
               </span>
             </button>
 
-            {/* EJECT column: black header + white body with the eject icon */}
+            {/* EJECT column: black header + grey body with the eject icon */}
             <button
               type="button"
               onClick={onEject}
@@ -301,7 +295,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 </span>
                 <Ring pos="right-[7px] top-[5.5px]" tone="border-white/40" />
               </span>
-              <span className="relative flex-1 flex items-center justify-center bg-white group-hover:bg-[#f4f5f5] transition-colors">
+              <span className={`relative flex-1 flex items-center justify-center transition-colors ${bodyFace} ${bodyHover}`}>
                 <Ring pos="top-[7px] right-[7px]" tone={lightRing} />
                 <Ring pos="bottom-[7px] right-[7px]" tone={lightRing} />
                 <EjectIcon className={`w-[20px] h-[20px] transition-colors group-hover:text-[#f15a22] ${isTing ? 'text-[#00503a]' : 'text-[#141617]'}`} />

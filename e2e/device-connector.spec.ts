@@ -69,11 +69,11 @@ test.describe('Device connector block', () => {
     await expect(card).toHaveCSS('cursor', 'pointer');
     await expect(card).toContainText(/connect the mic/i);
 
-    // The cable loops in and out on its own and plugs in on hover
+    // The cable rests until hovered, then animates into the mic
     const cable = page.getByTestId('usb-cable');
-    await expect(cable).toHaveAttribute('data-mode', 'loop');
+    await expect(cable).toHaveAttribute('data-mode', 'out');
     await card.hover();
-    await expect(cable).toHaveAttribute('data-mode', 'in');
+    await expect(cable).toHaveAttribute('data-mode', 'loop');
     await expect(page.getByRole('button', { name: 'Save to the mic' })).toHaveCount(0);
 
     // Device actions no longer live in the pack list

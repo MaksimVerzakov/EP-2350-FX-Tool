@@ -370,33 +370,32 @@ html[data-theme='ting'] .te-bevel-frame::after {
 }
 
 
-/* Device connector: the USB-C plug slides into the mic's port and back out on a loop. */
+/* Device connector: on hover the USB-C plug drops into the mic and lifts back out, on a loop. */
 @keyframes epPlugInOut {
-  0%,
-  18% {
-    transform: translateX(0);
+  0% {
+    transform: translateY(0);
   }
-  42%,
-  68% {
-    transform: translateX(var(--ep-plug-travel, 7px));
+  35%,
+  65% {
+    transform: translateY(var(--ep-plug-travel, 6px));
   }
-  92%,
   100% {
-    transform: translateX(0);
+    transform: translateY(0);
   }
 }
 
 .ep-plug-loop {
-  animation: epPlugInOut 2.6s ease-in-out infinite;
+  animation: epPlugInOut 1.8s ease-in-out infinite;
 }
 
 .ep-plug-in {
-  transform: translateX(var(--ep-plug-travel, 7px));
+  transform: translateY(var(--ep-plug-travel, 6px));
   transition: transform 250ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ep-plug-loop {
     animation: none;
+    transform: translateY(var(--ep-plug-travel, 6px));
   }
 }
