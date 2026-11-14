@@ -886,8 +886,8 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
               d="M405.237 342.093h-11.393v7.595h11.393zM405.237 357.271h-11.393v7.595h11.393zM405.237 372.466h-11.393v7.594h11.393zM414.403 395.521h-30.379v7.851h30.379zM405.237 387.92h-11.393v7.594h11.393z"
             />
 
-            {/* Flexible Corrugated Bellows */}
-            {[520.391, 530.805, 541.217, 551.674, 562.254, 572.666, 583.124].map((yVal, i) => (
+            {/* Flexible Corrugated Bellows - extends behind Audition Module and off the bottom of the screen */}
+            {Array.from({ length: 52 }, (_, i) => 520.391 + i * 10.456).map((yVal, i) => (
               <path
                 key={i}
                 fill={isTing ? '#00503A' : '#D1D3D4'}
