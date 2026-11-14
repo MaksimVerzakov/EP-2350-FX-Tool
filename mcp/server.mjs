@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { stripTypeScriptTypes } from 'node:module';
+import { injectAppVersion, resolveAppVersion } from '../scripts/app-version.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -53,6 +54,7 @@ export async function loadEp2350EngineModules() {
     'src/mcp/mcpCore.ts'
   ];
 
+  const appVersion = resolveAppVersion(ROOT_DIR);
   for (const relPath of filesToCompile) {
     const absIn = path.join(ROOT_DIR, relPath);
     let source = fs.readFileSync(absIn, 'utf8');
@@ -65,6 +67,8 @@ export async function loadEp2350EngineModules() {
         return `const ${varName} = ${JSON.stringify(jsonContent)};`;
       }
     );
+
+    source = injectAppVersion(source, appVersion);
 
     const stripped = stripTypeScriptTypes(source);
     const rewritten = stripped.replace(
@@ -167,24 +171,43 @@ if (isMainModule) {
 
   let queue = Promise.resolve();
 
+  const writeMessage = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
+
   rl.on('line', (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
     queue = queue.then(async () => {
+      let req;
       try {
-        const req = JSON.parse(trimmed);
-        const res = await handleMcpJsonRpcRequest(req);
-        if (res) {
-          process.stdout.write(JSON.stringify(res) + '\n');
-        }
+        req = JSON.parse(trimmed);
       } catch {
-        process.stdout.write(
-          JSON.stringify({
+        writeMessage({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+        return;
+      }
+      // JSON-RPC batching is not part of MCP stdio since 2025-06-18.
+      if (Array.isArray(req)) {
+        writeMessage({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32600, message: 'Invalid Request: batching is not supported' }
+        });
+        return;
+      }
+      try {
+        const res = await handleMcpJsonRpcRequest(req);
+        if (res) writeMessage(res);
+      } catch (err) {
+        // stdout is reserved for protocol messages; diagnostics go to stderr.
+        process.stderr.write(`[ep2350-mcp] ${err instanceof Error ? err.stack : String(err)}\n`);
+        const id =
+          req && (typeof req.id === 'string' || typeof req.id === 'number') ? req.id : null;
+        if (id !== null) {
+          writeMessage({
             jsonrpc: '2.0',
-            id: null,
-            error: { code: -32700, message: 'Parse error' }
-          }) + '\n'
-        );
+            id,
+            error: { code: -32603, message: err instanceof Error ? err.message : String(err) }
+          });
+        }
       }
     });
   });

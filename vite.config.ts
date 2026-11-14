@@ -2,27 +2,10 @@ import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 import type { ServerResponse } from 'node:http';
 import react from '@vitejs/plugin-react';
-import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import pkg from './package.json' with { type: 'json' };
+import { resolveAppVersion } from './scripts/app-version.mjs';
 
-function resolveAppVersion(): string {
-  if (process.env.APP_VERSION) {
-    return process.env.APP_VERSION.replace(/^v/, '');
-  }
-  try {
-    const latestTag = execSync('git describe --tags --abbrev=0 --match "v[0-9]*"', {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-      .toString()
-      .trim();
-    if (latestTag) return latestTag.replace(/^v/, '');
-  } catch {
-    // No git tags yet; fall back to package.json
-  }
-  return pkg.version;
-}
 
 const MAX_SYNC_BODY_BYTES = 1024 * 1024;
 const MAX_MCP_BODY_BYTES = 8 * 1024 * 1024;
@@ -217,7 +200,7 @@ export default defineConfig({
   base: './',
   plugins: [react(), ep2350McpLiveSyncPlugin()],
   define: {
-    __APP_VERSION__: JSON.stringify(resolveAppVersion())
+    __APP_VERSION__: JSON.stringify(resolveAppVersion(process.cwd()))
   },
   server: {
     port: 3000,
