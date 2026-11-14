@@ -727,7 +727,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                   cx={521.08}
                   cy={cy}
                   r={2.8}
-                  fill={isActive ? '#ff3b30' : '#2b3034'}
+                  fill={isActive ? '#ffffff' : '#2b3034'}
                   filter={isActive ? 'url(#ledGlow)' : undefined}
                 />
 
