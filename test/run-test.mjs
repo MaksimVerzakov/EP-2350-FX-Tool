@@ -25,6 +25,7 @@ function buildSourceModulesForTest() {
     'src/utils/serializer.ts',
     'src/utils/presetUrl.ts',
     'src/utils/webSerial.ts',
+    'src/utils/tabGuard.ts',
     'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
@@ -93,6 +94,9 @@ const { serializeToConfigJson, validatePackConfig } = await import(
 );
 const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/webSerial.mjs')).href
+);
+const { createMultiTabGuard } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/tabGuard.mjs')).href
 );
 const {
   NoiseGateKernel,
@@ -2554,4 +2558,204 @@ for (const rel of ['mcp/server.mjs', 'scripts/build-cloudflare-worker.mjs']) {
 }
 console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare Worker) verified');
 
-console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting
+// ============================================================================
+// 21a. Web Locks mode: primary acquires lock, duplicate blocks, closing primary unlocks duplicate
+{
+  const createMockLockManager = () => {
+    const held = new Map();
+    const waiters = new Map();
+    return {
+      async request(name, optsOrCb, maybeCb) {
+        const opts = typeof optsOrCb === 'function' ? {} : optsOrCb;
+        const cb = typeof optsOrCb === 'function' ? optsOrCb : maybeCb;
+        if (held.has(name)) {
+          if (opts.ifAvailable) {
+            return await cb(null);
+          }
+          await new Promise((resolve) => {
+            if (opts.signal?.aborted) return resolve();
+            const q = waiters.get(name) ?? [];
+            const entry = () => resolve();
+            q.push(entry);
+            waiters.set(name, q);
+            opts.signal?.addEventListener?.('abort', () => resolve(), { once: true });
+          });
+          if (opts.signal?.aborted) {
+            throw new Error('AbortError');
+          }
+        }
+        held.set(name, true);
+        try {
+          return await cb({ name });
+        } finally {
+          held.delete(name);
+          const q = waiters.get(name);
+          if (q && q.length > 0) {
+            const next = q.shift();
+            next();
+          }
+        }
+      }
+    };
+  };
+
+  const mockLocks = createMockLockManager();
+  const states1 = [];
+  const states2 = [];
+  const guard1 = createMultiTabGuard({
+    locks: mockLocks,
+    createBroadcastChannel: null,
+    win: null,
+    onBlockedChange: (b) => states1.push(b)
+  });
+  await guard1.ready;
+  assert.deepStrictEqual(states1, [false], 'First tab must acquire active lock without blocking');
+
+  const guard2 = createMultiTabGuard({
+    locks: mockLocks,
+    createBroadcastChannel: null,
+    win: null,
+    onBlockedChange: (b) => states2.push(b)
+  });
+  await guard2.ready;
+  assert.deepStrictEqual(states2, [true], 'Second tab must be blocked while first tab holds lock');
+
+  // Closing Tab 1 promotes Tab 2 automatically
+  guard1.cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.deepStrictEqual(states2, [true, false], 'Closing first tab must unblock waiting second tab');
+  guard2.cleanup();
+
+  // React StrictMode double-mount on same LockManager must NOT false-trigger blocked state
+  const strictLocks = createMockLockManager();
+  const strictStates1 = [];
+  const strictStates2 = [];
+  const s1 = createMultiTabGuard({
+    locks: strictLocks,
+    createBroadcastChannel: null,
+    win: null,
+    onBlockedChange: (b) => strictStates1.push(b)
+  });
+  s1.cleanup();
+  const s2 = createMultiTabGuard({
+    locks: strictLocks,
+    createBroadcastChannel: null,
+    win: null,
+    onBlockedChange: (b) => strictStates2.push(b)
+  });
+  await s2.ready;
+  assert.deepStrictEqual(strictStates2, [false], 'React StrictMode remount must acquire lock without flashing blocked');
+  s2.cleanup();
+}
+
+// 21b. BroadcastChannel fallback mode when navigator.locks is unavailable
+{
+  const channels = new Map();
+  const createMockChannel = (name) => {
+    const ch = {
+      onmessage: null,
+      closed: false,
+      postMessage(data) {
+        if (this.closed) return;
+        const peers = channels.get(name) ?? [];
+        for (const peer of peers) {
+          if (peer !== this && !peer.closed && peer.onmessage) {
+            queueMicrotask(() => peer.onmessage({ data }));
+          }
+        }
+      },
+      close() {
+        this.closed = true;
+        const peers = channels.get(name) ?? [];
+        channels.set(name, peers.filter((p) => p !== this));
+      }
+    };
+    const list = channels.get(name) ?? [];
+    list.push(ch);
+    channels.set(name, list);
+    return ch;
+  };
+
+  const bcStates1 = [];
+  const bcStates2 = [];
+  const g1 = createMultiTabGuard({
+    locks: null,
+    createBroadcastChannel: createMockChannel,
+    win: null,
+    probeDelayMs: 10,
+    onBlockedChange: (b) => bcStates1.push(b)
+  });
+  await g1.ready;
+  assert.deepStrictEqual(bcStates1, [false], 'BroadcastChannel fallback: first tab must become leader');
+
+  const g2 = createMultiTabGuard({
+    locks: null,
+    createBroadcastChannel: createMockChannel,
+    win: null,
+    probeDelayMs: 10,
+    onBlockedChange: (b) => bcStates2.push(b)
+  });
+  await g2.ready;
+  assert.deepStrictEqual(bcStates2, [true], 'BroadcastChannel fallback: second tab must detect leader and block');
+
+  g1.cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepStrictEqual(bcStates2, [true, false], 'BroadcastChannel fallback: BYE must unblock second tab');
+  g2.cleanup();
+}
+
+// 21c. Web Serial InvalidStateError ("already open") produces actionable multi-tab/browser error
+{
+  const prevNav = globalThis.navigator;
+  const fakePort = {
+    readable: null,
+    writable: null,
+    async open() {
+      const err = new Error('The port is already open.');
+      err.name = 'InvalidStateError';
+      throw err;
+    },
+    async close() {}
+  };
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        async requestPort() {
+          return fakePort;
+        }
+      }
+    },
+    configurable: true
+  });
+  try {
+    const client = new Ep2350SerialClient(10, 100);
+    await assert.rejects(
+      () => client.connect(),
+      /already open in another tab, browser, or application/
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', { value: prevNav, configurable: true });
+  }
+}
+
+// 21d. Centered MultiTabBanner & App UI multi-tab guard wiring check
+const multiTabBannerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/MultiTabBanner.tsx'), 'utf8');
+assert.ok(
+  multiTabBannerSrc.includes('EP-2350 FX TOOL IS OPEN IN ANOTHER TAB OR BROWSER') &&
+    multiTabBannerSrc.includes('data-testid="multi-tab-warning"') &&
+    multiTabBannerSrc.includes('fixed inset-0') &&
+    multiTabBannerSrc.includes('items-center justify-center'),
+  'MultiTabBanner must render centered TE modular alert overlay when another tab holds the session'
+);
+assert.ok(
+  appSrc.includes('createMultiTabGuard') &&
+    appSrc.includes('<MultiTabBanner') &&
+    appSrc.includes('opacity-20 pointer-events-none select-none') &&
+    appSrc.includes('isMultiTabBlocked'),
+  'App must wire createMultiTabGuard, dim/disable the app under MultiTabBanner, and gate serial/storage side effects'
+);
+console.log('✓ Suite 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
+
+console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
