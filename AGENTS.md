@@ -19,3 +19,9 @@
    - Use Conventional Commit messages (`feat: ...`, `fix: ...`, `feat!: ...` / `BREAKING CHANGE: ...`, `chore: ...`).
    - Do **not** hardcode version strings in UI components or manually bump `package.json` in feature branches (which avoids merge conflicts across parallel PRs).
    - When a PR is merged into `main`, `.github/workflows/deploy.yml` automatically reads the latest `vX.Y.Z` Git tag, computes the next version (`major`, `minor`, or `patch`), pushes the new `vX.Y.Z` tag, injects `__APP_VERSION__` at build time, and deploys the updated build to GitHub Pages.
+
+4. **Incremental, Quota-Conscious Delivery (Small Contained PRs, One Milestone at a Time)**:
+   - The user is on a quota-limited plan where token/turn limits can end mid-session.
+   - **Never build multiple milestones in one giant batch or one monolithic PR.**
+   - Break work into small, self-contained milestones where **each milestone is its own small, complete, tested, and mergeable PR**.
+   - Complete, test, push, and open the PR for **one milestone at a time**, then pause and state the exact **Next Step** clearly so that if quota limits are reached, completed work is already safely in a mergeable PR and the next session can pick up seamlessly.
