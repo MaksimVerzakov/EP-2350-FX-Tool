@@ -58,12 +58,12 @@ export function makeDistortionCurve(amount: number, nSamples = 44100): Float32Ar
   return curve;
 }
 
-/** tanh soft-clip curve used inside the DELAY feedback loop (tape saturation). */
+/** tanh soft-clip curve used inside the DELAY feedback loop (unity small-signal gain). */
 export function makeSoftClipCurve(nSamples = 8192): Float32Array {
   const curve = new Float32Array(nSamples);
   for (let i = 0; i < nSamples; ++i) {
     const x = (i * 2) / nSamples - 1;
-    curve[i] = Math.tanh(x * 1.4);
+    curve[i] = Math.tanh(x);
   }
   return curve;
 }

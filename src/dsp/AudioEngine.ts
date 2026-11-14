@@ -846,7 +846,7 @@ export class DspAudioEngine {
       } catch (e) {}
     }
 
-    // Reset playbackRate to 1.0 unless SAMPLE.speed overrides it
+    // Keep main vocal audition stream playbackRate at 1.0x (SAMPLE.speed only affects triggered WAV samples)
     if (this.sourceNode) {
       this.sourceNode.playbackRate.value = 1.0;
     }
@@ -1274,7 +1274,7 @@ export class DspAudioEngine {
             });
           }
           const spring = mod('spring-mix', toRatio(params['spring-mix'], 0.0), 0.0, 1.0);
-          setParam(nodeRefs.combSum?.gain, 0.28 + spring * 0.55, 0.02);
+          setParam(nodeRefs.combSum?.gain, (0.28 + spring * 0.55) * 0.5, 0.02);
           break;
         }
 
@@ -1309,9 +1309,6 @@ export class DspAudioEngine {
           nodeRefs.lastSpeed = moddedSpeed;
           if (this.sampleSourceNode) {
             this.sampleSourceNode.playbackRate.value = moddedSpeed;
-          }
-          if (this.sourceNode) {
-            this.sourceNode.playbackRate.value = moddedSpeed;
           }
           setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);
           if (nodeRefs.panner && 'pan' in nodeRefs.panner) {

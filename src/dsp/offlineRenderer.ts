@@ -705,7 +705,7 @@ export function renderPresetOffline(
 
         const hpOut = d.hpFilter.processSampleL(delayedSample);
         const lpOut = d.lpFilter.processSampleL(hpOut);
-        const saturated = Math.tanh(lpOut * 1.4);
+        const saturated = Math.tanh(lpOut);
 
         const monoIn = (inL + inR) * 0.5;
         d.buffer[d.writeIdx] = monoIn + saturated * echo;
