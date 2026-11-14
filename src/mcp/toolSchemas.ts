@@ -76,7 +76,7 @@ export const EFFECT_ROW_SCHEMA: JsonSchema = {
 export const PRESET_SCHEMA: JsonSchema = {
   type: 'object',
   description:
-    'EP-2350 preset in editor (UI) scale: percent (%) knobs 0..100, percent modulation depths -100..100. Signal flows top to bottom through `list`; SAMPLE marks where the trigger sample is injected (appended automatically if missing). Optional BUS 1/2 rows run in parallel. Effect descriptions: ep2350://schema/effects-registry.',
+    'EP-2350 preset in editor (UI) scale: percent (%) knobs 0..100, percent modulation depths -100..100. Signal flows top to bottom through `list`; SAMPLE marks where the trigger sample is injected (appended automatically if missing). Optional BUS 1/2 rows run in parallel. Effect descriptions and modulation depth ranges: get_effects_reference.',
   properties: {
     id: { type: 'string' },
     pos: { type: 'integer', minimum: 0, maximum: 3, description: 'Preset slot (0..3).' },
@@ -201,17 +201,29 @@ const scenarioReportsSchema: JsonSchema = {
 };
 
 const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
-  design_preset_from_description: {
+  get_effects_reference: {
     type: 'object',
     properties: {
-      preset: PRESET_REF_SCHEMA,
-      hardwarePresetJson: { type: 'object', description: 'Preset in hardware config.json scale.' },
-      ...shareFields,
-      rationale: { type: 'array', items: { type: 'string' } },
-      validationIssues: { type: 'array', items: issueSchema },
-      simulation: scenarioReportsSchema
+      maxEffectsPerPreset: { type: 'integer' },
+      parallelBuses: { type: 'array', items: { type: 'integer' } },
+      rules: { type: 'array', items: { type: 'string' } },
+      modulation: { type: 'object', description: 'How handle, shake, lfo and trigger modulation are written.' },
+      effects: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            displayName: { type: 'string' },
+            description: { type: 'string' },
+            singleInstance: { type: 'boolean' },
+            params: { type: 'array', items: { type: 'object' } }
+          },
+          required: ['type', 'params']
+        }
+      }
     },
-    required: ['preset', 'hardwarePresetJson', 'shareUrl', 'rationale', 'validationIssues']
+    required: ['maxEffectsPerPreset', 'rules', 'modulation', 'effects']
   },
   validate_preset: {
     type: 'object',
@@ -301,30 +313,17 @@ interface ToolDef {
 
 const TOOL_DEFS: ToolDef[] = [
   {
-    name: 'design_preset_from_description',
-    title: 'Design preset from description',
+    name: 'get_effects_reference',
+    title: 'Effects reference',
     description:
-      'Quick-start: build a hardware-valid EP-2350 preset from a short description using keyword rules (e.g. "gritty walkie-talkie with dub echo on handle and SSB scramble on shake"), validate it, simulate it, and return a shareable #preset= URL. For precise results, write the preset yourself from ep2350://schema/effects-registry and check it with validate_preset and simulate_preset.',
+      'Look up every EP-2350 effect with its parameters (editor scale, min/max, units, defaults), the modulation depth range of each parameter, how handle/shake/lfo/trigger modulation is written, and the hardware rules (16 rows, single-instance effects, SAMPLE, parallel BUS 1/2). Call this before writing a preset. Pass `effect` to get a single effect.',
     inputSchema: {
       type: 'object',
       properties: {
-        description: {
-          type: 'string',
-          description: 'Natural language description of the desired sound and modulation behavior.'
-        },
-        name: { type: 'string', description: 'Optional preset name (e.g. "CYBER RADIO").' },
-        slot: slotSchema,
-        simulate: {
-          type: 'boolean',
-          description:
-            'Run offline DSP simulation across idle, handle_pushed and shake_burst (default true).'
-        },
-        outputWavPath: localPath('File path to save the rendered handle_pushed preview WAV'),
-        uiUrl: uiUrlSchema
-      },
-      required: ['description']
+        effect: { enum: EFFECT_TYPES, description: 'Optional: return only this effect.' }
+      }
     },
-    pathArgs: ['outputWavPath'],
+    pathArgs: [],
     pure: true
   },
   {

@@ -41,29 +41,15 @@ node mcp/server.mjs
 ### Tools
 | Tool Name | Purpose |
 | :--- | :--- |
-| `design_preset_from_description` | Generates a hardware-validated EP-2350 preset from a text description and simulates its acoustic response across `idle`, `handle_pushed`, and `shake_burst`. |
-| `validate_preset` | Checks any preset or `config.json` against the 16-effect limit, single-instance rules (`DELAY`, `REVERB`, `HARMONY`, `SSB`), modulation row bounds, and `SAMPLE` presence. |
-| `simulate_preset` | Renders a preset offline at 48 kHz and computes 6-band spectral energy, centroid, rolloff, pitch shift ($f_0$), inharmonicity (`SSB`/`RING`), echo lag (`ms`), and tail decay (`s`). |
-| `analyze_reference_audio` | Extracts an acoustic fingerprint and diagnostic effect cues from a target `.wav` file. |
-| `optimize_preset_parameters` | Automatically discovers and tunes effect parameters to minimize Multi-Resolution STFT + Temporal Envelope distance against a reference `.wav`. |
-| `export_pack_config` | Losslessly serializes a 4-preset pack to hardware `config.json` and returns a shareable `#pack=` URL. |
-| `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and pushes live over HTTP (`/__mcp_sync`) when connected to a local Vite Web UI. |
+| `get_effects_reference` | Every effect with its parameters (editor scale, min/max, units), the modulation depth range of each parameter, how handle/shake/lfo/trigger modulation is written, and the hardware rules. Call it before writing a preset; pass `effect` for one effect. |
+| `validate_preset` | Checks a preset or a `config.json` against the 16-row limit, single-instance rules (`DELAY`, `REVERB`, `HARMONY`, `SSB`), modulation rows, known parameter names/ranges and `SAMPLE` presence. |
+| `simulate_preset` | Renders a preset offline at 48 kHz per scenario (`idle`, `handle_pushed`, `shake_burst`, `dynamic_performance`) and reports 6-band spectrum, centroid, rolloff, pitch shift, inharmonicity (`SSB`/`RING`), the first discrete echo (`estimatedDelayMs`) and the RT60-style tail (`estimatedTailDecaySec`), measured on an impulse probe. |
+| `analyze_reference_audio` | Extracts an acoustic fingerprint and effect cues from a target `.wav` (blind estimate without the dry recording). |
+| `optimize_preset_parameters` | Discovers and tunes an effect chain to minimize multi-resolution STFT + temporal envelope distance against a reference `.wav`. |
+| `export_pack_config` | Losslessly serializes up to 4 presets to hardware `config.json` and returns a shareable `#pack=` URL. |
+| `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and, when a local Vite dev server is running, also loads the preset into open tabs (`/__mcp_sync`). Without a dev server the share link is the delivery (not an error). |
 
-### Tool Schemas & Preset Scale
-- Every tool has a `title`, `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`) and an `outputSchema`; successful calls return `structuredContent` alongside the JSON text block.
-- `validate_preset` and `simulate_preset` publish a full typed `preset` schema generated from `EFFECTS_REGISTRY` (effect names, every parameter with min/max, modulation rows 0..15, LFO shapes). Other tools reference the same shape to keep `tools/list` small.
-- **`preset` objects use the editor (UI) scale**: percent knobs `0..100`, percent modulation depths `-100..100`. Hardware `config.json` uses `0.0..1.0`; pass such files as `configJson`, or multiply by 100.
-- `validate_preset` and `simulate_preset` warn about unknown parameter names, out-of-range values, modulation targets that don't exist on the row's effect, and presets that look like they use the 0..1 hardware scale.
-- On HTTP transports, file-path arguments are not advertised at all and annotations reflect what a call can do there (for example, `export_pack_config` is read-only on HTTP).
-
-### Transport Security
-| Transport | Local file paths (`*WavPath`, `outputPath`) | Browser origins | Live push (`push_to_live_ui`) |
-| :--- | :--- | :--- | :--- |
-| stdio (`npm run mcp`) | Allowed (trusted local process) | n/a | `EP2350_UI_URL` or any loopback `uiUrl` |
-| Vite dev server `/mcp` | **Rejected** — use `*Base64` inputs | Loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Loopback `uiUrl` only |
-| Cloudflare Worker `/mcp` | **Rejected** — use `*Base64` inputs | Any (`*`) — no files, no outbound requests | Always returns `shareUrl` (never fetches) |
-
-All HTTP `POST /mcp` requests must use `Content-Type: application/json` (cross-site `text/plain` requests get `415`) and are capped at 8 MiB (4 MiB on the Worker). `optimize_preset_parameters.maxIterations` is clamped to 200 locally and 24 on the edge.
+The model writes presets itself: there is no keyword-based "design from description" tool. The `design-fx-from-description` prompt walks through get_effects_reference → write → validate → simulate → export.
 
 ---
 
