@@ -74,12 +74,6 @@ const SideButton: React.FC<SideButtonProps> = ({
         stroke="#000000"
         strokeWidth="0.9"
       />
-      {/* Hard TE Drop Shadow behind protruding cylinder */}
-      <path
-        d={`M 556 ${cy - 7} L 570.5 ${cy - 7} A 4.6 12.5 0 0 1 570.5 ${cy + 18} L 556 ${cy + 18} Z`}
-        fill="#141617"
-        opacity="0.85"
-      />
       {/* Interactive 3D Cylindrical Button (presses inward toward chassis) */}
       <g
         onClick={onClick}
@@ -373,24 +367,8 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
           {/* MAIN STATIONARY FOREGROUND MIC */}
           <g id="micGraphic">
             {/* ========================================================= */}
-            {/* TE AXONOMETRIC 3D CHASSIS: HARD SHADOW, BOTTOM PLATE & BEVELS */}
-            {/* Replicates exact 45° vector extrusion from EP Sample Tool  */}
+            {/* TE AXONOMETRIC 3D CHASSIS: CLEAN SOLID 45° BEVELS (NO SHADOW) */}
             {/* ========================================================= */}
-
-          {/* A. HARD BLACK DROP SHADOW FACET (dx = +11, dy = +11) */}
-          <polygon
-            points="338.805 334.555 349.805 345.555 562.475 345.555 562.475 15.283 551.475 4.283 551.475 334.555"
-            fill="#141617"
-          />
-
-          {/* B. DARK SUB-CHASSIS BOTTOM PLATE (Offset dx = +8.5, dy = +8.5) */}
-          <polygon
-            points="347.305 343.055 559.975 343.055 559.975 12.783 557.475 10.283 557.475 340.555 344.805 340.555"
-            fill={isTing ? '#003828' : '#424143'}
-            stroke="#000000"
-            strokeWidth="0.8"
-            strokeMiterlimit="10"
-          />
 
           {/* C. 45° EXTRUDED BEVEL PANELS (dx = +6.0, dy = +6.0) */}
           {/* 1. Acoustic Grille Side Bevel (Upper Section) */}
@@ -468,12 +446,6 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
             }}
           >
             <title>Squeeze lever: Fully pressed enables effect (Click to toggle, drag to decrease/increase)</title>
-            {/* Lever drop shadow facet */}
-            <path
-              fill="#141617"
-              opacity="0.5"
-              d="M338.805 242.78a3.466 3.466 0 0 1-3.465-3.465v-26.173a25.2 25.2 0 0 0-1.164-7.567L289.02 72.755c-1.212-3.85.572-8.034 4.219-9.761 22.007-10.42 46.614-16.249 72.582-16.249"
-            />
             {/* Squeeze lever body */}
             <path
               fill={isTing ? '#00503A' : '#F15A22'}
@@ -818,15 +790,6 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
 
           {/* 6. REINFORCED RUBBER CABLE SEGMENT & CORRUGATED STRAIN RELIEF */}
           <g onClick={(e) => e.stopPropagation()}>
-            {/* Cable 45° Drop Shadow Facet */}
-            <path
-              stroke="#141617"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              opacity="0.35"
-              transform="translate(4, 4)"
-              d="M420.295 510.223c5.516-.966 5.987-8.759.601-10.406-9.892-2.092-27.87-3.097-33.629-3.374-.836-.04-1.316-.944-.898-1.671 12.004-20.912 17.838-45.201 18.244-69.249-.006-.243.144-22.135.148-22.382h-10.874l.075 21.819v-.332c.304 17.825-3.899 36.651-10.996 52.973-2.72 7.395-8.888 14.338-9.232 22.35v.185c0 6.587 9.616 6.389 19.533 7.291 9.918.901 18.568 1.658 27.548 2.601"
-            />
             <path
               fill={isTing ? '#1d4d3c' : '#D1D3D4'}
               d="M420.295 510.223c5.516-.966 5.987-8.759.601-10.406-9.892-2.092-27.87-3.097-33.629-3.374-.836-.04-1.316-.944-.898-1.671 12.004-20.912 17.838-45.201 18.244-69.249-.006-.243.144-22.135.148-22.382h-10.874l.075 21.819v-.332c.304 17.825-3.899 36.651-10.996 52.973-2.72 7.395-8.888 14.338-9.232 22.35v.185c0 6.587 9.616 6.389 19.533 7.291 9.918.901 18.568 1.658 27.548 2.601"

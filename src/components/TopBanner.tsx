@@ -402,8 +402,8 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           <div
             className={`absolute right-0 top-[74px] w-72 border p-2 z-50 flex flex-col gap-1 ${
               isTing
-                ? 'bg-[#f7f5ef] border-[#00503a] shadow-[4px_4px_0px_#003828]'
-                : 'bg-white border-[#141617] shadow-[4px_4px_0px_#141617]'
+                ? 'bg-[#f7f5ef] border-[#00503a]'
+                : 'bg-white border-[#141617]'
             }`}
           >
             {isDeviceConnected && devicePackName && (

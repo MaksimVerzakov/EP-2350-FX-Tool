@@ -73,7 +73,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
         <div
           className={`flex items-center border ${
             isTing ? 'border-[#00503a] bg-[#ece6d9]' : 'border-[#141617] bg-[#eceeed]'
-          } rounded-[1px] overflow-hidden`}
+          } rounded-none overflow-hidden`}
           role="group"
           aria-label="Audition input source"
         >
@@ -117,7 +117,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
       <div
         className={`${
           isTing ? 'bg-[#003828] border-[#00503a]' : 'bg-[#141617] border-[#000000]'
-        } p-1 border shadow-[inset_0_1px_3px_rgba(0,0,0,0.8)]`}
+        } p-1 border`}
       >
         <button
           onClick={togglePlayback}
@@ -125,12 +125,12 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
             isTing ? 'border-[#00281c]' : 'border-[#000000]'
           } ${
             isPlaying
-              ? 'bg-[#f15a22] text-white translate-x-[2px] translate-y-[2px] shadow-none'
+              ? 'bg-[#f15a22] text-white'
               : `${
                   isTing
-                    ? 'bg-[#00503a] hover:bg-[#00664a] shadow-[2px_2px_0px_#00281c]'
-                    : 'bg-[#232424] hover:bg-[#353839] shadow-[2px_2px_0px_#000000]'
-                } text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none`
+                    ? 'bg-[#00503a] hover:bg-[#00664a]'
+                    : 'bg-[#232424] hover:bg-[#353839]'
+                } text-white`
           }`}
           title={
             isPlaying
