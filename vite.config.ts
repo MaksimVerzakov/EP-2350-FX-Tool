@@ -205,7 +205,9 @@ export default defineConfig({
     port: 3000,
     open: true,
     watch: {
-      ignored: ['**/.worktrees/**']
+      // Ignore only this checkout's nested worktrees. A '**/.worktrees/**' glob would also match
+      // every file when the dev server itself runs inside a worktree, which disables HMR there.
+      ignored: [path.resolve(process.cwd(), '.worktrees') + '/**']
     }
   }
 });

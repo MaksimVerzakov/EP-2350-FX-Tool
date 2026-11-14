@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { INITIAL_PACK, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
 import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
 import { decodeHashPayload } from './utils/presetUrl';
-import { ep2350Serial } from './utils/webSerial';
+import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 
 import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
+import { DeviceConnector } from './components/DeviceConnector';
 
 const safeGetLocalStorage = (key: string): string | null => {
   try {
@@ -52,6 +53,8 @@ export const App: React.FC = () => {
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
   const [devicePack, setDevicePack] = useState<PackConfig | null>(null);
+  /** config.json last read from / written to the mic; used to flag unsaved changes. */
+  const [savedDeviceJson, setSavedDeviceJson] = useState<string | null>(null);
 
   const isEffectsOff = activeSlot < 0;
   const activePreset = pack.presets.find((p) => p.pos === activeSlot) || pack.presets[0];
@@ -64,6 +67,7 @@ export const App: React.FC = () => {
     }
     setPack(parsed.pack);
     setDevicePack(parsed.pack);
+    setSavedDeviceJson(serializeToConfigJson(parsed.pack));
     const hwSlots = await ep2350Serial.pollHardwareSlot().catch(() => null);
     if (hwSlots) {
       setActiveSlot(hwSlots.fxSlot);
@@ -82,6 +86,7 @@ export const App: React.FC = () => {
       setIsDeviceConnecting(false);
       setIsDevicePack(false);
       setDevicePack(null);
+      setSavedDeviceJson(null);
     });
 
     const unsubscribePresetSlot = ep2350Serial.onPresetSlotChange((slot) => {
@@ -338,18 +343,25 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSaveToDevice = async () => {
-    if (!isDeviceConnected) return;
+  const handleSaveToDevice = async (): Promise<boolean> => {
+    if (!isDeviceConnected) return false;
     try {
       const jsonStr = serializeToConfigJson(pack);
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
       setDevicePack(pack);
       setIsDevicePack(true);
+      setSavedDeviceJson(jsonStr);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`Failed to save to device: ${msg}`);
+      alert(`Failed to save to the mic: ${msg}`);
+      return false;
     }
   };
+
+  const currentPackJson = useMemo(() => serializeToConfigJson(pack), [pack]);
+  const hasUnsavedDeviceChanges =
+    isDeviceConnected && savedDeviceJson !== null && currentPackJson !== savedDeviceJson;
 
   const handleSelectDefaultPack = (presetPack: OfficialPackPreset) => {
     const parsed = parseConfigJson(presetPack.rawJson);
@@ -406,13 +418,21 @@ export const App: React.FC = () => {
           theme={theme}
           onChangeTheme={setTheme}
           isDeviceConnected={isDeviceConnected}
-          isDeviceConnecting={isDeviceConnecting}
           isDevicePack={isDevicePack}
           devicePackName={devicePack?.name}
-          onConnectDevice={handleConnectDevice}
-          onDisconnectDevice={handleDisconnectDevice}
           onSelectDevicePack={handleSelectDevicePack}
-          onSaveToDevice={handleSaveToDevice}
+          deviceConnector={
+            <DeviceConnector
+              theme={theme}
+              isSupported={Ep2350SerialClient.isSupported()}
+              isConnected={isDeviceConnected}
+              isConnecting={isDeviceConnecting}
+              hasUnsavedChanges={hasUnsavedDeviceChanges}
+              onConnect={handleConnectDevice}
+              onSave={handleSaveToDevice}
+              onEject={handleDisconnectDevice}
+            />
+          }
         />
 
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
