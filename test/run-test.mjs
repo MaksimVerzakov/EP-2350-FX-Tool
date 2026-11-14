@@ -1139,6 +1139,8 @@ const sentCommands = [];
 let openedOptions = null;
 let requestedFilters = null;
 let readController = null;
+let mockHwFxPos = -1;
+let mockHwSamPos = 0;
 const mockDeviceConfigJson = JSON.stringify({
   name: 'TING HARDWARE PACK',
   presets: [
@@ -1172,6 +1174,10 @@ function createMockSerialPort() {
         const mid = Math.floor(fullOut.length / 2);
         readController.enqueue(encoder.encode(fullOut.slice(0, mid)));
         readController.enqueue(encoder.encode(fullOut.slice(mid)));
+      } else if (text.includes('"__EP_" + "SLOT__:"')) {
+        readController.enqueue(
+          encoder.encode(`\r\n>>> ${text}__EP_SLOT__:${mockHwFxPos}:${mockHwSamPos}\r\n>>> `)
+        );
       } else {
         readController.enqueue(encoder.encode(`\r\n${text}>>> `));
       }
@@ -1200,11 +1206,16 @@ globalThis.navigator = {
 };
 
 assert.strictEqual(Ep2350SerialClient.isSupported(), true, 'isSupported() must detect navigator.serial');
-const serialClient = new Ep2350SerialClient(25);
+const serialClient = new Ep2350SerialClient(25, 0);
 let disconnectedCount = 0;
 serialClient.onDisconnect(() => {
   disconnectedCount++;
 });
+
+const observedPresetSlots = [];
+const observedSampleSlots = [];
+serialClient.onPresetSlotChange((slot) => observedPresetSlots.push(slot));
+serialClient.onSampleSlotChange((slot) => observedSampleSlots.push(slot));
 
 await serialClient.connect();
 assert.strictEqual(serialClient.isConnected, true, 'serialClient must report connected after connect()');
@@ -1223,13 +1234,33 @@ const parsedDevice = parseConfigJson(rawDeviceJson);
 assert.ok(parsedDevice.pack, 'Device config.json must parse into a valid PackConfig');
 assert.strictEqual(parsedDevice.pack.name, 'TING HARDWARE PACK', 'Parsed pack must preserve the device pack name');
 
-// Preset switching via fx.load_preset(slot)
+// Hardware button polling: initial state (-1, 0), then physical button press to preset 1 & sample 3
+await serialClient.pollHardwareSlot();
+assert.deepStrictEqual(observedPresetSlots, [], 'fx_pos=-1 on boot must not emit a preset slot change');
+assert.deepStrictEqual(observedSampleSlots, [0], 'Initial poll syncs sam_pos=0');
+
+mockHwFxPos = 1;
+mockHwSamPos = 3;
+const polledAfterPress = await serialClient.pollHardwareSlot();
+assert.deepStrictEqual(polledAfterPress, { fxSlot: 1, samSlot: 3 }, 'pollHardwareSlot must parse fx_pos and sam_pos');
+assert.deepStrictEqual(observedPresetSlots, [1], 'Physical preset button press on mic must notify onPresetSlotChange(1)');
+assert.deepStrictEqual(observedSampleSlots, [0, 3], 'Physical sample button press on mic must notify onSampleSlotChange(3)');
+
+// Preset switching via fx.load_preset(slot) and LED sync
 await serialClient.loadPreset(2);
 assert.ok(
-  sentCommands.some((c) => c.includes('fx.load_preset(2)')),
-  'loadPreset(2) must send fx.load_preset(2) over REPL'
+  sentCommands.some((c) => c.includes('fx.load_preset(2)') && c.includes('ui.leds(2,')),
+  'loadPreset(2) must send fx.load_preset(2) and update hardware LEDs over REPL'
 );
 await assert.rejects(() => serialClient.loadPreset(4), /Invalid preset slot/, 'Out-of-range slot 4 must reject');
+
+// Sample slot switching from web UI updates hardware sam_pos and LEDs
+await serialClient.selectSampleSlot(1);
+assert.ok(
+  sentCommands.some((c) => c.includes('sam_pos = 1') && c.includes(', 1)')),
+  'selectSampleSlot(1) must update sam_pos and hardware LEDs over REPL'
+);
+await assert.rejects(() => serialClient.selectSampleSlot(-1), /Invalid sample slot/, 'Out-of-range sample slot -1 must reject');
 
 // Live parameter updates: percent scaling, BUS guard, and throttling
 const beforeParamCount = sentCommands.length;

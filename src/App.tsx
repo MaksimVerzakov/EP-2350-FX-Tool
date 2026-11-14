@@ -76,6 +76,15 @@ export const App: React.FC = () => {
       setDevicePack(null);
     });
 
+    const unsubscribePresetSlot = ep2350Serial.onPresetSlotChange((slot) => {
+      setActiveSlot(slot);
+    });
+
+    const unsubscribeSampleSlot = ep2350Serial.onSampleSlotChange((slot) => {
+      setActiveSampleSlot(slot);
+      audioEngine.setActiveSampleSlot(slot);
+    });
+
     const tryAuto = () => {
       void ep2350Serial
         .tryAutoConnect()
@@ -96,6 +105,8 @@ export const App: React.FC = () => {
 
     return () => {
       unsubscribe();
+      unsubscribePresetSlot();
+      unsubscribeSampleSlot();
       nav?.serial?.removeEventListener?.('connect', handleSerialConnect);
     };
   }, [syncFromConnectedDevice]);
@@ -172,11 +183,17 @@ export const App: React.FC = () => {
     audioEngine.updatePreset(activePreset);
   }, [activePreset]);
 
-  // Synchronize active sample slot with DSP engine
-  const handleSelectSampleSlot = useCallback((slot: number) => {
-    setActiveSampleSlot(slot);
-    audioEngine.setActiveSampleSlot(slot);
-  }, []);
+  // Synchronize active sample slot with DSP engine and connected hardware
+  const handleSelectSampleSlot = useCallback(
+    (slot: number) => {
+      setActiveSampleSlot(slot);
+      audioEngine.setActiveSampleSlot(slot);
+      if (isDeviceConnected && isDevicePack) {
+        void ep2350Serial.selectSampleSlot(slot).catch(() => undefined);
+      }
+    },
+    [isDeviceConnected, isDevicePack]
+  );
 
   // Trigger selected sample through active preset's SAMPLE block
   const handleSampleTrigger = useCallback(
