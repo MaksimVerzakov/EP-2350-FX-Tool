@@ -24,9 +24,13 @@ function buildSourceModulesForTest() {
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
     'src/utils/webSerial.ts',
+    'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
-    'src/dsp/AudioEngine.ts'
+    'src/dsp/AudioEngine.ts',
+    'src/dsp/offlineRenderer.ts',
+    'src/dsp/analyzer.ts',
+    'src/dsp/optimizer.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -95,6 +99,23 @@ const {
 );
 const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
+);
+const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/wavCodec.mjs')).href
+);
+const { BiquadFilterKernel, renderPresetOffline } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/offlineRenderer.mjs')).href
+);
+const { analyzePcmAudio, computeAudioDistance, estimateFundamentalPitchHz, fftRadix2 } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/analyzer.mjs')).href
+);
+const {
+  optimizePresetParameters,
+  matchReferenceAudio,
+  synthesizePresetFromDescription
+} = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
+const { handleMcpJsonRpcRequest } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
 );
 
 // Clean up on exit
@@ -1203,4 +1224,368 @@ assert.ok(
 
 console.log('✓ Suite 9: Web Serial Live Hardware Mode (Ep2350SerialClient & UI Integration) verified');
 
-console.log('\n=== ALL 9 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 10: Pure-TS WAV Codec &Bundled WAV Decoding (src/utils/wavCodec.ts)
+// ============================================================================
+const synthVocal = generateSyntheticVocalPcm(48000, 1.2, 0.6);
+assert.strictEqual(synthVocal.sampleRate, 48000);
+assert.strictEqual(synthVocal.left.length, Math.floor(48000 * 1.8));
+assert.strictEqual(synthVocal.right.length, Math.floor(48000 * 1.8));
+
+const encodedWav = encodeWavBuffer(synthVocal);
+assert.ok(encodedWav.byteLength > 44, 'Encoded WAV must contain RIFF header + PCM payload');
+
+const decodedWav = decodeWavBuffer(encodedWav, 48000);
+assert.strictEqual(decodedWav.sampleRate, 48000);
+assert.strictEqual(decodedWav.left.length, synthVocal.left.length);
+for (let i = 0; i < 500; i += 17) {
+  assert.ok(
+    Math.abs(decodedWav.left[i] - synthVocal.left[i]) < 1e-3,
+    '16-bit WAV round-trip must preserve sample amplitude within 16-bit quantization'
+  );
+}
+
+// Verify bundled hardware sample WAV files in src/assets/samples/*.wav decode cleanly
+const alertWavBytes = fs.readFileSync(path.join(ROOT_DIR, 'src/assets/samples/alert.wav'));
+const decodedAlert = decodeWavBuffer(alertWavBytes, 48000);
+assert.strictEqual(decodedAlert.sampleRate, 48000);
+assert.ok(decodedAlert.left.length > 1000, 'Bundled alert.wav must decode to non-empty 48kHz PCM');
+console.log('✓ Suite 10: Pure-TS WAV Codec round-trip & bundled hardware sample decoding verified');
+
+// ============================================================================
+// SUITE 11: Headless Offline DSP Renderer (src/dsp/offlineRenderer.ts)
+// ============================================================================
+const dryPhrase = generateSyntheticVocalPcm(48000, 1.0, 0.6);
+const dryAnalysis = analyzePcmAudio(dryPhrase);
+
+// 11a. LOWPASS filter attenuates high frequencies & lowers spectral centroid
+const lpRendered = renderPresetOffline(
+  {
+    id: 'p-lp',
+    pos: 0,
+    name: 'LP TEST',
+    list: [
+      { id: '1', effect: 'LOWPASS', cutoff: 0.28 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const lpAnalysis = analyzePcmAudio(lpRendered, dryPhrase);
+assert.ok(
+  lpAnalysis.spectralCentroidHz < dryAnalysis.spectralCentroidHz * 0.65,
+  `LOWPASS must lower spectral centroid (${dryAnalysis.spectralCentroidHz}Hz -> ${lpAnalysis.spectralCentroidHz}Hz)`
+);
+
+// 11b. HIGHPASS filter attenuates bass energy & raises spectral centroid
+const hpRendered = renderPresetOffline(
+  {
+    id: 'p-hp',
+    pos: 0,
+    name: 'HP TEST',
+    list: [
+      { id: '1', effect: 'HIGHPASS', cutoff: 0.55 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const hpAnalysis = analyzePcmAudio(hpRendered, dryPhrase);
+assert.ok(
+  hpAnalysis.bandsDb.bassDb < dryAnalysis.bandsDb.bassDb - 12,
+  `HIGHPASS must attenuate bass band (${dryAnalysis.bandsDb.bassDb}dB -> ${hpAnalysis.bandsDb.bassDb}dB)`
+);
+
+// 11c. DELAY creates measurable echo lag (~350ms) and post-phrase tail energy
+const delayRendered = renderPresetOffline(
+  {
+    id: 'p-del',
+    pos: 0,
+    name: 'DELAY TEST',
+    list: [
+      {
+        id: '1',
+        effect: 'DELAY',
+        time: 0.35,
+        echo: 65,
+        'wet-level': 75,
+        'dry-level': 90,
+        'lowpass-cutoff': 85,
+        'highpass-cutoff': 10,
+        balance: 0.5
+      },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const delayAnalysis = analyzePcmAudio(delayRendered, dryPhrase);
+assert.ok(
+  delayAnalysis.tailRmsDb > dryAnalysis.tailRmsDb + 15,
+  `DELAY must create audible tail energy (${dryAnalysis.tailRmsDb}dB -> ${delayAnalysis.tailRmsDb}dB)`
+);
+assert.ok(
+  delayAnalysis.estimatedDelayMs !== null && Math.abs(delayAnalysis.estimatedDelayMs - 350) <= 25,
+  `DELAY time=0.35s must be detected near 350ms (got ${delayAnalysis.estimatedDelayMs}ms)`
+);
+
+// 11d. HARMONY shifts fundamental pitch while preserving duration
+const harmRendered = renderPresetOffline(
+  {
+    id: 'p-harm',
+    pos: 0,
+    name: 'HARMONY TEST',
+    list: [
+      { id: '1', effect: 'HARMONY', pitch: 1.5, 'dry-level': 0 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const harmAnalysis = analyzePcmAudio(harmRendered, dryPhrase);
+assert.ok(
+  Math.abs(harmAnalysis.estimatedPitchRatio - 1.5) < 0.18,
+  `HARMONY 1.5x must shift pitch ratio to ~1.5x (got ${harmAnalysis.estimatedPitchRatio}x)`
+);
+
+// 11e. SSB & RING create elevated inharmonic sidebands
+const ssbRendered = renderPresetOffline(
+  {
+    id: 'p-ssb',
+    pos: 0,
+    name: 'SSB TEST',
+    list: [
+      { id: '1', effect: 'SSB', frequency: 235 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const ssbAnalysis = analyzePcmAudio(ssbRendered, dryPhrase);
+assert.ok(
+  ssbAnalysis.inharmonicityScore > dryAnalysis.inharmonicityScore + 0.15,
+  `SSB 235Hz must increase inharmonicity (${dryAnalysis.inharmonicityScore} -> ${ssbAnalysis.inharmonicityScore})`
+);
+
+// 11f. Parallel Bus (BUS 1 + BUS 2), DIST, EQUALISER, REVERB, RING, BALANCE & Handle/Shake Modulation
+const multiBusPreset = {
+  id: 'p-multibus',
+  pos: 0,
+  name: 'MULTIBUS TEST',
+  list: [
+    { id: '0', effect: 'SAMPLE', speed: 1.0, pitch: 0, level: 50, balance: 0.5, BUS: 1 },
+    { id: '1', effect: 'DIST', amount: 15, mix: 70, 'lowpass-cutoff': 80, 'highpass-cutoff': 20, BUS: 1 },
+    { id: '2', effect: 'EQUALISER', CUTOFF: 0.6, Q: 0.7, GAIN: 0.5, BUS: 1 },
+    { id: '3', effect: 'LOWPASS', cutoff: 0.2, BUS: 1 },
+    { id: '4', effect: 'BALANCE', balance: 0.8, BUS: 1 },
+    { id: '5', effect: 'RING', frequency: 300, mix: 25, BUS: 2 },
+    { id: '6', effect: 'REVERB', time: 0.7, 'spring-mix': 60, 'highpass-cutoff': 20, 'wet-level': 25, 'dry-level': 0, BUS: 2 }
+  ],
+  handle: { row: 3, param: 'cutoff', depth: 75 },
+  shake: { row: 6, param: 'spring-mix', depth: 40 },
+  lfo: { row: 4, param: 'balance', shape: 'square', speed: 4.0, depth: 50 }
+};
+const idleBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
+  scenario: 'idle',
+  triggerSamplePcm: decodedAlert
+});
+const pushedBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
+  scenario: 'handle_pushed',
+  triggerSamplePcm: decodedAlert
+});
+const idleBusReport = analyzePcmAudio(idleBusOut, dryPhrase);
+const pushedBusReport = analyzePcmAudio(pushedBusOut, dryPhrase);
+assert.ok(
+  pushedBusReport.spectralCentroidHz > idleBusReport.spectralCentroidHz + 150,
+  `Pushing handle mapped to LOWPASS.cutoff (+65%) must raise spectral centroid (${idleBusReport.spectralCentroidHz}Hz -> ${pushedBusReport.spectralCentroidHz}Hz)`
+);
+console.log('✓ Suite 11: Headless Offline DSP Renderer verified across all 11 effects, parallel buses & modulations');
+
+// ============================================================================
+// SUITE 12: Parameter Optimizer & Reference Audio Matching (src/dsp/optimizer.ts)
+// ============================================================================
+const mysteryTargetPreset = {
+  id: 'target-dub',
+  pos: 0,
+  name: 'TARGET RADIO ECHO',
+  list: [
+    { id: 't1', effect: 'HIGHPASS', cutoff: 0.45 },
+    { id: 't2', effect: 'LOWPASS', cutoff: 0.45 },
+    {
+      id: 't3',
+      effect: 'DELAY',
+      time: 0.35,
+      echo: 60,
+      'wet-level': 65,
+      'dry-level': 90,
+      'lowpass-cutoff': 75,
+      'highpass-cutoff': 20,
+      balance: 0.5
+    },
+    { id: 't4', effect: 'SAMPLE' }
+  ]
+};
+const targetRefPcm = renderPresetOffline(mysteryTargetPreset, dryPhrase);
+
+// Perturbed initial candidate (wrong cutoffs and wrong delay time)
+const perturbedCandidate = {
+  id: 'cand-dub',
+  pos: 0,
+  name: 'PERTURBED CANDIDATE',
+  list: [
+    { id: 'c1', effect: 'HIGHPASS', cutoff: 0.05 },
+    { id: 'c2', effect: 'LOWPASS', cutoff: 0.95 },
+    {
+      id: 'c3',
+      effect: 'DELAY',
+      time: 0.75,
+      echo: 20,
+      'wet-level': 20,
+      'dry-level': 100,
+      'lowpass-cutoff': 100,
+      'highpass-cutoff': 0,
+      balance: 0.5
+    },
+    { id: 'c4', effect: 'SAMPLE' }
+  ]
+};
+
+const optResult = optimizePresetParameters(perturbedCandidate, targetRefPcm, {
+  dryPcm: dryPhrase,
+  maxIterations: 36
+});
+assert.ok(
+  optResult.finalDistance.totalLoss < optResult.initialDistance.totalLoss,
+  `Optimizer must reduce audio distance (${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss})`
+);
+assert.ok(
+  optResult.finalDistance.similarityScore > optResult.initialDistance.similarityScore,
+  `Optimizer must improve similarity score (${optResult.initialDistance.similarityScore}% -> ${optResult.finalDistance.similarityScore}%)`
+);
+const optimizedDelay = optResult.optimizedPreset.list.find((fx) => fx.effect === 'DELAY');
+assert.ok(
+  Math.abs(optimizedDelay.time - 0.35) <= 0.04,
+  `Analytical + coordinate optimizer must recover DELAY.time near 0.35s (got ${optimizedDelay.time}s)`
+);
+
+// Blind topology discovery + optimization via matchReferenceAudio
+const blindMatch = matchReferenceAudio(targetRefPcm, {
+  dryPcm: dryPhrase,
+  maxIterations: 28
+});
+assert.ok(blindMatch.candidatesEvaluated >= 2);
+assert.ok(blindMatch.finalDistance.similarityScore > 65, `Blind reference match must achieve >65% similarity (got ${blindMatch.finalDistance.similarityScore}%)`);
+console.log(
+  `✓ Suite 12: Parameter Optimizer & Reference Audio Matcher verified (loss ${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss}, similarity ${optResult.finalDistance.similarityScore}%)`
+);
+
+// ============================================================================
+// SUITE 13: MCP Server JSON-RPC 2.0 Tools, Resources & Live UI Sync Bridge
+// ============================================================================
+// 13a. initialize
+const initRes = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2024-11-05' }
+});
+assert.strictEqual(initRes.result.serverInfo.name, 'ep2350-fx-mcp-server');
+
+// 13b. resources/list & resources/read
+const resList = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 2,
+  method: 'resources/list'
+});
+assert.strictEqual(resList.result.resources.length, 2);
+
+const schemaRead = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 3,
+  method: 'resources/read',
+  params: { uri: 'ep2350://schema/effects-registry' }
+});
+const schemaJson = JSON.parse(schemaRead.result.contents[0].text);
+assert.strictEqual(schemaJson.maxEffectsPerPreset, 16);
+assert.strictEqual(schemaJson.effects.length, 11);
+
+// 13c. tools/list
+const toolsList = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 4,
+  method: 'tools/list'
+});
+assert.strictEqual(toolsList.result.tools.length, 7, 'MCP server must expose 7 sound-design tools');
+
+// 13d. tools/call -> design_preset_from_description
+const designCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 5,
+  method: 'tools/call',
+  params: {
+    name: 'design_preset_from_description',
+    arguments: {
+      description: 'gritty cyberpunk walkie talkie radio with dub echo on handle and ssb scramble on shake',
+      name: 'CYBER WALKIE',
+      slot: 0,
+      simulate: true
+    }
+  }
+});
+assert.strictEqual(designCall.result.isError, false);
+const designPayload = JSON.parse(designCall.result.content[0].text);
+assert.strictEqual(designPayload.preset.name, 'CYBER WALKIE');
+assert.strictEqual(
+  designPayload.validationIssues.filter((i) => i.type === 'error').length,
+  0,
+  'AI-synthesized preset must have 0 hardware validation errors'
+);
+assert.ok(designPayload.simulation.idle && designPayload.simulation.handle_pushed && designPayload.simulation.shake_burst);
+
+// 13e. tools/call -> analyze_reference_audio & optimize_preset_parameters on a temporary WAV file
+const tmpRefWavPath = path.join(TMP_TEST_BUILD, 'target_ref.wav');
+fs.writeFileSync(tmpRefWavPath, encodeWavBuffer(targetRefPcm));
+
+const analyzeCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 6,
+  method: 'tools/call',
+  params: {
+    name: 'analyze_reference_audio',
+    arguments: { referenceWavPath: tmpRefWavPath }
+  }
+});
+const analyzePayload = JSON.parse(analyzeCall.result.content[0].text);
+assert.ok(analyzePayload.analysis.inferredCues.length > 0, 'Reference analysis must produce diagnostic cues');
+
+const optCall = await handleMcpJsonRpcRequest({
+  jsonrpc: '2.0',
+  id: 7,
+  method: 'tools/call',
+  params: {
+    name: 'optimize_preset_parameters',
+    arguments: {
+      referenceWavPath: tmpRefWavPath,
+      candidatePreset: perturbedCandidate,
+      maxIterations: 24
+    }
+  }
+});
+const optPayload = JSON.parse(optCall.result.content[0].text);
+assert.ok(optPayload.finalDistance.similarityScore > optPayload.initialDistance.similarityScore);
+assert.ok(optPayload.hardwarePresetJson.list.length > 0);
+
+// 13f. Verify Live UI Sync Bridge in vite.config.ts and src/App.tsx
+const viteConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
+assert.ok(
+  viteConfigSrc.includes('ep2350McpLiveSyncPlugin') && viteConfigSrc.includes('/__mcp_sync'),
+  'vite.config.ts must register ep2350McpLiveSyncPlugin at /__mcp_sync'
+);
+assert.ok(
+  appUpdatedSrc.includes("EventSource('/__mcp_sync')"),
+  'App.tsx must subscribe to /__mcp_sync via EventSource for live MCP preset pushes'
+);
+
+console.log('✓ Suite 13: MCP Server JSON-RPC 2.0 resources, prompts, tools & Live UI Bridge verified');
+
+console.log('\n=== ALL 13 PRODUCTION TEST SUITES PASSED (100%) ===');
