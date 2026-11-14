@@ -433,6 +433,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                     {onDisconnectDevice && (
                       <button
                         type="button"
+                        title="Disconnect Web Serial (eject the TING drive in your OS before unplugging USB)"
                         onClick={() => {
                           onDisconnectDevice();
                           setDropdownOpen(false);
@@ -441,7 +442,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                           isTing ? 'text-[#4b6b5d]' : 'text-[#73787a]'
                         }`}
                       >
-                        EJECT
+                        DISCONNECT
                       </button>
                     )}
                   </div>

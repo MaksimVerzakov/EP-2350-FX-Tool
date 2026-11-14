@@ -1298,7 +1298,7 @@ assert.ok(
   'Intermediate throttled value 0.2 must be coalesced'
 );
 
-// Line-by-line save to /fat/config.json with os.sync() and teenage.examine_drive(False)
+// Chunked save to /fat/config.json with os.sync() and WITHOUT teenage.examine_drive(False)
 await serialClient.saveConfigJson('{"name":"SAVED"}\n', 1);
 assert.ok(
   sentCommands.some((c) => c.includes('_f = open("/fat/config.json", "w")')),
@@ -1309,8 +1309,8 @@ assert.ok(
   'saveConfigJson must call os.sync()'
 );
 assert.ok(
-  sentCommands.some((c) => c.includes('import teenage; teenage.examine_drive(False)')),
-  'saveConfigJson must call teenage.examine_drive(False)'
+  !sentCommands.some((c) => c.includes('examine_drive')),
+  'saveConfigJson must NOT call teenage.examine_drive(False) which causes OS unsafe-eject errors'
 );
 assert.ok(
   sentCommands.some((c) => c.includes('fx.load_preset(1)')),
