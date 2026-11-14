@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_PACK, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
 import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
@@ -6,12 +6,14 @@ import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
 import { decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
+import { createMultiTabGuard } from './utils/tabGuard';
 
 import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
 import { DeviceConnector } from './components/DeviceConnector';
+import { MultiTabBanner } from './components/MultiTabBanner';
 
 const safeGetLocalStorage = (key: string): string | null => {
   try {
@@ -55,7 +57,11 @@ export const App: React.FC = () => {
   const [devicePack, setDevicePack] = useState<PackConfig | null>(null);
   /** config.json last read from / written to the mic; used to flag unsaved changes. */
   const [savedDeviceJson, setSavedDeviceJson] = useState<string | null>(null);
+  const [tabGuardStatus, setTabGuardStatus] = useState<'checking' | 'active' | 'blocked'>('checking');
+  const prevTabGuardStatusRef = useRef(tabGuardStatus);
 
+  const isMultiTabBlocked = tabGuardStatus === 'blocked';
+  const isTabLeader = tabGuardStatus === 'active';
   const isEffectsOff = activeSlot < 0;
   const activePreset = pack.presets.find((p) => p.pos === activeSlot) || pack.presets[0];
 
@@ -98,6 +104,55 @@ export const App: React.FC = () => {
       audioEngine.setActiveSampleSlot(slot);
     });
 
+    return () => {
+      unsubscribe();
+      unsubscribePresetSlot();
+      unsubscribeSampleSlot();
+    };
+  }, []);
+
+  // Multi-tab exclusivity guard (matches EP Sample Tool: block duplicate tabs & skip serial contention)
+  useEffect(() => {
+    const guard = createMultiTabGuard({
+      onBlockedChange: (blocked) => {
+        setTabGuardStatus(blocked ? 'blocked' : 'active');
+      },
+    });
+    return () => {
+      guard.cleanup();
+    };
+  }, []);
+
+  // Sync or pause hardware/localStorage side effects when tab leadership changes
+  useEffect(() => {
+    const prevStatus = prevTabGuardStatusRef.current;
+    prevTabGuardStatusRef.current = tabGuardStatus;
+
+    if (tabGuardStatus === 'blocked') {
+      audioEngine.stop();
+      audioEngine.stopSample();
+      if (ep2350Serial.isConnected) {
+        void ep2350Serial.disconnect().catch(() => undefined);
+      }
+      return;
+    }
+
+    if (prevStatus === 'blocked' && tabGuardStatus === 'active') {
+      const hasHash = typeof window !== 'undefined' && decodeHashPayload(window.location.hash) !== null;
+      if (!hasHash) {
+        const saved = safeGetLocalStorage('ep2350_pack_config');
+        if (saved) {
+          const parsed = parseConfigJson(saved);
+          if (parsed.pack) setPack(parsed.pack);
+        }
+      }
+    }
+  }, [tabGuardStatus]);
+
+  // Only attempt Web Serial auto-connect from the active leader tab
+  useEffect(() => {
+    if (!isTabLeader) return;
+
     const tryAuto = () => {
       void ep2350Serial
         .tryAutoConnect()
@@ -117,12 +172,9 @@ export const App: React.FC = () => {
     nav?.serial?.addEventListener?.('connect', handleSerialConnect);
 
     return () => {
-      unsubscribe();
-      unsubscribePresetSlot();
-      unsubscribeSampleSlot();
       nav?.serial?.removeEventListener?.('connect', handleSerialConnect);
     };
-  }, [syncFromConnectedDevice]);
+  }, [isTabLeader, syncFromConnectedDevice]);
 
   // Stateless Shareable Deep-Link Loader (#preset=<base64url> or #pack=<base64url>)
   useEffect(() => {
@@ -212,10 +264,11 @@ export const App: React.FC = () => {
     safeSetLocalStorage('ep2350_theme', theme);
   }, [theme]);
 
-  // Save to localStorage
+  // Save to localStorage only from the active leader tab so duplicate tabs cannot clobber edits
   useEffect(() => {
+    if (!isTabLeader) return;
     safeSetLocalStorage('ep2350_pack_config', serializeToConfigJson(pack));
-  }, [pack]);
+  }, [pack, isTabLeader]);
 
   // Synchronize active preset with DSP engine (dry bypass when FX are switched off)
   useEffect(() => {
@@ -313,7 +366,7 @@ export const App: React.FC = () => {
   };
 
   const handleConnectDevice = async () => {
-    if (isDeviceConnecting) return;
+    if (isDeviceConnecting || isMultiTabBlocked) return;
     setIsDeviceConnecting(true);
     try {
       await ep2350Serial.connect();
@@ -405,7 +458,12 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
-      <div className="max-w-[1067px] w-full flex flex-col gap-6 mx-auto">
+      <div
+        aria-disabled={isMultiTabBlocked}
+        className={`max-w-[1067px] w-full flex flex-col gap-6 mx-auto transition-opacity duration-200 ${
+          isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
+        }`}
+      >
         
         {/* 1. TOP BANNER (Modular Badge & Action Buttons) */}
         <TopBanner
@@ -469,6 +527,8 @@ export const App: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {isMultiTabBlocked && <MultiTabBanner theme={theme} />}
     </div>
   );
 };

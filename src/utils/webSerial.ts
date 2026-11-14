@@ -179,13 +179,28 @@ export class Ep2350SerialClient {
   }
 
   private async openPort(port: SerialPortLike): Promise<void> {
-    await port.open({
-      baudRate: 115200,
-      dataBits: 8,
-      stopBits: 1,
-      parity: 'none',
-      flowControl: 'none',
-    });
+    try {
+      await port.open({
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        flowControl: 'none',
+      });
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        name === 'InvalidStateError' ||
+        name === 'NetworkError' ||
+        /already open|failed to open|busy|in use|access denied/i.test(msg)
+      ) {
+        throw new Error(
+          'EP-2350 USB serial port is already open in another tab, browser, or application. Close the other connection and try again.'
+        );
+      }
+      throw err;
+    }
 
     await port
       .setSignals?.({ dataTerminalReady: true, requestToSend: true })
