@@ -457,7 +457,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
+    <div className="min-h-screen overflow-hidden flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
       <div
         aria-disabled={isMultiTabBlocked}
         className={`max-w-[1067px] w-full flex flex-col gap-6 mx-auto transition-opacity duration-200 ${
