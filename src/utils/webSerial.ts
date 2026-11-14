@@ -57,9 +57,11 @@ interface PromptWaiter {
 }
 
 const DEFAULT_THROTTLE_MS = 220;
+const DEFAULT_POLL_INTERVAL_MS = 250;
 const REPL_PROMPT = '>>> ';
 const CFG_START_MARKER = '__CFG_START__';
 const CFG_END_MARKER = '__CFG_END__';
+const SLOT_MARKER_PREFIX = '__EP_SLOT__:';
 
 /**
  * Web Serial client for the Teenage Engineering EP-2350 (Ting / FX Mic) MicroPython REPL.
@@ -75,13 +77,21 @@ export class Ep2350SerialClient {
   private promptWaiters: PromptWaiter[] = [];
   private commandQueue: Promise<unknown> = Promise.resolve();
   private disconnectListeners = new Set<() => void>();
+  private presetSlotListeners = new Set<(slot: number) => void>();
+  private sampleSlotListeners = new Set<(slot: number) => void>();
   private paramTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingParams = new Map<
     string,
     { slot: number; row: number; param: string; value: number; effectType?: string }
   >();
   private lastParamSentAt = new Map<string, number>();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private isPolling = false;
+  private pollPausedUntil = 0;
+  private lastKnownFxSlot: number | null = null;
+  private lastKnownSamSlot: number | null = null;
   private readonly throttleMs: number;
+  private readonly pollIntervalMs: number;
   private readonly encoder = new TextEncoder();
   private readonly decoder = new TextDecoder();
 
@@ -89,8 +99,9 @@ export class Ep2350SerialClient {
     void this.handleUnexpectedDisconnect();
   };
 
-  constructor(throttleMs = DEFAULT_THROTTLE_MS) {
+  constructor(throttleMs = DEFAULT_THROTTLE_MS, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS) {
     this.throttleMs = throttleMs;
+    this.pollIntervalMs = pollIntervalMs;
   }
 
   static isSupported(): boolean {
@@ -107,6 +118,20 @@ export class Ep2350SerialClient {
     this.disconnectListeners.add(listener);
     return () => {
       this.disconnectListeners.delete(listener);
+    };
+  }
+
+  onPresetSlotChange(listener: (slot: number) => void): () => void {
+    this.presetSlotListeners.add(listener);
+    return () => {
+      this.presetSlotListeners.delete(listener);
+    };
+  }
+
+  onSampleSlotChange(listener: (slot: number) => void): () => void {
+    this.sampleSlotListeners.add(listener);
+    return () => {
+      this.sampleSlotListeners.delete(listener);
     };
   }
 
@@ -177,12 +202,15 @@ export class Ep2350SerialClient {
     this.connected = true;
     this.rxBuffer = '';
     this.commandQueue = Promise.resolve();
+    this.lastKnownFxSlot = null;
+    this.lastKnownSamSlot = null;
 
     port.addEventListener?.('disconnect', this.handlePortDisconnect);
     this.readLoopPromise = this.startReadLoop();
 
     try {
       await this.interruptToRepl();
+      this.startSlotPolling();
     } catch (err) {
       await this.disconnect();
       throw err;
@@ -190,6 +218,7 @@ export class Ep2350SerialClient {
   }
 
   async disconnect(): Promise<void> {
+    this.stopSlotPolling();
     this.clearPendingParams();
     const wasConnected = this.connected || this.port !== null;
     this.connected = false;
@@ -237,6 +266,7 @@ export class Ep2350SerialClient {
   }
 
   async readConfigJson(): Promise<string> {
+    this.pausePolling(1000);
     // Split marker literals in Python so the echoed REPL command never contains the contiguous markers
     const cmd = 'print("__CFG_" + "START__" + open("/fat/config.json", "r").read() + "__CFG_" + "END__")';
     const raw = await this.evalReplRaw(cmd, 8000, CFG_END_MARKER);
@@ -252,9 +282,54 @@ export class Ep2350SerialClient {
     if (!Number.isInteger(slot) || slot < 0 || slot > 3) {
       throw new Error(`Invalid preset slot: ${slot}`);
     }
+    this.lastKnownFxSlot = slot;
+    this.pausePolling(600);
     await this.evalRepl(
-      `fx_pos = ${slot}; fx.load_preset(${slot}); import ui; ui.leds(${slot}, globals().get('sam_pos', 0))`
+      `fx_pos = ${slot}; (setattr(teenage, 'fx_pos', ${slot}) if 'teenage' in globals() else None); fx.load_preset(${slot}); import ui; ui.leds(${slot}, teenage.sam_pos if 'teenage' in globals() else globals().get('sam_pos', 0))`
     );
+  }
+
+  async selectSampleSlot(slot: number): Promise<void> {
+    if (!Number.isInteger(slot) || slot < 0 || slot > 3) {
+      throw new Error(`Invalid sample slot: ${slot}`);
+    }
+    this.lastKnownSamSlot = slot;
+    this.pausePolling(600);
+    await this.evalRepl(
+      `sam_pos = ${slot}; (setattr(teenage, 'sam_pos', ${slot}) if 'teenage' in globals() else None); import ui; ui.leds(teenage.fx_pos if 'teenage' in globals() else globals().get('fx_pos', 0), ${slot})`
+    );
+  }
+
+  async pollHardwareSlot(): Promise<{ fxSlot: number; samSlot: number } | null> {
+    if (!this.connected) return null;
+    const cmd =
+      '(ui.callback(python_callback) if "python_callback" in globals() and "ui" in globals() else None); print("__EP_" + "SLOT__:" + str(globals().get("fx_pos", -1)) + ":" + str(globals().get("sam_pos", 0)))';
+    const raw = await this.evalReplRaw(cmd, 1500, SLOT_MARKER_PREFIX);
+    const idx = raw.indexOf(SLOT_MARKER_PREFIX);
+    if (idx === -1) return null;
+    const after = raw.slice(idx + SLOT_MARKER_PREFIX.length);
+    const match = after.match(/^(-?\d+):(-?\d+)/);
+    if (!match) return null;
+    const fxSlot = Number.parseInt(match[1], 10);
+    const samSlot = Number.parseInt(match[2], 10);
+
+    if (Number.isInteger(fxSlot) && fxSlot >= -1 && fxSlot <= 3) {
+      const prevFx = this.lastKnownFxSlot;
+      this.lastKnownFxSlot = fxSlot;
+      if (fxSlot >= 0 && fxSlot !== prevFx) {
+        this.notifyPresetSlotChange(fxSlot);
+      }
+    }
+
+    if (Number.isInteger(samSlot) && samSlot >= 0 && samSlot <= 3) {
+      const prevSam = this.lastKnownSamSlot;
+      this.lastKnownSamSlot = samSlot;
+      if (samSlot !== prevSam) {
+        this.notifySampleSlotChange(samSlot);
+      }
+    }
+
+    return { fxSlot, samSlot };
   }
 
   setParam(
@@ -268,6 +343,7 @@ export class Ep2350SerialClient {
     if (param === 'BUS' || !/^[A-Za-z0-9_-]+$/.test(param)) return;
     if (!Number.isFinite(value)) return;
 
+    this.pausePolling(600);
     const key = `${slot}:${row}:${param}`;
     this.pendingParams.set(key, { slot, row, param, value, effectType });
 
@@ -291,6 +367,7 @@ export class Ep2350SerialClient {
   }
 
   async saveConfigJson(jsonStr: string, activeSlot?: number): Promise<void> {
+    this.pausePolling(2000);
     this.clearPendingParams();
     await this.evalRepl('_f = open("/fat/config.json", "w")');
     const lines = jsonStr.split('\n');
@@ -307,11 +384,49 @@ export class Ep2350SerialClient {
     }
   }
 
+  private startSlotPolling(): void {
+    this.stopSlotPolling();
+    if (this.pollIntervalMs <= 0) return;
+    this.pollTimer = setInterval(() => {
+      if (
+        !this.connected ||
+        this.isPolling ||
+        this.promptWaiters.length > 0 ||
+        this.pendingParams.size > 0 ||
+        Date.now() < this.pollPausedUntil
+      ) {
+        return;
+      }
+      this.isPolling = true;
+      void this.pollHardwareSlot()
+        .catch(() => undefined)
+        .finally(() => {
+          this.isPolling = false;
+        });
+    }, this.pollIntervalMs);
+  }
+
+  private stopSlotPolling(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.isPolling = false;
+  }
+
+  private pausePolling(durationMs: number): void {
+    const until = Date.now() + durationMs;
+    if (until > this.pollPausedUntil) {
+      this.pollPausedUntil = until;
+    }
+  }
+
   private flushParamKey(key: string): void {
     const entry = this.pendingParams.get(key);
     if (!entry || !this.connected) return;
     this.pendingParams.delete(key);
     this.lastParamSentAt.set(key, Date.now());
+    this.pausePolling(600);
 
     const scaled =
       entry.effectType && isPercentParam(entry.effectType, entry.param)
@@ -478,6 +593,26 @@ export class Ep2350SerialClient {
     for (const listener of this.disconnectListeners) {
       try {
         listener();
+      } catch {
+        // Ignore listener errors
+      }
+    }
+  }
+
+  private notifyPresetSlotChange(slot: number): void {
+    for (const listener of this.presetSlotListeners) {
+      try {
+        listener(slot);
+      } catch {
+        // Ignore listener errors
+      }
+    }
+  }
+
+  private notifySampleSlotChange(slot: number): void {
+    for (const listener of this.sampleSlotListeners) {
+      try {
+        listener(slot);
       } catch {
         // Ignore listener errors
       }
