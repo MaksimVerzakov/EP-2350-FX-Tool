@@ -51,6 +51,7 @@ export async function loadEp2350EngineModules() {
     'src/dsp/offlineRenderer.ts',
     'src/dsp/analyzer.ts',
     'src/dsp/optimizer.ts',
+    'src/mcp/toolSchemas.ts',
     'src/mcp/mcpCore.ts'
   ];
 

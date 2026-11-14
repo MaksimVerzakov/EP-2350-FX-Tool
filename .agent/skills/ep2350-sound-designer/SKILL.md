@@ -34,6 +34,8 @@ The repository includes a zero-dependency Model Context Protocol (MCP) server at
 7. **`push_to_live_ui`**
    - Pushes a preset or pack directly to the running Vite Web UI (`http://localhost:3000/__mcp_sync`) via Server-Sent Events so the user immediately sees and hears it in the browser.
 
+> **Scale:** `preset` objects passed to tools use the editor scale (percent knobs `0..100`, percent mod depths `-100..100`). Hardware `config.json` files use `0.0..1.0`; pass those as `configJson` to `validate_preset`. Read `warnings` / `presetWarnings` and fix them before exporting.
+
 ## Recommended Agent Workflow
 
 ### Workflow A: Text Description -> Verified Preset

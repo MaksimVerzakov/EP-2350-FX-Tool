@@ -48,6 +48,13 @@ node mcp/server.mjs
 | `export_pack_config` | Losslessly serializes a 4-preset pack to hardware `config.json` and returns a shareable `#pack=` URL. |
 | `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and pushes live over HTTP (`/__mcp_sync`) when connected to a local Vite Web UI. |
 
+### Tool Schemas & Preset Scale
+- Every tool has a `title`, `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`) and an `outputSchema`; successful calls return `structuredContent` alongside the JSON text block.
+- `validate_preset` and `simulate_preset` publish a full typed `preset` schema generated from `EFFECTS_REGISTRY` (effect names, every parameter with min/max, modulation rows 0..15, LFO shapes). Other tools reference the same shape to keep `tools/list` small.
+- **`preset` objects use the editor (UI) scale**: percent knobs `0..100`, percent modulation depths `-100..100`. Hardware `config.json` uses `0.0..1.0`; pass such files as `configJson`, or multiply by 100.
+- `validate_preset` and `simulate_preset` warn about unknown parameter names, out-of-range values, modulation targets that don't exist on the row's effect, and presets that look like they use the 0..1 hardware scale.
+- On HTTP transports, file-path arguments are not advertised at all and annotations reflect what a call can do there (for example, `export_pack_config` is read-only on HTTP).
+
 ### Transport Security
 | Transport | Local file paths (`*WavPath`, `outputPath`) | Browser origins | Live push (`push_to_live_ui`) |
 | :--- | :--- | :--- | :--- |
