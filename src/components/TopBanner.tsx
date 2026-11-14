@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Download, Upload, ChevronDown, Check, Plus } from 'lucide-react';
+import { Download, Upload, ChevronDown, Check, Plus, Usb } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
 
@@ -12,6 +12,14 @@ interface TopBannerProps {
   onExportJson: () => void;
   theme: ThemeMode;
   onChangeTheme: (theme: ThemeMode) => void;
+  isDeviceConnected?: boolean;
+  isDeviceConnecting?: boolean;
+  isDevicePack?: boolean;
+  devicePackName?: string;
+  onConnectDevice?: () => void;
+  onDisconnectDevice?: () => void;
+  onSelectDevicePack?: () => void;
+  onSaveToDevice?: () => void;
 }
 
 export const TopBanner: React.FC<TopBannerProps> = ({
@@ -22,7 +30,15 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   onImportJson,
   onExportJson,
   theme,
-  onChangeTheme
+  onChangeTheme,
+  isDeviceConnected = false,
+  isDeviceConnecting = false,
+  isDevicePack = false,
+  devicePackName,
+  onConnectDevice,
+  onDisconnectDevice,
+  onSelectDevicePack,
+  onSaveToDevice
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -341,6 +357,16 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   isTing ? 'bg-[#00503a] border-[#003828]' : 'bg-[#141617] border-[#141617]'
                 }`}
               >
+                {isDevicePack && (
+                  <span
+                    className="pl-1.5 flex items-center justify-center text-[#f15a22] shrink-0"
+                    title="Connected EP-2350 Device Pack"
+                    aria-label="Connected device pack"
+                    data-testid="connected-device-icon"
+                  >
+                    <Usb className="w-3 h-3" />
+                  </span>
+                )}
                 <input
                   type="text"
                   value={packName}
@@ -380,6 +406,86 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 : 'bg-white border-[#141617] shadow-[4px_4px_0px_#141617]'
             }`}
           >
+            {isDeviceConnected && devicePackName && (
+              <div
+                className={`border-b pb-1 mb-0.5 flex flex-col gap-1 ${
+                  isTing ? 'border-[#00503a]/20' : 'border-[#e2e4e2]'
+                }`}
+              >
+                <div className="flex items-center justify-between px-1">
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[#f15a22] flex items-center gap-1">
+                    <Usb className="w-3 h-3 shrink-0" />
+                    CONNECTED DEVICE
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {onSaveToDevice && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSaveToDevice();
+                          setDropdownOpen(false);
+                        }}
+                        className="font-mono text-[8px] font-bold uppercase tracking-wider text-[#f15a22] hover:underline cursor-pointer"
+                      >
+                        SAVE
+                      </button>
+                    )}
+                    {onDisconnectDevice && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDisconnectDevice();
+                          setDropdownOpen(false);
+                        }}
+                        className={`font-mono text-[8px] uppercase hover:underline cursor-pointer ${
+                          isTing ? 'text-[#4b6b5d]' : 'text-[#73787a]'
+                        }`}
+                      >
+                        EJECT
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectDevicePack?.();
+                    setDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-2 py-1.5 rounded-[1px] transition-colors cursor-pointer flex flex-col gap-0.5 group ${
+                    isDevicePack
+                      ? isTing
+                        ? 'bg-[#00503a] text-white'
+                        : 'bg-[#141617] text-white'
+                      : isTing
+                      ? 'hover:bg-[#f15a22] hover:text-white text-[#00503a]'
+                      : 'hover:bg-[#f15a22] hover:text-white text-[#141617]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide flex items-center gap-1.5">
+                      <Usb className="w-3 h-3 shrink-0 text-[#f15a22] group-hover:text-white" />
+                      {devicePackName}
+                    </span>
+                    {isDevicePack && (
+                      <Check className="w-3 h-3 group-hover:text-white shrink-0 text-[#f15a22]" />
+                    )}
+                  </div>
+                  <span
+                    className={`font-mono text-[8px] uppercase truncate ${
+                      isDevicePack
+                        ? 'text-white/70'
+                        : isTing
+                        ? 'text-[#4b6b5d] group-hover:text-white/85'
+                        : 'text-[#73787a] group-hover:text-white/85'
+                    }`}
+                  >
+                    LIVE HARDWARE PACK FROM EP-2350
+                  </span>
+                </button>
+              </div>
+            )}
+
             <div
               className={`flex items-center justify-between border-b pb-1 mb-0.5 px-1 ${
                 isTing ? 'border-[#00503a]/20' : 'border-[#e2e4e2]'
@@ -398,7 +504,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             </div>
 
             {OFFICIAL_TE_PACKS.map((item) => {
-              const isSelected = packName.trim().toUpperCase() === item.name.toUpperCase();
+              const isSelected = !isDevicePack && packName.trim().toUpperCase() === item.name.toUpperCase();
               return (
                 <button
                   key={item.id}
@@ -441,10 +547,41 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             })}
 
             <div
-              className={`border-t mt-0.5 pt-1 ${
+              className={`border-t mt-0.5 pt-1 flex flex-col gap-0.5 ${
                 isTing ? 'border-[#00503a]/20' : 'border-[#e2e4e2]'
               }`}
             >
+              {!isDeviceConnected && onConnectDevice && (
+                <button
+                  type="button"
+                  disabled={isDeviceConnecting}
+                  onClick={() => {
+                    onConnectDevice();
+                    setDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-2 py-1.5 rounded-[1px] transition-colors cursor-pointer flex flex-col gap-0.5 group ${
+                    isTing
+                      ? 'hover:bg-[#f15a22] hover:text-white text-[#00503a]'
+                      : 'hover:bg-[#f15a22] hover:text-white text-[#141617]'
+                  }`}
+                >
+                  <div className="flex items-center gap-1">
+                    <Usb className="w-3 h-3 shrink-0 text-[#f15a22] group-hover:text-white" />
+                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide">
+                      {isDeviceConnecting ? 'CONNECTING...' : 'CONNECT DEVICE'}
+                    </span>
+                  </div>
+                  <span
+                    className={`font-mono text-[8px] uppercase truncate ${
+                      isTing
+                        ? 'text-[#4b6b5d] group-hover:text-white/85'
+                        : 'text-[#73787a] group-hover:text-white/85'
+                    }`}
+                  >
+                    LOAD LIVE PACK FROM EP-2350 USB
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
