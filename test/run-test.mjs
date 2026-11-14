@@ -1809,6 +1809,17 @@ console.log('✓ Suite 15: Stateless #preset=... & #pack=... Deep-Link Codec & M
 // ============================================================================
 // SUITE 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint
 // ============================================================================
+const wranglerConfig = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'wrangler.jsonc'), 'utf8'));
+assert.strictEqual(
+  wranglerConfig.name,
+  'ep-2350-fx-tool',
+  'wrangler.jsonc name must match Cloudflare Worker service ep-2350-fx-tool'
+);
+assert.ok(
+  wranglerConfig.previews && typeof wranglerConfig.previews === 'object',
+  'wrangler.jsonc must include previews: {} block for npx wrangler preview'
+);
+
 const { buildCloudflareWorker } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'scripts/build-cloudflare-worker.mjs')).href
 );
