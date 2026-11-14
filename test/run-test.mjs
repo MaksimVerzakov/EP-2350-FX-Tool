@@ -1653,4 +1653,29 @@ assert.ok(optPayload.hardwarePresetJson.list.length > 0);
 
 console.log('✓ Suite 13: MCP Server JSON-RPC 2.0 resources, prompts & tools verified');
 
-console.log('\n=== ALL 13 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 14: Live Web UI Sync Bridge & Agent Skill Verification (M4)
+// ============================================================================
+const viteConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
+const appMcpSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+const skillMdSrc = fs.readFileSync(
+  path.join(ROOT_DIR, '.agent/skills/ep2350-sound-designer/SKILL.md'),
+  'utf8'
+);
+
+assert.ok(
+  viteConfigSrc.includes('ep2350McpLiveSyncPlugin') && viteConfigSrc.includes('/__mcp_sync'),
+  'vite.config.ts must register ep2350McpLiveSyncPlugin at /__mcp_sync'
+);
+assert.ok(
+  appMcpSrc.includes("EventSource('/__mcp_sync')"),
+  'App.tsx must subscribe to /__mcp_sync via EventSource for live MCP preset pushes'
+);
+assert.ok(
+  skillMdSrc.includes('name: ep2350-sound-designer') &&
+    skillMdSrc.includes('design_preset_from_description'),
+  'Antigravity SKILL.md must document the ep2350-sound-designer workflow and MCP tools'
+);
+console.log('✓ Suite 14: Live Web UI Sync Bridge & Antigravity Skill verified');
+
+console.log('\n=== ALL 14 PRODUCTION TEST SUITES PASSED (100%) ===');
