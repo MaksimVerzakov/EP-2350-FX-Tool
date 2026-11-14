@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
+import { injectAppVersion, resolveAppVersion } from './app-version.mjs';
 import { fileURLToPath } from 'node:url';
 import { rolldown } from 'rolldown';
 
@@ -40,6 +41,7 @@ export async function buildCloudflareWorker(outDir = DIST_DIR) {
       'src/mcp/cloudflareWorker.ts'
     ];
 
+    const appVersion = resolveAppVersion(ROOT_DIR);
     for (const relPath of filesToCompile) {
       const absIn = path.join(ROOT_DIR, relPath);
       let source = fs.readFileSync(absIn, 'utf8');
@@ -53,6 +55,8 @@ export async function buildCloudflareWorker(outDir = DIST_DIR) {
           return `const ${varName} = ${JSON.stringify(jsonContent)};`;
         }
       );
+
+      source = injectAppVersion(source, appVersion);
 
       const stripped = stripTypeScriptTypes(source);
       const rewritten = stripped.replace(

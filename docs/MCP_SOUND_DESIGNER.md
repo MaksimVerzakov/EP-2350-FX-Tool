@@ -48,6 +48,15 @@ node mcp/server.mjs
 | `export_pack_config` | Losslessly serializes a 4-preset pack to hardware `config.json` and returns a shareable `#pack=` URL. |
 | `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and pushes live over HTTP (`/__mcp_sync`) when connected to a local Vite Web UI. |
 
+### Transport Security
+| Transport | Local file paths (`*WavPath`, `outputPath`) | Browser origins | Live push (`push_to_live_ui`) |
+| :--- | :--- | :--- | :--- |
+| stdio (`npm run mcp`) | Allowed (trusted local process) | n/a | `EP2350_UI_URL` or any loopback `uiUrl` |
+| Vite dev server `/mcp` | **Rejected** — use `*Base64` inputs | Loopback only (`localhost`, `127.0.0.1`, `[::1]`) | Loopback `uiUrl` only |
+| Cloudflare Worker `/mcp` | **Rejected** — use `*Base64` inputs | Any (`*`) — no files, no outbound requests | Always returns `shareUrl` (never fetches) |
+
+All HTTP `POST /mcp` requests must use `Content-Type: application/json` (cross-site `text/plain` requests get `415`) and are capped at 8 MiB (4 MiB on the Worker). `optimize_preset_parameters.maxIterations` is clamped to 200 locally and 24 on the edge.
+
 ---
 
 ## 3. Hosting Website + `/mcp` on the Same URL (Cloudflare Free Tier)
@@ -55,7 +64,7 @@ node mcp/server.mjs
 Running `npm run build` outputs both the static Vite web app (`dist/`) and a self-contained Cloudflare Worker (`dist/_worker.js` + `dist/_routes.json` + `wrangler.jsonc`):
 
 - **`/` (Static Website & `#preset=...` Deep-Links)**: Served as static assets with **unlimited free requests** (`dist/_routes.json` routes only `/mcp` to the Worker).
-- **`/mcp` (Streamable HTTP MCP Endpoint)**: Handles `POST /mcp`, `GET /mcp`, `DELETE /mcp`, and `OPTIONS /mcp` on the exact same domain.
+- **`/mcp` (Streamable HTTP MCP Endpoint)**: Stateless JSON-response transport on the exact same domain: `POST /mcp` for JSON-RPC, `OPTIONS /mcp` for CORS, and `GET /mcp` (without `Accept: text/event-stream`) for a human-readable status page. There is no SSE stream or session, so `GET` with `Accept: text/event-stream` and `DELETE` return `405`. Supported protocol versions: `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`.
 - **Multi-User Isolation**: Every preset/pack tool returns a `shareUrl` (`https://<your-domain>/#preset=<base64url>`). Clicking that link loads the preset directly inside that user's own browser tab and WebAudio DSP engine without affecting other users.
 
 ### Deploying to Cloudflare (Free Plan — $0)

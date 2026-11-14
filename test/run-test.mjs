@@ -2003,4 +2003,273 @@ assert.strictEqual(await assetRes.text(), '<html>EP-2350</html>');
 
 console.log('✓ Suite 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
 
-console.log('\n=== ALL 16 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 17: MCP HTTP Transport Security (file access, Origin, Content-Type, SSRF)
+// ============================================================================
+const { handleMcpHttpFetch: handleLocalMcpHttpFetch } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
+);
+const secOutRel = '.tmp-test-build/security/pwned.json';
+const secOutAbs = path.join(ROOT_DIR, secOutRel);
+const exportCall = (outputPath) =>
+  JSON.stringify({
+    jsonrpc: '2.0',
+    id: 201,
+    method: 'tools/call',
+    params: {
+      name: 'export_pack_config',
+      arguments: { packName: 'PWNED', presets: [], outputPath }
+    }
+  });
+
+// 17a. Cross-site "simple" POST (text/plain, no preflight) is rejected before any tool runs
+const plainRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: exportCall(secOutAbs)
+  })
+);
+assert.strictEqual(plainRes.status, 415, 'POST /mcp without application/json must return 415');
+assert.ok(!fs.existsSync(secOutAbs), 'Rejected text/plain POST must not write any file');
+
+// 17b. Local file paths are never honoured over HTTP, even with a valid JSON request
+const httpWriteRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: exportCall(secOutAbs)
+  })
+);
+const httpWriteRpc = await httpWriteRes.json();
+assert.strictEqual(httpWriteRpc.result.isError, true, 'HTTP outputPath must be reported as an error');
+assert.ok(
+  JSON.parse(httpWriteRpc.result.content[0].text).error.includes('not available on this transport'),
+  'HTTP path arguments must explain that file access is unavailable'
+);
+assert.ok(!fs.existsSync(secOutAbs), 'HTTP /mcp must never write to the local filesystem');
+
+// 17c. stdio transport keeps local file access
+const stdioWrite = await handleMcpJsonRpcRequest(JSON.parse(exportCall(secOutRel)));
+assert.strictEqual(stdioWrite.result.isError, false);
+assert.ok(fs.existsSync(secOutAbs), 'stdio export_pack_config must still write outputPath');
+
+// 17d. Foreign browser Origins are rejected; loopback Origins are allowed and echoed
+const evilRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 202, method: 'ping' })
+  })
+);
+assert.strictEqual(evilRes.status, 403, 'Foreign Origin must be rejected with 403');
+assert.strictEqual(evilRes.headers.get('Access-Control-Allow-Origin'), null);
+const evilPreflight = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://evil.example' }
+  })
+);
+assert.strictEqual(evilPreflight.status, 403, 'Foreign Origin preflight must be rejected');
+const loopbackRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:6274' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 203, method: 'ping' })
+  })
+);
+assert.strictEqual(loopbackRes.status, 200);
+assert.strictEqual(
+  loopbackRes.headers.get('Access-Control-Allow-Origin'),
+  'http://localhost:6274',
+  'Loopback Origin must be echoed instead of a wildcard'
+);
+
+// 17e. Oversized request bodies are rejected
+const bigRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 204, method: 'ping', params: { pad: 'x'.repeat(2048) } })
+  }),
+  { maxRequestBytes: 1024 }
+);
+assert.strictEqual(bigRes.status, 413, 'Body above maxRequestBytes must return 413');
+
+// 17f. push_to_live_ui never fetches a caller-supplied non-loopback uiUrl (no SSRF)
+const realFetch = globalThis.fetch;
+let outboundFetches = 0;
+globalThis.fetch = async (...fetchArgs) => {
+  outboundFetches++;
+  return realFetch(...fetchArgs);
+};
+try {
+  const ssrfCall = (id) =>
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: {
+        name: 'push_to_live_ui',
+        arguments: { preset: cfDesignOut.preset, uiUrl: 'http://169.254.169.254/latest' }
+      }
+    });
+  const edgeSsrf = await cfWorker.fetch(
+    new Request('https://ep2350-fx.pages.dev/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: ssrfCall(205)
+    })
+  );
+  const edgeSsrfOut = JSON.parse((await edgeSsrf.json()).result.content[0].text);
+  assert.strictEqual(edgeSsrfOut.deliveryMode, 'shareUrl', 'Edge must always use shareUrl delivery');
+
+  const localSsrf = await handleMcpJsonRpcRequest(JSON.parse(ssrfCall(206)));
+  const localSsrfOut = JSON.parse(localSsrf.result.content[0].text);
+  assert.strictEqual(localSsrfOut.pushed, false, 'Non-loopback uiUrl live push must be refused');
+  assert.strictEqual(outboundFetches, 0, 'No outbound request may be made to a non-loopback uiUrl');
+} finally {
+  globalThis.fetch = realFetch;
+}
+
+// 17g. Worker stays publicly callable from browser-based MCP clients
+const cfCrossOrigin = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://some-mcp-client.example' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 207, method: 'ping' })
+  })
+);
+assert.strictEqual(cfCrossOrigin.status, 200);
+assert.strictEqual(cfCrossOrigin.headers.get('Access-Control-Allow-Origin'), '*');
+console.log('✓ Suite 17: MCP HTTP transport security (file access, Origin, Content-Type, SSRF) verified');
+
+// ============================================================================
+// SUITE 18: MCP Protocol Compliance (version negotiation, errors, HTTP + stdio transport)
+// ============================================================================
+const { resolveAppVersion } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'scripts/app-version.mjs')).href
+);
+const rpc = (method, params, id = 300) => handleMcpJsonRpcRequest({ jsonrpc: '2.0', id, method, params });
+
+// 18a. Version negotiation + serverInfo
+const initKnown = await rpc('initialize', { protocolVersion: '2025-06-18' });
+assert.strictEqual(initKnown.result.protocolVersion, '2025-06-18', 'Supported version must be echoed');
+const initUnknown = await rpc('initialize', { protocolVersion: '1999-01-01' });
+assert.strictEqual(
+  initUnknown.result.protocolVersion,
+  '2025-11-25',
+  'Unsupported version must be answered with the latest supported version'
+);
+assert.strictEqual(
+  initKnown.result.serverInfo.version,
+  resolveAppVersion(ROOT_DIR),
+  'serverInfo.version must come from the shared app version (git tag / package.json)'
+);
+assert.strictEqual(initKnown.result.serverInfo.title, 'EP-2350 FX Tool');
+assert.ok(initKnown.result.instructions.includes('ep2350://schema/effects-registry'));
+
+// 18b. Notifications, client responses and malformed messages
+assert.strictEqual(
+  await handleMcpJsonRpcRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  null,
+  'Notifications must not get a response'
+);
+assert.strictEqual(
+  await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 5, result: {} }),
+  null,
+  'Client responses must not get a response'
+);
+const noJsonrpc = await handleMcpJsonRpcRequest({ id: 301, method: 'ping' });
+assert.strictEqual(noJsonrpc.error.code, -32600, 'Missing jsonrpc: "2.0" must be -32600');
+assert.strictEqual(noJsonrpc.id, 301);
+const nullId = await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: null, method: 'ping' });
+assert.strictEqual(nullId.error.code, -32600, 'Null id must be rejected with -32600');
+
+// 18c. Spec error codes
+assert.strictEqual((await rpc('tools/call', { name: 'no_such_tool' })).error.code, -32602);
+assert.strictEqual((await rpc('resources/read', { uri: 'ep2350://nope' })).error.code, -32002);
+assert.strictEqual(
+  (await rpc('prompts/get', { name: 'design-fx-from-description', arguments: {} })).error.code,
+  -32602,
+  'Missing required prompt argument must be -32602'
+);
+assert.strictEqual((await rpc('no/such/method')).error.code, -32601);
+
+// 18d. A tool that throws returns isError (model-visible), not a protocol error
+const badWav = await rpc('tools/call', {
+  name: 'simulate_preset',
+  arguments: { preset: { list: [{ effect: 'SAMPLE' }] }, inputWavBase64: 'bm90IGEgd2F2' }
+});
+assert.ok(badWav.result, 'Tool failure must be a result, not a JSON-RPC error');
+assert.strictEqual(badWav.result.isError, true);
+assert.ok(JSON.parse(badWav.result.content[0].text).error.startsWith('simulate_preset failed:'));
+
+// 18e. Streamable HTTP transport rules
+const mcpUrl = 'http://localhost:3000/mcp';
+const jsonHeaders = { 'Content-Type': 'application/json' };
+const sseGet = await handleLocalMcpHttpFetch(
+  new Request(mcpUrl, { method: 'GET', headers: { Accept: 'text/event-stream' } })
+);
+assert.strictEqual(sseGet.status, 405, 'GET with text/event-stream must be 405 (no SSE stream offered)');
+const statusGet = await handleLocalMcpHttpFetch(new Request(mcpUrl, { method: 'GET' }));
+assert.strictEqual((await statusGet.json()).version, resolveAppVersion(ROOT_DIR));
+const del = await handleLocalMcpHttpFetch(new Request(mcpUrl, { method: 'DELETE' }));
+assert.strictEqual(del.status, 405, 'DELETE must be 405 on a stateless server');
+const badVersion = await handleLocalMcpHttpFetch(
+  new Request(mcpUrl, {
+    method: 'POST',
+    headers: { ...jsonHeaders, 'MCP-Protocol-Version': '1999-01-01' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 302, method: 'ping' })
+  })
+);
+assert.strictEqual(badVersion.status, 400, 'Unsupported MCP-Protocol-Version must be 400');
+const batchBody = JSON.stringify([
+  { jsonrpc: '2.0', id: 303, method: 'ping' },
+  { jsonrpc: '2.0', id: 304, method: 'ping' }
+]);
+const modernBatch = await handleLocalMcpHttpFetch(
+  new Request(mcpUrl, {
+    method: 'POST',
+    headers: { ...jsonHeaders, 'MCP-Protocol-Version': '2025-06-18' },
+    body: batchBody
+  })
+);
+assert.strictEqual(modernBatch.status, 400, 'Batches must be rejected for protocol >= 2025-06-18');
+const legacyBatch = await handleLocalMcpHttpFetch(
+  new Request(mcpUrl, { method: 'POST', headers: jsonHeaders, body: batchBody })
+);
+assert.strictEqual(legacyBatch.status, 200, 'Batches stay allowed for 2025-03-26 (no header)');
+assert.strictEqual((await legacyBatch.json()).length, 2);
+
+// 18f. stdio transport: parse errors, batches and normal requests
+const { spawn } = await import('node:child_process');
+const stdioLines = await new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT_DIR, 'mcp/server.mjs')], {
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  let out = '';
+  const timer = setTimeout(() => {
+    child.kill();
+    reject(new Error(`stdio server timed out; got: ${out}`));
+  }, 30000);
+  child.stdout.on('data', (chunk) => {
+    out += chunk;
+    const lines = out.trim().split('\n').filter(Boolean);
+    if (lines.length >= 3) {
+      clearTimeout(timer);
+      child.kill();
+      resolve(lines.map((l) => JSON.parse(l)));
+    }
+  });
+  child.stdin.write('this is not json\n');
+  child.stdin.write('[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n');
+  child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
+  child.stdin.write('{"jsonrpc":"2.0","id":2,"method":"ping"}\n');
+});
+assert.strictEqual(stdioLines[0].error.code, -32700, 'stdio invalid JSON must be -32700');
+assert.strictEqual(stdioLines[1].error.code, -32600, 'stdio batch must be -32600');
+assert.deepStrictEqual(stdioLines[2], { jsonrpc: '2.0', id: 2, result: {} });
+console.log('✓ Suite 18: MCP protocol compliance (version negotiation, error codes, HTTP + stdio) verified');
+
+console.log('\n=== ALL 18 PRODUCTION TEST SUITES PASSED (100%) ===');

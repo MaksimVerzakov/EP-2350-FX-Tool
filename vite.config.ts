@@ -2,118 +2,25 @@ import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 import type { ServerResponse } from 'node:http';
 import react from '@vitejs/plugin-react';
-import { execSync } from 'node:child_process';
-import pkg from './package.json' with { type: 'json' };
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { resolveAppVersion } from './scripts/app-version.mjs';
 
-function parseSemver(ver: string): [number, number, number] | null {
-  const m = ver.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!m) return null;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
-}
+const MAX_SYNC_BODY_BYTES = 1024 * 1024;
+const MAX_MCP_BODY_BYTES = 8 * 1024 * 1024;
 
-function compareSemver(a: [number, number, number], b: [number, number, number]): number {
-  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-}
-
-function bumpSemverFromCommit(base: [number, number, number], commitMsg: string): string {
-  if (/(BREAKING CHANGE|^[a-zA-Z]+(\([^)]+\))?!:)/m.test(commitMsg)) {
-    return `${base[0] + 1}.0.0`;
-  }
-  if (/(^feat(\([^)]+\))?:|from [^/\s]+\/feat[-/])/m.test(commitMsg)) {
-    return `${base[0]}.${base[1] + 1}.0`;
-  }
-  return `${base[0]}.${base[1]}.${base[2] + 1}`;
-}
-
-function resolveAppVersion(): string {
-  if (process.env.APP_VERSION) {
-    return process.env.APP_VERSION.replace(/^v/, '');
-  }
+function isLoopbackOrigin(origin: string): boolean {
   try {
-    const headSha = execSync('git rev-parse HEAD', {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-      .toString()
-      .trim();
-
-    let bestVer: [number, number, number] | null = null;
-    let bestSha = '';
-
-    // 1. Try local tags first
-    try {
-      const localTag = execSync('git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname', {
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
-        .toString()
-        .trim()
-        .split('\n')[0]
-        ?.trim();
-      if (localTag) {
-        bestVer = parseSemver(localTag);
-        bestSha = execSync(`git rev-list -n 1 "${localTag}"`, {
-          stdio: ['ignore', 'pipe', 'ignore']
-        })
-          .toString()
-          .trim();
-      }
-    } catch {
-      // Ignore local tag errors
-    }
-
-    // 2. Fallback to origin tags for shallow clones (e.g. Cloudflare Workers Builds)
-    if (!bestVer) {
-      const remoteLines = execSync('git ls-remote --tags origin "refs/tags/v[0-9]*"', {
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000
-      })
-        .toString()
-        .trim()
-        .split('\n');
-
-      const tagCommits = new Map<string, string>();
-      for (const line of remoteLines) {
-        const [sha, ref] = line.trim().split(/\s+/);
-        if (!sha || !ref) continue;
-        const cleanRef = ref.replace(/^refs\/tags\//, '');
-        const isPeeled = cleanRef.endsWith('^{}');
-        const tagName = isPeeled ? cleanRef.slice(0, -3) : cleanRef;
-        if (!tagCommits.has(tagName) || isPeeled) {
-          tagCommits.set(tagName, sha);
-        }
-      }
-
-      for (const [tagName, sha] of tagCommits.entries()) {
-        const parsed = parseSemver(tagName);
-        if (parsed && (!bestVer || compareSemver(parsed, bestVer) > 0)) {
-          bestVer = parsed;
-          bestSha = sha;
-        }
-      }
-    }
-
-    if (bestVer) {
-      if (bestSha && headSha && bestSha !== headSha) {
-        // Check if HEAD is ahead of bestSha (e.g., Cloudflare building before deploy.yml pushes the new tag)
-        try {
-          const lastMsg = execSync('git log -1 --pretty=%B', {
-            stdio: ['ignore', 'pipe', 'ignore']
-          })
-            .toString()
-            .trim();
-          const isMainMerge = /Merge pull request #\d+/.test(lastMsg);
-          if (isMainMerge) {
-            return bumpSemverFromCommit(bestVer, lastMsg);
-          }
-        } catch {
-          // Ignore commit inspection error
-        }
-      }
-      return bestVer.join('.');
-    }
+    const { hostname } = new URL(origin);
+    return (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname === '[::1]' ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname)
+    );
   } catch {
-    // No git info available; fall back to package.json
+    return false;
   }
-  return pkg.version;
 }
 
 /**
@@ -128,9 +35,14 @@ function ep2350McpLiveSyncPlugin(): Plugin {
     name: 'ep2350-mcp-live-sync',
     configureServer(server) {
       server.middlewares.use('/__mcp_sync', (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        // Same-origin only: the browser tab subscribes from this origin and the MCP server
+        // pushes server-side, so no CORS headers are needed. Reject foreign browser origins.
+        const origin = req.headers.origin;
+        if (origin && !isLoopbackOrigin(origin)) {
+          res.statusCode = 403;
+          res.end();
+          return;
+        }
 
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
@@ -156,11 +68,25 @@ function ep2350McpLiveSyncPlugin(): Plugin {
         }
 
         if (req.method === 'POST') {
+          // Require JSON so cross-site "simple" (text/plain) POSTs cannot push presets.
+          if (!String(req.headers['content-type'] || '').includes('application/json')) {
+            res.statusCode = 415;
+            res.end();
+            return;
+          }
           let body = '';
+          let tooLarge = false;
           req.on('data', (chunk) => {
+            if (tooLarge) return;
             body += chunk.toString();
+            if (body.length > MAX_SYNC_BODY_BYTES) tooLarge = true;
           });
           req.on('end', () => {
+            if (tooLarge) {
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Payload too large' }));
+              return;
+            }
             try {
               const parsed = JSON.parse(body || '{}');
               latestPayload = { ...parsed, timestamp: Date.now() };
@@ -195,10 +121,25 @@ function ep2350McpLiveSyncPlugin(): Plugin {
       // Streamable HTTP MCP endpoint (/mcp) on the same local origin as the web UI
       server.middlewares.use('/mcp', (req, res) => {
         const chunks: Buffer[] = [];
+        let receivedBytes = 0;
         req.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+          if (receivedBytes > MAX_MCP_BODY_BYTES) return;
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         req.on('end', () => {
+          if (receivedBytes > MAX_MCP_BODY_BYTES) {
+            res.statusCode = 413;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: null,
+                error: { code: -32600, message: 'Request body too large' }
+              })
+            );
+            return;
+          }
           void (async () => {
             try {
               const host = req.headers.host || 'localhost:3000';
@@ -218,8 +159,12 @@ function ep2350McpLiveSyncPlugin(): Plugin {
                     ? bodyBuf
                     : undefined
               });
-              const mcpServerPath = './mcp/server.mjs';
-              const { handleMcpHttpFetch } = await import(/* @vite-ignore */ mcpServerPath);
+              // Resolve against the project root: the bundled config runs from
+              // node_modules/.vite-temp, so a relative './mcp/server.mjs' would not resolve.
+              const mcpServerUrl = pathToFileURL(
+                path.resolve(server.config.root, 'mcp/server.mjs')
+              ).href;
+              const { handleMcpHttpFetch } = await import(/* @vite-ignore */ mcpServerUrl);
               const webRes: Response = await handleMcpHttpFetch(webReq, {
                 uiUrl: `http://${host}`
               });
@@ -254,7 +199,7 @@ export default defineConfig({
   base: './',
   plugins: [react(), ep2350McpLiveSyncPlugin()],
   define: {
-    __APP_VERSION__: JSON.stringify(resolveAppVersion())
+    __APP_VERSION__: JSON.stringify(resolveAppVersion(process.cwd()))
   },
   server: {
     port: 3000,

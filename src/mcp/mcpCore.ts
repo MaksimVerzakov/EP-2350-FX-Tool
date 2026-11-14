@@ -41,6 +41,87 @@ export interface McpRuntimeOptions {
   readLocalFile?: (pathStr: string) => Uint8Array;
   writeLocalFile?: (pathStr: string, data: Uint8Array | string) => string;
   resolveLocalPath?: (pathStr: string) => string;
+  /**
+   * Browser origins allowed to call the Streamable HTTP endpoint. Requests without an
+   * `Origin` header (non-browser MCP clients) are always accepted. Defaults to loopback
+   * origins only (`localhost`, `127.0.0.1`, `[::1]`), which blocks cross-site requests and
+   * DNS-rebinding attacks against a local dev server. Use `'*'` for a public, file-less
+   * deployment such as the Cloudflare Worker.
+   */
+  allowedOrigins?: '*' | string[];
+  /** Maximum accepted HTTP request body size in bytes (default 8 MiB). */
+  maxRequestBytes?: number;
+}
+
+export const DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+
+/** MCP protocol revisions this server implements, newest first. */
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+export const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+/** Assumed by Streamable HTTP when a client sends no `MCP-Protocol-Version` header. */
+const DEFAULT_HTTP_PROTOCOL_VERSION = '2025-03-26';
+const MAX_BATCH_SIZE = 8;
+
+/** App version injected at build/load time (`__APP_VERSION__`), shared with the web UI. */
+export const MCP_SERVER_VERSION: string =
+  typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';
+
+export const MCP_SERVER_INFO = {
+  name: 'ep2350-fx-mcp-server',
+  title: 'EP-2350 FX Tool',
+  version: MCP_SERVER_VERSION
+};
+
+const MCP_SERVER_INSTRUCTIONS =
+  'Designs and verifies effect presets for the Teenage Engineering EP-2350 fx mic. Read ep2350://schema/effects-registry for effect parameters and hardware limits, then design (design_preset_from_description or a hand-written preset), check with validate_preset and simulate_preset, and deliver with export_pack_config or push_to_live_ui. Every preset tool returns a shareUrl that opens the preset in the web app.';
+
+/** Picks the protocol version to answer `initialize` with (spec version negotiation). */
+export function negotiateProtocolVersion(requested: unknown): string {
+  return typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+    ? requested
+    : LATEST_PROTOCOL_VERSION;
+}
+
+/** JSON-RPC error codes used by this server. */
+const RPC_INVALID_REQUEST = -32600;
+const RPC_METHOD_NOT_FOUND = -32601;
+const RPC_INVALID_PARAMS = -32602;
+const RPC_INTERNAL_ERROR = -32603;
+const RPC_RESOURCE_NOT_FOUND = -32002;
+
+function rpcError(id: unknown, code: number, message: string) {
+  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
+}
+const MAX_OPTIMIZER_ITERATIONS = 200;
+const MAX_OPTIMIZER_ITERATIONS_EDGE = 24;
+const LOCAL_PATH_ARGS = [
+  'inputWavPath',
+  'referenceWavPath',
+  'dryWavPath',
+  'outputWavPath',
+  'outputPath'
+];
+
+/** True when the URL's hostname is a loopback address (localhost, 127.0.0.1, [::1]). */
+export function isLoopbackUrl(rawUrl: string): boolean {
+  try {
+    const { hostname } = new URL(rawUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname === '[::1]' ||
+      hostname === '::1' ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isOriginAllowed(origin: string, allowedOrigins: McpRuntimeOptions['allowedOrigins']) {
+  if (allowedOrigins === '*') return true;
+  if (Array.isArray(allowedOrigins) && allowedOrigins.includes(origin)) return true;
+  return isLoopbackUrl(origin);
 }
 
 export const MCP_RESOURCES = [
@@ -362,18 +443,33 @@ export async function handleMcpCoreRequest(
   request: Record<string, any>,
   options: McpRuntimeOptions = {}
 ): Promise<Record<string, any> | null> {
-  if (!request || typeof request !== 'object') {
-    return {
-      jsonrpc: '2.0',
-      id: null,
-      error: { code: -32600, message: 'Invalid Request' }
-    };
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    return rpcError(null, RPC_INVALID_REQUEST, 'Invalid Request');
   }
 
   const { id, method, params } = request;
 
-  if (id === undefined || id === null) {
+  // Responses sent by the client (e.g. to server requests) need no reply.
+  if (method === undefined && ('result' in request || 'error' in request)) {
     return null;
+  }
+
+  if (request.jsonrpc !== '2.0' || typeof method !== 'string') {
+    return rpcError(
+      typeof id === 'string' || typeof id === 'number' ? id : null,
+      RPC_INVALID_REQUEST,
+      'Invalid Request: expected a JSON-RPC 2.0 message with a string "method"'
+    );
+  }
+
+  // Notifications (no id) get no response.
+  if (id === undefined) {
+    return null;
+  }
+
+  // MCP requires request ids to be a string or integer (never null).
+  if (typeof id !== 'string' && typeof id !== 'number') {
+    return rpcError(null, RPC_INVALID_REQUEST, 'Invalid Request: id must be a string or number');
   }
 
   try {
@@ -382,16 +478,14 @@ export async function handleMcpCoreRequest(
         jsonrpc: '2.0',
         id,
         result: {
-          protocolVersion: params?.protocolVersion || '2024-11-05',
+          protocolVersion: negotiateProtocolVersion(params?.protocolVersion),
           capabilities: {
-            resources: {},
-            tools: {},
-            prompts: {}
+            resources: { listChanged: false },
+            tools: { listChanged: false },
+            prompts: { listChanged: false }
           },
-          serverInfo: {
-            name: 'ep2350-fx-mcp-server',
-            version: '1.0.0'
-          }
+          serverInfo: MCP_SERVER_INFO,
+          instructions: MCP_SERVER_INSTRUCTIONS
         }
       };
     }
@@ -468,11 +562,7 @@ export async function handleMcpCoreRequest(
         };
       }
 
-      return {
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32602, message: `Unknown resource URI: ${uri}` }
-      };
+      return rpcError(id, RPC_RESOURCE_NOT_FOUND, `Resource not found: ${uri}`);
     }
 
     if (method === 'prompts/list') {
@@ -486,6 +576,20 @@ export async function handleMcpCoreRequest(
     if (method === 'prompts/get') {
       const promptName = params?.name;
       const args = params?.arguments || {};
+      const promptDef = MCP_PROMPTS.find((p) => p.name === promptName);
+      if (!promptDef) {
+        return rpcError(id, RPC_INVALID_PARAMS, `Unknown prompt: ${promptName}`);
+      }
+      const missingArgs = promptDef.arguments
+        .filter((a) => a.required && !(typeof args[a.name] === 'string' && args[a.name].trim()))
+        .map((a) => a.name);
+      if (missingArgs.length > 0) {
+        return rpcError(
+          id,
+          RPC_INVALID_PARAMS,
+          `Missing required prompt argument(s): ${missingArgs.join(', ')}`
+        );
+      }
       if (promptName === 'design-fx-from-description') {
         return {
           jsonrpc: '2.0',
@@ -522,11 +626,7 @@ export async function handleMcpCoreRequest(
           }
         };
       }
-      return {
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32602, message: `Unknown prompt: ${promptName}` }
-      };
+      return rpcError(id, RPC_INVALID_PARAMS, `Unknown prompt: ${promptName}`);
     }
 
     if (method === 'tools/list') {
@@ -539,8 +639,23 @@ export async function handleMcpCoreRequest(
 
     if (method === 'tools/call') {
       const toolName = String(params?.name || '');
-      const args = params?.arguments || {};
-      const toolOutput = await executeMcpToolCall(toolName, args, options);
+      if (!MCP_TOOLS.some((t) => t.name === toolName)) {
+        return rpcError(id, RPC_INVALID_PARAMS, `Unknown tool: ${toolName}`);
+      }
+      const rawArgs = params?.arguments ?? {};
+      if (typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
+        return rpcError(id, RPC_INVALID_PARAMS, 'Tool arguments must be an object');
+      }
+      // Failures inside a tool (bad WAV data, invalid preset, ...) are reported as tool results
+      // with isError so the model can see them and self-correct, not as protocol errors.
+      let toolOutput: Record<string, any>;
+      try {
+        toolOutput = await executeMcpToolCall(toolName, rawArgs, options);
+      } catch (err) {
+        toolOutput = {
+          error: `${toolName} failed: ${err instanceof Error ? err.message : String(err)}`
+        };
+      }
       return {
         jsonrpc: '2.0',
         id,
@@ -556,20 +671,9 @@ export async function handleMcpCoreRequest(
       };
     }
 
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `Method not found: ${method}` }
-    };
+    return rpcError(id, RPC_METHOD_NOT_FOUND, `Method not found: ${method}`);
   } catch (err) {
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: {
-        code: -32603,
-        message: err instanceof Error ? err.message : String(err)
-      }
-    };
+    return rpcError(id, RPC_INTERNAL_ERROR, err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -586,6 +690,19 @@ async function executeMcpToolCall(
   const defaultSampleRate = isEdge ? 24000 : 48000;
   const defaultTotalSec = isEdge ? 0.35 : 1.6;
   const defaultVoiceSec = isEdge ? 0.2 : 0.8;
+
+  // Local filesystem access is only wired up for trusted transports (stdio). Over HTTP the
+  // callbacks are stripped, so reject path arguments explicitly instead of silently ignoring them.
+  if (!options.readLocalFile || !options.writeLocalFile) {
+    const pathArgs = LOCAL_PATH_ARGS.filter(
+      (key) => typeof args[key] === 'string' && args[key].trim() !== ''
+    );
+    if (pathArgs.length > 0) {
+      return {
+        error: `Local file paths are not available on this transport (${pathArgs.join(', ')}). Pass input audio as *Base64 arguments and use the returned configJson/shareUrl instead of output paths, or run the stdio server (npm run mcp) for file access.`
+      };
+    }
+  }
 
   switch (toolName) {
     case 'design_preset_from_description': {
@@ -799,8 +916,11 @@ async function executeMcpToolCall(
       }
 
       const defaultIter = isEdge ? 12 : 48;
+      const iterCap = isEdge ? MAX_OPTIMIZER_ITERATIONS_EDGE : MAX_OPTIMIZER_ITERATIONS;
       const maxIterations =
-        typeof args.maxIterations === 'number' ? args.maxIterations : defaultIter;
+        typeof args.maxIterations === 'number' && Number.isFinite(args.maxIterations)
+          ? Math.max(1, Math.min(iterCap, Math.floor(args.maxIterations)))
+          : defaultIter;
 
       const optResult = args.candidatePreset
         ? optimizePresetParameters(normalizeSinglePreset(args.candidatePreset, 0), targetPcm, {
@@ -890,8 +1010,9 @@ async function executeMcpToolCall(
         return { error: 'Provide either `preset` or `pack` to push to the live UI.' };
       }
 
-      // On remote Cloudflare edge, deliver via stateless shareUrl deep-link immediately
-      if (isEdge && !args.uiUrl) {
+      // On remote Cloudflare edge, always deliver via stateless shareUrl deep-link. The edge
+      // never makes outbound requests on behalf of callers (prevents SSRF via `uiUrl`).
+      if (isEdge) {
         return {
           pushed: true,
           deliveryMode: 'shareUrl',
@@ -907,6 +1028,17 @@ async function executeMcpToolCall(
         ''
       );
       const endpoint = `${baseUrl}/__mcp_sync`;
+
+      // A caller-supplied uiUrl may only point at a local dev server.
+      if (args.uiUrl && !isLoopbackUrl(baseUrl)) {
+        return {
+          pushed: false,
+          deliveryMode: 'shareUrl',
+          shareHash,
+          shareUrl,
+          error: `Live push is only allowed to a local dev server (localhost / 127.0.0.1); refusing ${endpoint}. Open shareUrl directly to load this preset in your browser.`
+        };
+      }
 
       try {
         const res = await fetch(endpoint, {
@@ -948,68 +1080,104 @@ async function executeMcpToolCall(
 }
 
 export const MCP_CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version',
   'Access-Control-Expose-Headers': 'Mcp-Session-Id'
 };
+
+function buildCorsHeaders(
+  origin: string | null,
+  allowedOrigins: McpRuntimeOptions['allowedOrigins']
+): Record<string, string> {
+  if (allowedOrigins === '*') {
+    return { ...MCP_CORS_HEADERS, 'Access-Control-Allow-Origin': '*' };
+  }
+  const headers: Record<string, string> = { ...MCP_CORS_HEADERS, Vary: 'Origin' };
+  if (origin && isOriginAllowed(origin, allowedOrigins)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
+}
+
+function jsonRpcErrorResponse(
+  status: number,
+  code: number,
+  message: string,
+  headers: Record<string, string>
+): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code, message } }), {
+    status,
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  });
+}
 
 /**
  * Web-standard Fetch handler for MCP Streamable HTTP (`POST /mcp`, `GET /mcp`, `OPTIONS /mcp`).
  * Runs natively in Cloudflare Workers, Cloudflare Pages Functions, and Node 20+.
+ *
+ * Security: local filesystem callbacks are never exposed over HTTP, browser `Origin`s are
+ * validated (loopback-only by default), POST bodies must be `application/json` (so cross-site
+ * "simple" requests cannot trigger tool calls), and request bodies are size-capped.
  */
 export async function handleMcpHttpFetch(
   request: Request,
   options: McpRuntimeOptions = {}
 ): Promise<Response> {
   const url = new URL(request.url);
+  // Never expose local file access over HTTP, whatever the caller passed in.
+  const {
+    readLocalFile: _readLocalFile,
+    writeLocalFile: _writeLocalFile,
+    resolveLocalPath: _resolveLocalPath,
+    ...httpSafeOptions
+  } = options;
   const effectiveOptions: McpRuntimeOptions = {
-    ...options,
+    ...httpSafeOptions,
     uiUrl: options.uiUrl || `${url.protocol}//${url.host}`
   };
+
+  const origin = request.headers.get('origin');
+  const corsHeaders = buildCorsHeaders(origin, options.allowedOrigins);
+
+  if (origin && !isOriginAllowed(origin, options.allowedOrigins)) {
+    return jsonRpcErrorResponse(403, -32600, `Forbidden origin: ${origin}`, corsHeaders);
+  }
 
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
-      headers: MCP_CORS_HEADERS
+      headers: corsHeaders
     });
   }
 
+  // This server is stateless (no Mcp-Session-Id), so there is no session to terminate.
   if (request.method === 'DELETE') {
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: {
-        ...MCP_CORS_HEADERS,
-        'Content-Type': 'application/json'
-      }
-    });
+    return jsonRpcErrorResponse(
+      405,
+      RPC_INVALID_REQUEST,
+      'Method Not Allowed: this server is stateless and has no sessions to terminate',
+      { ...corsHeaders, Allow: 'GET, POST, OPTIONS' }
+    );
   }
 
   if (request.method === 'GET') {
+    // The server never sends unsolicited messages, so it offers no SSE stream (spec: 405).
     const accept = request.headers.get('accept') || '';
     if (accept.includes('text/event-stream') && !accept.includes('text/html')) {
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(': ep2350-fx-mcp-server ready\n\n'));
-          controller.close();
-        }
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: {
-          ...MCP_CORS_HEADERS,
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache'
-        }
-      });
+      return jsonRpcErrorResponse(
+        405,
+        RPC_INVALID_REQUEST,
+        'Method Not Allowed: this server does not offer a server-to-client SSE stream',
+        { ...corsHeaders, Allow: 'GET, POST, OPTIONS' }
+      );
     }
 
     return new Response(
       JSON.stringify(
         {
-          name: 'ep2350-fx-mcp-server',
-          version: '1.0.0',
+          ...MCP_SERVER_INFO,
           status: 'ok',
+          protocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
           transport: 'Streamable HTTP (JSON-RPC 2.0)',
           endpoint: `${effectiveOptions.uiUrl}/mcp`,
           uiUrl: effectiveOptions.uiUrl,
@@ -1022,7 +1190,7 @@ export async function handleMcpHttpFetch(
       {
         status: 200,
         headers: {
-          ...MCP_CORS_HEADERS,
+          ...corsHeaders,
           'Content-Type': 'application/json'
         }
       }
@@ -1030,47 +1198,84 @@ export async function handleMcpHttpFetch(
   }
 
   if (request.method === 'POST') {
-    let bodyJson: unknown;
-    try {
-      const rawText = await request.text();
-      bodyJson = JSON.parse(rawText);
-    } catch {
-      return new Response(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: null,
-          error: { code: -32700, message: 'Parse error' }
-        }),
-        {
-          status: 400,
-          headers: {
-            ...MCP_CORS_HEADERS,
-            'Content-Type': 'application/json'
-          }
-        }
+    // Spec: an unsupported MCP-Protocol-Version header must be rejected with 400.
+    const protocolHeader = request.headers.get('mcp-protocol-version');
+    if (protocolHeader && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolHeader)) {
+      return jsonRpcErrorResponse(
+        400,
+        RPC_INVALID_REQUEST,
+        `Unsupported MCP-Protocol-Version: ${protocolHeader} (supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')})`,
+        corsHeaders
       );
     }
 
+    const contentType = (request.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      return jsonRpcErrorResponse(
+        415,
+        -32600,
+        'Unsupported Media Type: POST /mcp requires Content-Type: application/json',
+        corsHeaders
+      );
+    }
+
+    const maxBytes = options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
+    const declaredLength = Number(request.headers.get('content-length') || 0);
+    if (declaredLength > maxBytes) {
+      return jsonRpcErrorResponse(
+        413,
+        -32600,
+        `Request body too large (limit ${maxBytes} bytes)`,
+        corsHeaders
+      );
+    }
+
+    let bodyJson: unknown;
+    try {
+      const rawText = await request.text();
+      if (new TextEncoder().encode(rawText).byteLength > maxBytes) {
+        return jsonRpcErrorResponse(
+          413,
+          -32600,
+          `Request body too large (limit ${maxBytes} bytes)`,
+          corsHeaders
+        );
+      }
+      bodyJson = JSON.parse(rawText);
+    } catch {
+      return jsonRpcErrorResponse(400, -32700, 'Parse error', corsHeaders);
+    }
+
+    // JSON-RPC batching was removed from MCP in 2025-06-18; only 2025-03-26 allowed it.
     if (Array.isArray(bodyJson)) {
-      const responses = (
-        await Promise.all(
-          bodyJson.map((item) =>
-            handleMcpCoreRequest(item as Record<string, any>, effectiveOptions)
-          )
-        )
-      ).filter((r) => r !== null);
+      const negotiated = protocolHeader || DEFAULT_HTTP_PROTOCOL_VERSION;
+      if (negotiated !== '2025-03-26' || bodyJson.length === 0 || bodyJson.length > MAX_BATCH_SIZE) {
+        return jsonRpcErrorResponse(
+          400,
+          RPC_INVALID_REQUEST,
+          bodyJson.length === 0 || bodyJson.length > MAX_BATCH_SIZE
+            ? `Invalid batch: expected 1-${MAX_BATCH_SIZE} messages`
+            : `JSON-RPC batching is not supported in MCP protocol version ${negotiated}`,
+          corsHeaders
+        );
+      }
+      const responses = [];
+      for (const item of bodyJson) {
+        const res = await handleMcpCoreRequest(item as Record<string, any>, effectiveOptions);
+        if (res !== null) responses.push(res);
+      }
 
       if (responses.length === 0) {
         return new Response(null, {
           status: 202,
-          headers: MCP_CORS_HEADERS
+          headers: corsHeaders
         });
       }
 
       return new Response(JSON.stringify(responses), {
         status: 200,
         headers: {
-          ...MCP_CORS_HEADERS,
+          ...corsHeaders,
           'Content-Type': 'application/json'
         }
       });
@@ -1083,14 +1288,14 @@ export async function handleMcpHttpFetch(
     if (rpcResponse === null) {
       return new Response(null, {
         status: 202,
-        headers: MCP_CORS_HEADERS
+        headers: corsHeaders
       });
     }
 
     return new Response(JSON.stringify(rpcResponse), {
       status: 200,
       headers: {
-        ...MCP_CORS_HEADERS,
+        ...corsHeaders,
         'Content-Type': 'application/json'
       }
     });
@@ -1099,7 +1304,7 @@ export async function handleMcpHttpFetch(
   return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
     status: 405,
     headers: {
-      ...MCP_CORS_HEADERS,
+      ...corsHeaders,
       'Content-Type': 'application/json'
     }
   });

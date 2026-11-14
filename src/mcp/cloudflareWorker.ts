@@ -16,7 +16,10 @@ export default {
       const originUiUrl = env.EP2350_UI_URL || `${url.protocol}//${url.host}`;
       return handleMcpHttpFetch(request, {
         uiUrl: originUiUrl,
-        edgeMode: true
+        edgeMode: true,
+        // Public, file-less endpoint: any browser-based MCP client may call it.
+        allowedOrigins: '*',
+        maxRequestBytes: 4 * 1024 * 1024
       });
     }
 
