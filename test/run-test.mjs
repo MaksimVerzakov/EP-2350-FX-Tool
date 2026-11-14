@@ -1796,4 +1796,109 @@ assert.ok(
 );
 console.log('✓ Suite 15: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl verified');
 
-console.log('\n=== ALL 15 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint
+// ============================================================================
+const { buildCloudflareWorker } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'scripts/build-cloudflare-worker.mjs')).href
+);
+const cfOutDir = path.join(TMP_TEST_BUILD, 'cf-dist');
+const { workerPath, routesPath } = await buildCloudflareWorker(cfOutDir);
+
+assert.ok(fs.existsSync(workerPath), 'buildCloudflareWorker must output _worker.js');
+assert.ok(fs.existsSync(routesPath), 'buildCloudflareWorker must output _routes.json');
+const routesJson = JSON.parse(fs.readFileSync(routesPath, 'utf8'));
+assert.deepStrictEqual(
+  routesJson.include,
+  ['/mcp', '/mcp/*'],
+  '_routes.json must route only /mcp to the Worker so static assets remain unlimited'
+);
+
+const cfWorkerMod = await import(pathToFileURL(workerPath).href);
+const cfWorker = cfWorkerMod.default;
+
+// 16a. OPTIONS /mcp preflight CORS
+const optRes = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', { method: 'OPTIONS' })
+);
+assert.strictEqual(optRes.status, 204);
+assert.strictEqual(optRes.headers.get('Access-Control-Allow-Origin'), '*');
+
+// 16b. GET /mcp status summary
+const getRes = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', { method: 'GET' })
+);
+assert.strictEqual(getRes.status, 200);
+const getStatus = await getRes.json();
+assert.strictEqual(getStatus.name, 'ep2350-fx-mcp-server');
+assert.strictEqual(getStatus.endpoint, 'https://ep2350-fx.pages.dev/mcp');
+
+// 16c. POST /mcp -> tools/call (design_preset_from_description) with same-origin shareUrl
+const postDesignRes = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 101,
+      method: 'tools/call',
+      params: {
+        name: 'design_preset_from_description',
+        arguments: {
+          description: 'daft punk vocoder talkbox synth voice',
+          name: 'DAFT VOCODER',
+          slot: 1
+        }
+      }
+    })
+  })
+);
+assert.strictEqual(postDesignRes.status, 200);
+const postDesignRpc = await postDesignRes.json();
+const cfDesignOut = JSON.parse(postDesignRpc.result.content[0].text);
+assert.ok(
+  cfDesignOut.shareUrl.startsWith('https://ep2350-fx.pages.dev/#preset=') &&
+    cfDesignOut.shareUrl.endsWith('&slot=1'),
+  'Cloudflare /mcp must generate shareUrl pointing to the exact same origin as the hosted website'
+);
+const cfDecoded = decodeHashPayload(cfDesignOut.shareUrl);
+assert.strictEqual(cfDecoded.preset.name, 'DAFT VOCODER');
+assert.strictEqual(cfDecoded.slot, 1);
+
+// 16d. POST /mcp -> push_to_live_ui on remote Cloudflare edge returns shareUrl deliveryMode
+const postPushRes = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 102,
+      method: 'tools/call',
+      params: {
+        name: 'push_to_live_ui',
+        arguments: {
+          preset: cfDesignOut.preset,
+          slot: 1
+        }
+      }
+    })
+  })
+);
+const postPushRpc = await postPushRes.json();
+const cfPushOut = JSON.parse(postPushRpc.result.content[0].text);
+assert.strictEqual(cfPushOut.pushed, true);
+assert.strictEqual(cfPushOut.deliveryMode, 'shareUrl');
+assert.strictEqual(cfPushOut.shareUrl, cfDesignOut.shareUrl);
+
+// 16e. Static asset fallback via env.ASSETS.fetch
+const assetRes = await cfWorker.fetch(new Request('https://ep2350-fx.pages.dev/index.html'), {
+  ASSETS: {
+    fetch: async () => new Response('<html>EP-2350</html>', { status: 200 })
+  }
+});
+assert.strictEqual(assetRes.status, 200);
+assert.strictEqual(await assetRes.text(), '<html>EP-2350</html>');
+
+console.log('✓ Suite 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
+
+console.log('\n=== ALL 16 PRODUCTION TEST SUITES PASSED (100%) ===');
