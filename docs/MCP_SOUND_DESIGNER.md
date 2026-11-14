@@ -6,9 +6,10 @@ The **EP-2350 FX Tool** includes a built-in **Model Context Protocol (MCP) Serve
 
 ## 1. Quick Start: Connecting to Any MCP Host
 
-Run the MCP server directly with Node 22+:
+Install dependencies once, then run the MCP server with Node 22+. On startup it bundles the TypeScript MCP core with rolldown (about 70 ms), so source edits are picked up on the next start:
 
 ```bash
+npm install
 npm run mcp
 # or
 node mcp/server.mjs

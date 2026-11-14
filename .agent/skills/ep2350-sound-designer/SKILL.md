@@ -12,7 +12,7 @@ Use this skill whenever the user wants to:
 
 ## Available MCP Server & Tools
 
-The repository includes a zero-dependency Model Context Protocol (MCP) server at `mcp/server.mjs` (`npm run mcp`).
+The repository includes a Model Context Protocol (MCP) server at `mcp/server.mjs` (`npm install` once, then `npm run mcp`).
 
 ### MCP Resources
 - `ep2350://schema/effects-registry` — Full specification of all 11 effects (`DELAY`, `DIST`, `EQUALISER`, `HARMONY`, `LOWPASS`, `HIGHPASS`, `SAMPLE`, `REVERB`, `RING`, `SSB`, `BALANCE`), parameter ranges, units, single-instance rules, parallel `BUS: 1 | 2` routing, and modulation depth rules.
