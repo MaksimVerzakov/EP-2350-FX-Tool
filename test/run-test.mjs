@@ -2758,4 +2758,80 @@ assert.ok(
 );
 console.log('✓ Suite 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder)
+// ============================================================================
+{
+  const simIdle = async (list) => {
+    const res = await handleMcpJsonRpcRequest({
+      jsonrpc: '2.0',
+      id: 600,
+      method: 'tools/call',
+      params: { name: 'simulate_preset', arguments: { preset: { list: [...list, { effect: 'SAMPLE' }] }, scenarios: ['idle'] } }
+    });
+    return res.result.structuredContent;
+  };
+  const rt60 = (t, fb) => (t * 60) / (-20 * Math.log10(fb / 100));
+
+  // No echo and no tail for effects without time-domain memory (the old analyzer reported a
+  // ~400 ms "DELAY" on all of these: the test phrase's syllable rhythm)
+  for (const [label, fx] of [
+    ['dry', []],
+    ['RING', [{ effect: 'RING', frequency: 400, mix: 100 }]],
+    ['LOWPASS', [{ effect: 'LOWPASS', cutoff: 30 }]],
+    ['DIST (DC offset after signal)', [{ effect: 'DIST', amount: 20, mix: 80 }]],
+    ['HARMONY', [{ effect: 'HARMONY', pitch: 0.6, 'dry-level': 30 }]],
+    ['SSB', [{ effect: 'SSB', frequency: 300 }]]
+  ]) {
+    const sim = await simIdle(fx);
+    const a = sim.scenarios.idle;
+    assert.strictEqual(a.estimatedDelayMs, null, `${label}: must not report an echo (got ${a.estimatedDelayMs} ms)`);
+    assert.strictEqual(a.estimatedTailDecaySec, 0, `${label}: must not report a tail (got ${a.estimatedTailDecaySec} s)`);
+    assert.ok(!a.inferredCues.some((c) => /DELAY|REVERB/.test(c)), `${label}: no DELAY/REVERB cue`);
+    assert.strictEqual(sim.dryBaseline.estimatedDelayMs, null, 'Dry baseline must not report an echo');
+  }
+
+  // Delay times are measured exactly and feedback decay matches theory (RT60 = t·60 / −20·log10(fb))
+  for (const [t, fb] of [[0.15, 20], [0.3, 60], [0.5, 40], [0.6, 10], [1.1, 20]]) {
+    const a = (await simIdle([{ effect: 'DELAY', time: t, echo: fb, 'wet-level': 50 }])).scenarios.idle;
+    assert.ok(Math.abs(a.estimatedDelayMs - t * 1000) <= 10, `DELAY ${t}s: echo at ${a.estimatedDelayMs} ms`);
+    const expected = rt60(t, fb);
+    assert.ok(
+      Math.abs(a.estimatedTailDecaySec - expected) <= Math.max(0.2, expected * 0.15),
+      `DELAY ${t}s fb${fb}: RT60 ${a.estimatedTailDecaySec}s vs theory ${expected.toFixed(2)}s`
+    );
+    assert.ok(a.inferredCues.some((c) => c.includes('indicates DELAY')), `DELAY ${t}s: DELAY cue`);
+  }
+  const noFeedback = (await simIdle([{ effect: 'DELAY', time: 0.25, echo: 0, 'wet-level': 60 }])).scenarios.idle;
+  assert.strictEqual(noFeedback.estimatedDelayMs, 250);
+  assert.strictEqual(noFeedback.estimatedTailDecaySec, 0, 'A single echo without feedback has no tail');
+  const longFeedback = (await simIdle([{ effect: 'DELAY', time: 0.9, echo: 60, 'wet-level': 50 }])).scenarios.idle;
+  assert.ok(longFeedback.tailDecayIsLowerBound && longFeedback.estimatedTailDecaySec === 10, 'RT60 beyond 10 s is a lower bound');
+
+  // Reverb: a tail but no discrete echo; combined delay + reverb finds both
+  const reverb = (await simIdle([{ effect: 'REVERB', time: 90, 'wet-level': 80 }])).scenarios.idle;
+  assert.strictEqual(reverb.estimatedDelayMs, null, 'REVERB must not be reported as a DELAY');
+  assert.ok(reverb.estimatedTailDecaySec >= 0.5 && reverb.estimatedTailDecaySec <= 3, `REVERB RT60 ${reverb.estimatedTailDecaySec}s`);
+  assert.ok(reverb.inferredCues.some((c) => c.includes('indicates REVERB')), 'REVERB cue');
+  const both = (
+    await simIdle([
+      { effect: 'DELAY', time: 0.5, echo: 50, 'wet-level': 50 },
+      { effect: 'REVERB', time: 60, 'wet-level': 50 }
+    ])
+  ).scenarios.idle;
+  assert.strictEqual(both.estimatedDelayMs, 500, 'DELAY+REVERB: echo at 500 ms');
+  assert.ok(both.estimatedTailDecaySec > 3, 'DELAY+REVERB: long tail');
+
+  // Phrase-based analysis (references): no echo or tail on an unprocessed phrase, even blind
+  const phrase = generateSyntheticVocalPcm(48000, 1.6, 0.8);
+  const dryRef = analyzePcmAudio(phrase, phrase);
+  assert.strictEqual(dryRef.estimatedDelayMs, null);
+  assert.strictEqual(dryRef.estimatedTailDecaySec, 0);
+  assert.strictEqual(dryRef.isBlindEstimate, false);
+  const blind = analyzePcmAudio(phrase);
+  assert.strictEqual(blind.isBlindEstimate, true);
+  assert.strictEqual(blind.estimatedTailDecaySec, 0, 'Blind analysis of a dry phrase has no tail');
+}
+console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder) verified');
+
+console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');

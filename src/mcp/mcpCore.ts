@@ -21,7 +21,7 @@ import {
 } from '../utils/wavCodec';
 import type { ModulationScenario } from '../dsp/offlineRenderer';
 import { renderPresetOffline } from '../dsp/offlineRenderer';
-import { analyzePcmAudio } from '../dsp/analyzer';
+import { analyzeImpulseResponse, analyzePcmAudio, generateImpulseProbePcm } from '../dsp/analyzer';
 import {
   matchReferenceAudio,
   optimizePresetParameters,
@@ -482,6 +482,19 @@ async function executeMcpToolCall(
   const defaultSampleRate = isEdge ? 24000 : 48000;
   const defaultTotalSec = isEdge ? 0.35 : 1.6;
   const defaultVoiceSec = isEdge ? 0.2 : 0.8;
+  // Echo/decay are measured on an impulse probe (a short burst then silence), long enough for a
+  // 1.1 s delay plus its first repeat locally; on the edge it is shorter to save CPU.
+  const probeSec = isEdge ? 1.3 : 2.4;
+  const analyzeScenario = (
+    preset: PresetConfig,
+    dryPcm: ReturnType<typeof generateSyntheticVocalPcm>,
+    scenario: ModulationScenario
+  ) => {
+    const rendered = renderPresetOffline(preset, dryPcm, { scenario });
+    const probe = generateImpulseProbePcm(dryPcm.sampleRate, probeSec);
+    const impulse = analyzeImpulseResponse(renderPresetOffline(preset, probe, { scenario }));
+    return { rendered, report: analyzePcmAudio(rendered, dryPcm, impulse) };
+  };
 
   // Local filesystem access is only wired up for trusted transports (stdio). Over HTTP the
   // callbacks are stripped, so reject path arguments explicitly instead of silently ignoring them.
@@ -518,18 +531,18 @@ async function executeMcpToolCall(
           defaultTotalSec,
           defaultVoiceSec
         );
-        const idlePcm = renderPresetOffline(preset, dryPcm, { scenario: 'idle' });
-        const handlePcm = renderPresetOffline(preset, dryPcm, { scenario: 'handle_pushed' });
-        const shakePcm = renderPresetOffline(preset, dryPcm, { scenario: 'shake_burst' });
+        const idle = analyzeScenario(preset, dryPcm, 'idle');
+        const handle = analyzeScenario(preset, dryPcm, 'handle_pushed');
+        const shake = analyzeScenario(preset, dryPcm, 'shake_burst');
 
         if (args.outputWavPath && options.writeLocalFile) {
-          options.writeLocalFile(args.outputWavPath, encodeWavBuffer(handlePcm));
+          options.writeLocalFile(args.outputWavPath, encodeWavBuffer(handle.rendered));
         }
 
         simulation = {
-          idle: analyzePcmAudio(idlePcm, dryPcm),
-          handle_pushed: analyzePcmAudio(handlePcm, dryPcm),
-          shake_burst: analyzePcmAudio(shakePcm, dryPcm)
+          idle: idle.report,
+          handle_pushed: handle.report,
+          shake_burst: shake.report
         };
       }
 
@@ -610,14 +623,15 @@ async function executeMcpToolCall(
           ? args.scenarios
           : ['idle', 'handle_pushed', 'shake_burst'];
 
-      const dryReport = analyzePcmAudio(dryPcm);
+      // Analyse the dry input against itself so its own rhythm is not reported as an echo.
+      const dryReport = analyzePcmAudio(dryPcm, dryPcm);
       const reports: Record<string, any> = {};
       let lastRenderedPcm = null;
 
       for (const sc of scenarios) {
-        const rendered = renderPresetOffline(normPreset, dryPcm, { scenario: sc });
+        const { rendered, report } = analyzeScenario(normPreset, dryPcm, sc);
         lastRenderedPcm = rendered;
-        reports[sc] = analyzePcmAudio(rendered, dryPcm);
+        reports[sc] = report;
       }
 
       let savedWavPath: string | undefined = undefined;

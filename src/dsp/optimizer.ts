@@ -244,7 +244,7 @@ export function matchReferenceAudio(
       'highpass-cutoff': 20,
       balance: 0.5
     });
-  } else if (report.tailRmsDb > -42) {
+  } else if (report.estimatedTailDecaySec >= 0.3) {
     inferredList.push({
       id: 'fx-rev',
       effect: 'REVERB',
@@ -271,6 +271,28 @@ export function matchReferenceAudio(
     comment: 'AI acoustic reference match',
     list: inferredList
   });
+
+  // Candidate 1b: echo AND a tail longer than plain feedback suggests -> try DELAY + REVERB together
+  const hasDelay = inferredList.some((fx) => fx.effect === 'DELAY');
+  if (hasDelay && report.estimatedTailDecaySec >= 0.3) {
+    const withReverb = [...inferredList];
+    withReverb.splice(withReverb.length - 1, 0, {
+      id: 'fx-rev',
+      effect: 'REVERB',
+      time: 0.55,
+      'spring-mix': 30,
+      'highpass-cutoff': 20,
+      'wet-level': 45,
+      'dry-level': 95
+    });
+    candidateChains.push({
+      id: 'cand-inferred-reverb',
+      pos: 0,
+      name: 'MATCHED REFERENCE',
+      comment: 'AI acoustic reference match (delay + reverb)',
+      list: withReverb
+    });
+  }
 
   // Candidate 2: Bandpass + Distortion + Delay (Radio / Dub archetype)
   candidateChains.push({
