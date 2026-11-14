@@ -54,6 +54,44 @@ export interface McpRuntimeOptions {
 }
 
 export const DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+
+/** MCP protocol revisions this server implements, newest first. */
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+export const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+/** Assumed by Streamable HTTP when a client sends no `MCP-Protocol-Version` header. */
+const DEFAULT_HTTP_PROTOCOL_VERSION = '2025-03-26';
+const MAX_BATCH_SIZE = 8;
+
+/** App version injected at build/load time (`__APP_VERSION__`), shared with the web UI. */
+export const MCP_SERVER_VERSION: string =
+  typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';
+
+export const MCP_SERVER_INFO = {
+  name: 'ep2350-fx-mcp-server',
+  title: 'EP-2350 FX Tool',
+  version: MCP_SERVER_VERSION
+};
+
+const MCP_SERVER_INSTRUCTIONS =
+  'Designs and verifies effect presets for the Teenage Engineering EP-2350 fx mic. Read ep2350://schema/effects-registry for effect parameters and hardware limits, then design (design_preset_from_description or a hand-written preset), check with validate_preset and simulate_preset, and deliver with export_pack_config or push_to_live_ui. Every preset tool returns a shareUrl that opens the preset in the web app.';
+
+/** Picks the protocol version to answer `initialize` with (spec version negotiation). */
+export function negotiateProtocolVersion(requested: unknown): string {
+  return typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+    ? requested
+    : LATEST_PROTOCOL_VERSION;
+}
+
+/** JSON-RPC error codes used by this server. */
+const RPC_INVALID_REQUEST = -32600;
+const RPC_METHOD_NOT_FOUND = -32601;
+const RPC_INVALID_PARAMS = -32602;
+const RPC_INTERNAL_ERROR = -32603;
+const RPC_RESOURCE_NOT_FOUND = -32002;
+
+function rpcError(id: unknown, code: number, message: string) {
+  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
+}
 const MAX_OPTIMIZER_ITERATIONS = 200;
 const MAX_OPTIMIZER_ITERATIONS_EDGE = 24;
 const LOCAL_PATH_ARGS = [
@@ -405,18 +443,33 @@ export async function handleMcpCoreRequest(
   request: Record<string, any>,
   options: McpRuntimeOptions = {}
 ): Promise<Record<string, any> | null> {
-  if (!request || typeof request !== 'object') {
-    return {
-      jsonrpc: '2.0',
-      id: null,
-      error: { code: -32600, message: 'Invalid Request' }
-    };
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    return rpcError(null, RPC_INVALID_REQUEST, 'Invalid Request');
   }
 
   const { id, method, params } = request;
 
-  if (id === undefined || id === null) {
+  // Responses sent by the client (e.g. to server requests) need no reply.
+  if (method === undefined && ('result' in request || 'error' in request)) {
     return null;
+  }
+
+  if (request.jsonrpc !== '2.0' || typeof method !== 'string') {
+    return rpcError(
+      typeof id === 'string' || typeof id === 'number' ? id : null,
+      RPC_INVALID_REQUEST,
+      'Invalid Request: expected a JSON-RPC 2.0 message with a string "method"'
+    );
+  }
+
+  // Notifications (no id) get no response.
+  if (id === undefined) {
+    return null;
+  }
+
+  // MCP requires request ids to be a string or integer (never null).
+  if (typeof id !== 'string' && typeof id !== 'number') {
+    return rpcError(null, RPC_INVALID_REQUEST, 'Invalid Request: id must be a string or number');
   }
 
   try {
@@ -425,16 +478,14 @@ export async function handleMcpCoreRequest(
         jsonrpc: '2.0',
         id,
         result: {
-          protocolVersion: params?.protocolVersion || '2024-11-05',
+          protocolVersion: negotiateProtocolVersion(params?.protocolVersion),
           capabilities: {
-            resources: {},
-            tools: {},
-            prompts: {}
+            resources: { listChanged: false },
+            tools: { listChanged: false },
+            prompts: { listChanged: false }
           },
-          serverInfo: {
-            name: 'ep2350-fx-mcp-server',
-            version: '1.0.0'
-          }
+          serverInfo: MCP_SERVER_INFO,
+          instructions: MCP_SERVER_INSTRUCTIONS
         }
       };
     }
@@ -511,11 +562,7 @@ export async function handleMcpCoreRequest(
         };
       }
 
-      return {
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32602, message: `Unknown resource URI: ${uri}` }
-      };
+      return rpcError(id, RPC_RESOURCE_NOT_FOUND, `Resource not found: ${uri}`);
     }
 
     if (method === 'prompts/list') {
@@ -529,6 +576,20 @@ export async function handleMcpCoreRequest(
     if (method === 'prompts/get') {
       const promptName = params?.name;
       const args = params?.arguments || {};
+      const promptDef = MCP_PROMPTS.find((p) => p.name === promptName);
+      if (!promptDef) {
+        return rpcError(id, RPC_INVALID_PARAMS, `Unknown prompt: ${promptName}`);
+      }
+      const missingArgs = promptDef.arguments
+        .filter((a) => a.required && !(typeof args[a.name] === 'string' && args[a.name].trim()))
+        .map((a) => a.name);
+      if (missingArgs.length > 0) {
+        return rpcError(
+          id,
+          RPC_INVALID_PARAMS,
+          `Missing required prompt argument(s): ${missingArgs.join(', ')}`
+        );
+      }
       if (promptName === 'design-fx-from-description') {
         return {
           jsonrpc: '2.0',
@@ -565,11 +626,7 @@ export async function handleMcpCoreRequest(
           }
         };
       }
-      return {
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32602, message: `Unknown prompt: ${promptName}` }
-      };
+      return rpcError(id, RPC_INVALID_PARAMS, `Unknown prompt: ${promptName}`);
     }
 
     if (method === 'tools/list') {
@@ -582,8 +639,23 @@ export async function handleMcpCoreRequest(
 
     if (method === 'tools/call') {
       const toolName = String(params?.name || '');
-      const args = params?.arguments || {};
-      const toolOutput = await executeMcpToolCall(toolName, args, options);
+      if (!MCP_TOOLS.some((t) => t.name === toolName)) {
+        return rpcError(id, RPC_INVALID_PARAMS, `Unknown tool: ${toolName}`);
+      }
+      const rawArgs = params?.arguments ?? {};
+      if (typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
+        return rpcError(id, RPC_INVALID_PARAMS, 'Tool arguments must be an object');
+      }
+      // Failures inside a tool (bad WAV data, invalid preset, ...) are reported as tool results
+      // with isError so the model can see them and self-correct, not as protocol errors.
+      let toolOutput: Record<string, any>;
+      try {
+        toolOutput = await executeMcpToolCall(toolName, rawArgs, options);
+      } catch (err) {
+        toolOutput = {
+          error: `${toolName} failed: ${err instanceof Error ? err.message : String(err)}`
+        };
+      }
       return {
         jsonrpc: '2.0',
         id,
@@ -599,20 +671,9 @@ export async function handleMcpCoreRequest(
       };
     }
 
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `Method not found: ${method}` }
-    };
+    return rpcError(id, RPC_METHOD_NOT_FOUND, `Method not found: ${method}`);
   } catch (err) {
-    return {
-      jsonrpc: '2.0',
-      id,
-      error: {
-        code: -32603,
-        message: err instanceof Error ? err.message : String(err)
-      }
-    };
+    return rpcError(id, RPC_INTERNAL_ERROR, err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -1019,7 +1080,7 @@ async function executeMcpToolCall(
 }
 
 export const MCP_CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version',
   'Access-Control-Expose-Headers': 'Mcp-Session-Id'
 };
@@ -1089,41 +1150,34 @@ export async function handleMcpHttpFetch(
     });
   }
 
+  // This server is stateless (no Mcp-Session-Id), so there is no session to terminate.
   if (request.method === 'DELETE') {
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'application/json'
-      }
-    });
+    return jsonRpcErrorResponse(
+      405,
+      RPC_INVALID_REQUEST,
+      'Method Not Allowed: this server is stateless and has no sessions to terminate',
+      { ...corsHeaders, Allow: 'GET, POST, OPTIONS' }
+    );
   }
 
   if (request.method === 'GET') {
+    // The server never sends unsolicited messages, so it offers no SSE stream (spec: 405).
     const accept = request.headers.get('accept') || '';
     if (accept.includes('text/event-stream') && !accept.includes('text/html')) {
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(': ep2350-fx-mcp-server ready\n\n'));
-          controller.close();
-        }
-      });
-      return new Response(stream, {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache'
-        }
-      });
+      return jsonRpcErrorResponse(
+        405,
+        RPC_INVALID_REQUEST,
+        'Method Not Allowed: this server does not offer a server-to-client SSE stream',
+        { ...corsHeaders, Allow: 'GET, POST, OPTIONS' }
+      );
     }
 
     return new Response(
       JSON.stringify(
         {
-          name: 'ep2350-fx-mcp-server',
-          version: '1.0.0',
+          ...MCP_SERVER_INFO,
           status: 'ok',
+          protocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
           transport: 'Streamable HTTP (JSON-RPC 2.0)',
           endpoint: `${effectiveOptions.uiUrl}/mcp`,
           uiUrl: effectiveOptions.uiUrl,
@@ -1144,6 +1198,17 @@ export async function handleMcpHttpFetch(
   }
 
   if (request.method === 'POST') {
+    // Spec: an unsupported MCP-Protocol-Version header must be rejected with 400.
+    const protocolHeader = request.headers.get('mcp-protocol-version');
+    if (protocolHeader && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolHeader)) {
+      return jsonRpcErrorResponse(
+        400,
+        RPC_INVALID_REQUEST,
+        `Unsupported MCP-Protocol-Version: ${protocolHeader} (supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')})`,
+        corsHeaders
+      );
+    }
+
     const contentType = (request.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('application/json')) {
       return jsonRpcErrorResponse(
@@ -1181,14 +1246,24 @@ export async function handleMcpHttpFetch(
       return jsonRpcErrorResponse(400, -32700, 'Parse error', corsHeaders);
     }
 
+    // JSON-RPC batching was removed from MCP in 2025-06-18; only 2025-03-26 allowed it.
     if (Array.isArray(bodyJson)) {
-      const responses = (
-        await Promise.all(
-          bodyJson.map((item) =>
-            handleMcpCoreRequest(item as Record<string, any>, effectiveOptions)
-          )
-        )
-      ).filter((r) => r !== null);
+      const negotiated = protocolHeader || DEFAULT_HTTP_PROTOCOL_VERSION;
+      if (negotiated !== '2025-03-26' || bodyJson.length === 0 || bodyJson.length > MAX_BATCH_SIZE) {
+        return jsonRpcErrorResponse(
+          400,
+          RPC_INVALID_REQUEST,
+          bodyJson.length === 0 || bodyJson.length > MAX_BATCH_SIZE
+            ? `Invalid batch: expected 1-${MAX_BATCH_SIZE} messages`
+            : `JSON-RPC batching is not supported in MCP protocol version ${negotiated}`,
+          corsHeaders
+        );
+      }
+      const responses = [];
+      for (const item of bodyJson) {
+        const res = await handleMcpCoreRequest(item as Record<string, any>, effectiveOptions);
+        if (res !== null) responses.push(res);
+      }
 
       if (responses.length === 0) {
         return new Response(null, {
