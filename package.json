@@ -1,7 +1,7 @@
 {
   "name": "ep2350-fx-tool",
   "version": "1.0.0",
-  "description": "",
+  "description": "Companion web workbench, DSP audio engine, hardware validator, and MCP server for the Teenage Engineering EP-2350 fx mic.",
   "main": "index.js",
   "type": "module",
   "scripts": {
