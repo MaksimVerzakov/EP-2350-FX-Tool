@@ -37,6 +37,7 @@ export async function buildCloudflareWorker(outDir = DIST_DIR) {
       'src/dsp/offlineRenderer.ts',
       'src/dsp/analyzer.ts',
       'src/dsp/optimizer.ts',
+      'src/mcp/toolSchemas.ts',
       'src/mcp/mcpCore.ts',
       'src/mcp/cloudflareWorker.ts'
     ];

@@ -2272,4 +2272,205 @@ assert.strictEqual(stdioLines[1].error.code, -32600, 'stdio batch must be -32600
 assert.deepStrictEqual(stdioLines[2], { jsonrpc: '2.0', id: 2, result: {} });
 console.log('✓ Suite 18: MCP protocol compliance (version negotiation, error codes, HTTP + stdio) verified');
 
-console.log('\n=== ALL 18 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 19: Typed MCP Tool Schemas, Annotations & structuredContent
+// ============================================================================
+/** Minimal JSON Schema checker for the keywords our tool schemas use. Returns error paths. */
+function checkSchema(schema, value, at = '$') {
+  const errs = [];
+  const typeOf = (v) =>
+    v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v;
+  if (schema.oneOf) {
+    const matches = schema.oneOf.filter((s) => checkSchema(s, value, at).length === 0).length;
+    if (matches !== 1) errs.push(`${at}: matched ${matches} oneOf branches`);
+    return errs;
+  }
+  if ('const' in schema && value !== schema.const) errs.push(`${at}: expected const ${schema.const}`);
+  if (schema.enum && !schema.enum.includes(value)) errs.push(`${at}: ${JSON.stringify(value)} not in enum`);
+  if (schema.type) {
+    const t = typeOf(value);
+    const ok = schema.type === t || (schema.type === 'number' && t === 'integer');
+    if (!ok) return [...errs, `${at}: expected ${schema.type}, got ${t}`];
+  }
+  if (typeof value === 'number') {
+    if (schema.minimum !== undefined && value < schema.minimum) errs.push(`${at}: ${value} < ${schema.minimum}`);
+    if (schema.maximum !== undefined && value > schema.maximum) errs.push(`${at}: ${value} > ${schema.maximum}`);
+  }
+  if (Array.isArray(value)) {
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) errs.push(`${at}: too many items`);
+    if (schema.items) value.forEach((v, i) => errs.push(...checkSchema(schema.items, v, `${at}[${i}]`)));
+  }
+  if (typeOf(value) === 'object') {
+    for (const req of schema.required || []) {
+      if (!(req in value)) errs.push(`${at}: missing required "${req}"`);
+    }
+    for (const [k, v] of Object.entries(value)) {
+      if (schema.properties && k in schema.properties) {
+        errs.push(...checkSchema(schema.properties[k], v, `${at}.${k}`));
+      } else if (schema.additionalProperties === false) {
+        errs.push(`${at}: unexpected property "${k}"`);
+      } else if (typeof schema.additionalProperties === 'object') {
+        errs.push(...checkSchema(schema.additionalProperties, v, `${at}.${k}`));
+      }
+    }
+  }
+  return errs;
+}
+
+const PATH_ARG = /Path$/;
+const allPropNames = (tool) => Object.keys(tool.inputSchema.properties || {});
+
+// 19a. stdio tool list: titles, annotations, output schemas, path args present
+const stdioTools = (await rpc('tools/list')).result.tools;
+const stdioByName = Object.fromEntries(stdioTools.map((t) => [t.name, t]));
+assert.strictEqual(stdioTools.length, 7);
+for (const t of stdioTools) {
+  assert.ok(t.title && t.annotations && t.outputSchema, `${t.name} must have title, annotations, outputSchema`);
+  assert.strictEqual(t.outputSchema.type, 'object', `${t.name} outputSchema must be an object schema`);
+}
+assert.ok(allPropNames(stdioByName.simulate_preset).includes('outputWavPath'));
+assert.strictEqual(stdioByName.validate_preset.annotations.readOnlyHint, true);
+assert.strictEqual(stdioByName.export_pack_config.annotations.destructiveHint, true);
+assert.strictEqual(stdioByName.design_preset_from_description.inputSchema.properties.slot.type, 'integer');
+
+// 19b. HTTP tool lists hide path args; annotations reflect the transport
+const httpToolsRes = await handleLocalMcpHttpFetch(
+  new Request('http://localhost:3000/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 400, method: 'tools/list' })
+  })
+);
+const httpTools = (await httpToolsRes.json()).result.tools;
+const httpByName = Object.fromEntries(httpTools.map((t) => [t.name, t]));
+for (const t of httpTools) {
+  assert.ok(!allPropNames(t).some((n) => PATH_ARG.test(n)), `HTTP ${t.name} must not advertise *Path args`);
+}
+assert.strictEqual(httpByName.export_pack_config.annotations.readOnlyHint, true);
+assert.strictEqual(httpByName.push_to_live_ui.annotations.readOnlyHint, false, 'Local live push changes the UI');
+const cfToolsRes = await cfWorker.fetch(
+  new Request('https://ep2350-fx.pages.dev/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 401, method: 'tools/list' })
+  })
+);
+const cfByName = Object.fromEntries(
+  (await cfToolsRes.json()).result.tools.map((t) => [t.name, t])
+);
+assert.strictEqual(cfByName.push_to_live_ui.annotations.readOnlyHint, true, 'Edge push only returns a URL');
+
+// 19c. The preset schema accepts every official TE preset (editor scale) and they lint clean
+const presetSchema = stdioByName.validate_preset.inputSchema.properties.preset;
+// Sanity: the checker itself must reject bad presets
+assert.ok(checkSchema(presetSchema, { list: [{ effect: 'LOWPASS', cutof: 50 }] }).length > 0);
+assert.ok(checkSchema(presetSchema, { list: [{ effect: 'DIST', amount: 99 }] }).length > 0);
+assert.ok(checkSchema(presetSchema, { list: [{ effect: 'NOPE' }] }).length > 0);
+assert.ok(checkSchema(presetSchema, { list: [], handle: { row: 99, param: 'mix', depth: 1 } }).length > 0);
+let officialPresetsChecked = 0;
+for (const officialPack of OFFICIAL_TE_PACKS) {
+  for (const p of parseConfigJson(officialPack.rawJson).pack.presets) {
+    const cleaned = JSON.parse(JSON.stringify(p));
+    officialPresetsChecked++;
+    const schemaErrs = checkSchema(presetSchema, cleaned);
+    assert.deepStrictEqual(schemaErrs, [], `${officialPack.name} / ${p.name} must match PRESET_SCHEMA`);
+    const lint = JSON.parse(
+      (await rpc('tools/call', { name: 'validate_preset', arguments: { preset: cleaned } })).result
+        .content[0].text
+    );
+    assert.deepStrictEqual(
+      lint.warnings.filter((w) => !/SAMPLE/.test(w.message)),
+      [],
+      `${officialPack.name} / ${p.name} must lint clean`
+    );
+  }
+}
+
+assert.strictEqual(officialPresetsChecked, 12, 'All 12 official presets must be schema-checked');
+
+// 19d. structuredContent matches the text block and the declared outputSchema
+const checkStructured = (toolName, res) => {
+  assert.strictEqual(res.result.isError, false, `${toolName} should succeed`);
+  assert.deepStrictEqual(res.result.structuredContent, JSON.parse(res.result.content[0].text));
+  assert.deepStrictEqual(
+    checkSchema(stdioByName[toolName].outputSchema, res.result.structuredContent),
+    [],
+    `${toolName} structuredContent must match its outputSchema`
+  );
+  return res.result.structuredContent;
+};
+const sDesign = checkStructured(
+  'design_preset_from_description',
+  await rpc('tools/call', {
+    name: 'design_preset_from_description',
+    arguments: { description: 'dark dub radio with echo on handle', simulate: true }
+  })
+);
+assert.deepStrictEqual(checkSchema(presetSchema, sDesign.preset), [], 'Designed preset must match PRESET_SCHEMA');
+checkStructured('validate_preset', await rpc('tools/call', { name: 'validate_preset', arguments: { preset: sDesign.preset } }));
+checkStructured(
+  'validate_preset',
+  await rpc('tools/call', { name: 'validate_preset', arguments: { configJson: OFFICIAL_TE_PACKS[0].rawJson } })
+);
+checkStructured(
+  'simulate_preset',
+  await rpc('tools/call', { name: 'simulate_preset', arguments: { preset: sDesign.preset, scenarios: ['idle'] } })
+);
+checkStructured(
+  'export_pack_config',
+  await rpc('tools/call', { name: 'export_pack_config', arguments: { presets: [sDesign.preset] } })
+);
+const sOpt = checkStructured(
+  'optimize_preset_parameters',
+  await rpc('tools/call', {
+    name: 'optimize_preset_parameters',
+    arguments: {
+      referenceWavBase64: Buffer.from(encodeWavBuffer(targetRefPcm)).toString('base64'),
+      candidatePreset: perturbedCandidate,
+      maxIterations: 4
+    }
+  })
+);
+assert.deepStrictEqual(checkSchema(presetSchema, JSON.parse(JSON.stringify(sOpt.optimizedPreset))), []);
+const edgePush = await (
+  await cfWorker.fetch(
+    new Request('https://ep2350-fx.pages.dev/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 402,
+        method: 'tools/call',
+        params: { name: 'push_to_live_ui', arguments: { preset: sDesign.preset } }
+      })
+    })
+  )
+).json();
+checkStructured('push_to_live_ui', edgePush);
+
+// 19e. Error results carry no structuredContent
+const errResult = await rpc('tools/call', { name: 'validate_preset', arguments: {} });
+assert.strictEqual(errResult.result.isError, true);
+assert.ok(!('structuredContent' in errResult.result), 'isError results must omit structuredContent');
+
+// 19f. Registry lint catches common model mistakes
+const lintOf = async (preset) =>
+  JSON.parse(
+    (await rpc('tools/call', { name: 'validate_preset', arguments: { preset } })).result.content[0].text
+  ).warnings.map((w) => w.message);
+const badParam = await lintOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effect: 'SAMPLE' }] });
+assert.ok(badParam.some((m) => m.includes('unknown parameter "cutof"')), 'Typo in param name must warn');
+const outOfRange = await lintOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
+assert.ok(outOfRange.some((m) => m.includes('"amount"=99 is outside')), 'Out-of-range value must warn');
+const hwScale = await lintOf({
+  list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }]
+});
+assert.ok(hwScale.some((m) => m.includes('editor scale (0..100)')), 'Hardware 0..1 scale must warn');
+const badMod = await lintOf({
+  list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
+  handle: { row: 0, param: 'cutoff', depth: 50 }
+});
+assert.ok(badMod.some((m) => m.includes('has no parameter "cutoff"')), 'Mod param mismatch must warn');
+console.log('✓ Suite 19: Typed MCP tool schemas, annotations & structuredContent verified');
+
+console.log('\n=== ALL 19 PRODUCTION TEST SUITES PASSED (100%) ===');

@@ -27,6 +27,7 @@ import {
   optimizePresetParameters,
   synthesizePresetFromDescription
 } from '../dsp/optimizer';
+import { MCP_TOOL_NAMES, buildToolList, lintPresetAgainstRegistry } from './toolSchemas';
 
 export interface McpRuntimeOptions {
   /** Base URL of the web UI for generating #preset= shareable deep-links */
@@ -173,227 +174,8 @@ export const MCP_PROMPTS = [
   }
 ];
 
-export const MCP_TOOLS = [
-  {
-    name: 'design_preset_from_description',
-    description:
-      'Synthesize a hardware-valid EP-2350 preset chain from a natural language description (e.g. "gritty cyberpunk walkie-talkie with dub echo on handle and SSB scramble on shake"), validate it, run an offline acoustic simulation, and return a shareable #preset= URL.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        description: {
-          type: 'string',
-          description: 'Natural language description of the desired sound and modulation behavior.'
-        },
-        name: {
-          type: 'string',
-          description: 'Optional preset name (e.g. "CYBER RADIO").'
-        },
-        slot: {
-          type: 'number',
-          description: 'Preset slot index (0, 1, 2, or 3). Defaults to 0.'
-        },
-        simulate: {
-          type: 'boolean',
-          description:
-            'Whether to run offline DSP simulation across idle, handle_pushed, and shake_burst (defaults to true).'
-        },
-        outputWavPath: {
-          type: 'string',
-          description: 'Optional file path to save the rendered 48kHz stereo WAV preview (local mode).'
-        },
-        uiUrl: {
-          type: 'string',
-          description: 'Optional base URL for the returned shareUrl deep-link.'
-        }
-      },
-      required: ['description']
-    }
-  },
-  {
-    name: 'validate_preset',
-    description:
-      'Validate an EP-2350 preset or full 4-preset pack against hardware constraints (16-effect limit, single-instance DELAY/REVERB/HARMONY/SSB, valid modulation row indices, SAMPLE block presence) and return lossless config.json plus a shareable #preset= URL.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        preset: {
-          type: 'object',
-          description: 'Single PresetConfig object ({ pos, name, list, handle, shake, lfo, trigger }).'
-        },
-        configJson: {
-          type: 'string',
-          description: 'Raw config.json string to parse and validate.'
-        },
-        uiUrl: {
-          type: 'string',
-          description: 'Optional base URL for the returned shareUrl deep-link.'
-        }
-      }
-    }
-  },
-  {
-    name: 'simulate_preset',
-    description:
-      'Render an EP-2350 preset offline through the DSP engine and return quantitative acoustic telemetry (RMS, peak, 6-band spectrum, centroid, fundamental pitch shift, inharmonic sidebands, echo delay lag in ms, tail decay) across modulation scenarios.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        preset: {
-          type: 'object',
-          description: 'PresetConfig object to render and analyze.'
-        },
-        inputWavPath: {
-          type: 'string',
-          description:
-            'Optional path to a custom dry input .wav file (defaults to built-in broadband vocal phrase).'
-        },
-        inputWavBase64: {
-          type: 'string',
-          description: 'Optional Base64-encoded dry input .wav file (for remote HTTP/Cloudflare MCP).'
-        },
-        scenarios: {
-          type: 'array',
-          items: {
-            type: 'string',
-            enum: ['idle', 'handle_pushed', 'shake_burst', 'dynamic_performance']
-          },
-          description:
-            'Modulation scenarios to simulate (defaults to ["idle", "handle_pushed", "shake_burst"]).'
-        },
-        outputWavPath: {
-          type: 'string',
-          description: 'Optional path to write the rendered .wav file (local mode).'
-        }
-      },
-      required: ['preset']
-    }
-  },
-  {
-    name: 'analyze_reference_audio',
-    description:
-      'Extract an acoustic fingerprint from a reference .wav file (6-band spectrum, pitch ratio, inharmonicity for SSB/RING detection, echo autocorrelation lag in ms for DELAY, RT60 tail for REVERB, crest factor for DIST) and infer candidate EP-2350 effects.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        referenceWavPath: {
-          type: 'string',
-          description: 'Path to the reference target .wav file (local mode).'
-        },
-        referenceWavBase64: {
-          type: 'string',
-          description: 'Optional Base64-encoded reference .wav file (for remote HTTP/Cloudflare MCP).'
-        },
-        dryWavPath: {
-          type: 'string',
-          description:
-            'Optional path to the dry unprocessed .wav file for relative pitch/echo comparison.'
-        },
-        dryWavBase64: {
-          type: 'string',
-          description: 'Optional Base64-encoded dry .wav file.'
-        }
-      }
-    }
-  },
-  {
-    name: 'optimize_preset_parameters',
-    description:
-      'Automatically discover and/or tune EP-2350 effect chain parameters to match a reference .wav file using multi-resolution STFT spectral + temporal envelope loss optimization.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        referenceWavPath: {
-          type: 'string',
-          description: 'Path to the target reference .wav file to match (local mode).'
-        },
-        referenceWavBase64: {
-          type: 'string',
-          description: 'Optional Base64-encoded target reference .wav file (remote HTTP/Cloudflare mode).'
-        },
-        dryWavPath: {
-          type: 'string',
-          description: 'Optional path to the dry input .wav file (defaults to built-in vocal phrase).'
-        },
-        dryWavBase64: {
-          type: 'string',
-          description: 'Optional Base64-encoded dry input .wav file.'
-        },
-        candidatePreset: {
-          type: 'object',
-          description:
-            'Optional initial PresetConfig topology to tune. If omitted, automatically infers and screens candidate topologies.'
-        },
-        maxIterations: {
-          type: 'number',
-          description: 'Maximum headless render iterations (default 48 locally, 12 on edge).'
-        },
-        outputWavPath: {
-          type: 'string',
-          description: 'Optional path to save the best-matching rendered .wav file (local mode).'
-        },
-        uiUrl: {
-          type: 'string',
-          description: 'Optional base URL for the returned shareUrl deep-link.'
-        }
-      }
-    }
-  },
-  {
-    name: 'export_pack_config',
-    description:
-      'Serialize a validated 4-preset EP-2350 pack to hardware config.json format, return a shareable #pack= URL, and optionally save it to disk.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        packName: {
-          type: 'string',
-          description: 'Name of the preset pack.'
-        },
-        presets: {
-          type: 'array',
-          items: { type: 'object' },
-          description: 'Array of up to 4 PresetConfig objects.'
-        },
-        outputPath: {
-          type: 'string',
-          description: 'Optional file path to write the serialized config.json (local mode).'
-        },
-        uiUrl: {
-          type: 'string',
-          description: 'Optional base URL for the returned shareUrl deep-link.'
-        }
-      },
-      required: ['presets']
-    }
-  },
-  {
-    name: 'push_to_live_ui',
-    description:
-      'Deliver a generated preset or full pack to the EP-2350 Web App UI via a stateless shareable #preset= deep-link URL (and push live over SSE when connected to a local Vite dev server).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        preset: {
-          type: 'object',
-          description: 'Single PresetConfig to load into the web UI.'
-        },
-        pack: {
-          type: 'object',
-          description: 'Optional full PackConfig to load into the web UI.'
-        },
-        slot: {
-          type: 'number',
-          description: 'Target preset slot (0..3) when pushing a single preset.'
-        },
-        uiUrl: {
-          type: 'string',
-          description: 'Base URL of the web app (defaults to current origin or public site URL).'
-        }
-      }
-    }
-  }
-];
+/** Full tool list as advertised on the stdio transport (local file access available). */
+export const MCP_TOOLS = buildToolList({ localFiles: true, edgeMode: false });
 
 function decodeBase64Bytes(b64: string): Uint8Array {
   const cleaned = b64.replace(/^data:audio\/[^;]+;base64,/, '').trim();
@@ -633,13 +415,18 @@ export async function handleMcpCoreRequest(
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: MCP_TOOLS }
+        result: {
+          tools: buildToolList({
+            localFiles: Boolean(options.readLocalFile && options.writeLocalFile),
+            edgeMode: Boolean(options.edgeMode)
+          })
+        }
       };
     }
 
     if (method === 'tools/call') {
       const toolName = String(params?.name || '');
-      if (!MCP_TOOLS.some((t) => t.name === toolName)) {
+      if (!MCP_TOOL_NAMES.includes(toolName)) {
         return rpcError(id, RPC_INVALID_PARAMS, `Unknown tool: ${toolName}`);
       }
       const rawArgs = params?.arguments ?? {};
@@ -656,6 +443,9 @@ export async function handleMcpCoreRequest(
           error: `${toolName} failed: ${err instanceof Error ? err.message : String(err)}`
         };
       }
+      const isError = Boolean(toolOutput?.error);
+      // Plain JSON round-trip drops undefined fields so structuredContent matches the text block.
+      const structured = JSON.parse(JSON.stringify(toolOutput));
       return {
         jsonrpc: '2.0',
         id,
@@ -663,10 +453,12 @@ export async function handleMcpCoreRequest(
           content: [
             {
               type: 'text',
-              text: JSON.stringify(toolOutput, null, 2)
+              text: JSON.stringify(structured, null, 2)
             }
           ],
-          isError: Boolean(toolOutput?.error)
+          // structuredContent must match the tool's outputSchema, so it is only sent on success.
+          ...(isError ? {} : { structuredContent: structured }),
+          isError
         }
       };
     }
@@ -758,7 +550,10 @@ async function executeMcpToolCall(
         if (parsed.error || !parsed.pack) {
           return { isValid: false, error: parsed.error || 'Failed to parse configJson' };
         }
-        const issues = validatePackConfig(parsed.pack);
+        const issues = [
+          ...validatePackConfig(parsed.pack),
+          ...parsed.pack.presets.flatMap((p) => lintPresetAgainstRegistry(p))
+        ];
         const errors = issues.filter((i) => i.type === 'error');
         const normalizedConfigJson = JSON.parse(serializeToConfigJson(parsed.pack));
         return {
@@ -774,9 +569,12 @@ async function executeMcpToolCall(
       if (args.preset && typeof args.preset === 'object') {
         const normPreset = normalizeSinglePreset(args.preset, args.preset.pos ?? 0);
         const pack = wrapPresetInPack(normPreset);
-        const issues = validatePackConfig(pack).filter(
-          (i) => i.presetPos === undefined || i.presetPos === normPreset.pos
-        );
+        const issues = [
+          ...validatePackConfig(pack).filter(
+            (i) => i.presetPos === undefined || i.presetPos === normPreset.pos
+          ),
+          ...lintPresetAgainstRegistry(normPreset)
+        ];
         const errors = issues.filter((i) => i.type === 'error');
         const serializedPack = JSON.parse(serializeToConfigJson(pack));
         const normalizedPresetJson = serializedPack.presets[normPreset.pos];
@@ -834,6 +632,7 @@ async function executeMcpToolCall(
         presetName: normPreset.name,
         shareHash,
         shareUrl,
+        presetWarnings: lintPresetAgainstRegistry(normPreset),
         dryBaseline: dryReport,
         scenarios: reports,
         savedWavPath
@@ -1058,6 +857,7 @@ async function executeMcpToolCall(
         const data = await res.json();
         return {
           pushed: true,
+          deliveryMode: 'live',
           endpoint,
           shareHash,
           shareUrl,
