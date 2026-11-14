@@ -28,7 +28,9 @@ function buildSourceModulesForTest() {
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
-    'src/dsp/offlineRenderer.ts'
+    'src/dsp/offlineRenderer.ts',
+    'src/dsp/analyzer.ts',
+    'src/dsp/optimizer.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -104,6 +106,14 @@ const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await im
 const { BiquadFilterKernel, renderPresetOffline } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/offlineRenderer.mjs')).href
 );
+const { analyzePcmAudio, computeAudioDistance, estimateFundamentalPitchHz, fftRadix2 } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/analyzer.mjs')).href
+);
+const {
+  optimizePresetParameters,
+  matchReferenceAudio,
+  synthesizePresetFromDescription
+} = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
 
 // Clean up on exit
 process.on('exit', () => {
@@ -1445,4 +1455,101 @@ assert.ok(
 );
 console.log('✓ Suite 11: Headless Offline DSP Renderer verified across all 11 effects, parallel buses & modulations');
 
-console.log('\n=== ALL 11 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matching
+// ============================================================================
+const mysteryTargetPreset = {
+  id: 'target-dub',
+  pos: 0,
+  name: 'TARGET RADIO ECHO',
+  list: [
+    { id: 't1', effect: 'HIGHPASS', cutoff: 0.45 },
+    { id: 't2', effect: 'LOWPASS', cutoff: 0.45 },
+    {
+      id: 't3',
+      effect: 'DELAY',
+      time: 0.35,
+      echo: 60,
+      'wet-level': 65,
+      'dry-level': 90,
+      'lowpass-cutoff': 75,
+      'highpass-cutoff': 20,
+      balance: 0.5
+    },
+    { id: 't4', effect: 'SAMPLE' }
+  ]
+};
+const targetRefPcm = renderPresetOffline(mysteryTargetPreset, dryPhrase);
+const targetAnalysis = analyzePcmAudio(targetRefPcm, dryPhrase);
+assert.ok(
+  targetAnalysis.estimatedDelayMs !== null && Math.abs(targetAnalysis.estimatedDelayMs - 350) <= 25,
+  `Analyzer must detect ~350ms delay lag on mystery target (got ${targetAnalysis.estimatedDelayMs}ms)`
+);
+assert.ok(targetAnalysis.inferredCues.length > 0, 'Analyzer must emit diagnostic effect cues');
+
+// Perturbed initial candidate (wrong cutoffs and wrong delay time)
+const perturbedCandidate = {
+  id: 'cand-dub',
+  pos: 0,
+  name: 'PERTURBED CANDIDATE',
+  list: [
+    { id: 'c1', effect: 'HIGHPASS', cutoff: 0.05 },
+    { id: 'c2', effect: 'LOWPASS', cutoff: 0.95 },
+    {
+      id: 'c3',
+      effect: 'DELAY',
+      time: 0.75,
+      echo: 20,
+      'wet-level': 20,
+      'dry-level': 100,
+      'lowpass-cutoff': 100,
+      'highpass-cutoff': 0,
+      balance: 0.5
+    },
+    { id: 'c4', effect: 'SAMPLE' }
+  ]
+};
+
+const optResult = optimizePresetParameters(perturbedCandidate, targetRefPcm, {
+  dryPcm: dryPhrase,
+  maxIterations: 36
+});
+assert.ok(
+  optResult.finalDistance.totalLoss < optResult.initialDistance.totalLoss,
+  `Optimizer must reduce audio distance (${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss})`
+);
+assert.ok(
+  optResult.finalDistance.similarityScore > optResult.initialDistance.similarityScore,
+  `Optimizer must improve similarity score (${optResult.initialDistance.similarityScore}% -> ${optResult.finalDistance.similarityScore}%)`
+);
+const optimizedDelay = optResult.optimizedPreset.list.find((fx) => fx.effect === 'DELAY');
+assert.ok(
+  Math.abs(optimizedDelay.time - 0.35) <= 0.04,
+  `Analytical + coordinate optimizer must recover DELAY.time near 0.35s (got ${optimizedDelay.time}s)`
+);
+
+// Blind topology discovery + optimization via matchReferenceAudio
+const blindMatch = matchReferenceAudio(targetRefPcm, {
+  dryPcm: dryPhrase,
+  maxIterations: 28
+});
+assert.ok(blindMatch.candidatesEvaluated >= 2);
+assert.ok(
+  blindMatch.finalDistance.similarityScore > 65,
+  `Blind reference match must achieve >65% similarity (got ${blindMatch.finalDistance.similarityScore}%)`
+);
+
+// Semantic synthesizer verification
+const synthDesc = synthesizePresetFromDescription(
+  'gritty cyberpunk walkie talkie radio with dub echo on handle and ssb scramble on shake',
+  0,
+  'CYBER WALKIE'
+);
+assert.strictEqual(synthDesc.preset.name, 'CYBER WALKIE');
+assert.ok(synthDesc.preset.list.some((fx) => fx.effect === 'SAMPLE'));
+assert.ok(synthDesc.rationale.length > 0);
+console.log(
+  `✓ Suite 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matcher verified (loss ${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss}, similarity ${optResult.finalDistance.similarityScore}%)`
+);
+
+console.log('\n=== ALL 12 PRODUCTION TEST SUITES PASSED (100%) ===');
