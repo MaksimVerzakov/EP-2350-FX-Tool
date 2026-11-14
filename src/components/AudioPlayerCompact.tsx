@@ -42,11 +42,12 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
   };
 
   return (
-    <div
-      className={`w-[275px] h-[86px] te-hardware-chassis ${
-        isTing ? 'bg-[#dbd0b9]' : 'bg-[#dbdddb]'
-      } p-2.5 flex flex-col justify-between select-none relative z-10 ${className}`}
-    >
+    <div className={`te-bevel-frame w-[275px] relative z-10 ${className}`}>
+      <div
+        className={`w-full h-[86px] te-hardware-chassis ${
+          isTing ? 'bg-[#dbd0b9]' : 'bg-[#dbdddb]'
+        } p-2.5 flex flex-col justify-between select-none relative z-10`}
+      >
       {/* Top status & screw header */}
       <div className="flex items-center justify-between px-0.5">
         <div className="flex items-center gap-1.5">
@@ -160,6 +161,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
             </>
           )}
         </button>
+      </div>
       </div>
     </div>
   );

@@ -255,7 +255,8 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          viewBox="275 0 305 590"
+          viewBox="275 3.6 305 586.4"
+          preserveAspectRatio="xMidYMin meet"
           className="w-full h-full overflow-visible"
           style={{ overflow: 'visible' }}
           fill="none"
