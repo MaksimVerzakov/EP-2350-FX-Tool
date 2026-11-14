@@ -1431,7 +1431,7 @@ assert.ok(
 
 const deviceConnectorSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/DeviceConnector.tsx'), 'utf8');
 assert.ok(
-  deviceConnectorSrc.includes("'connect the mic'") &&
+  deviceConnectorSrc.includes("'Connect the mic'") &&
     deviceConnectorSrc.includes('aria-label="Save to the mic"') &&
     deviceConnectorSrc.includes('aria-label="Eject the mic"') &&
     deviceConnectorSrc.includes('FloppyIcon') &&

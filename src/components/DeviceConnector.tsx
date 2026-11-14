@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Check } from 'lucide-react';
 import { ThemeMode } from '../types/config';
 
 interface DeviceConnectorProps {
@@ -17,6 +18,9 @@ interface DeviceConnectorProps {
 type SaveState = 'idle' | 'saving' | 'saved';
 
 const EDGE = '#141617';
+/** Block face size (bevels add 5px on the right and bottom). */
+const BLOCK_W = 156;
+const BLOCK_H = 66;
 
 /** Flat floppy glyph in the style of the EP-133 "FLOPPY!" screen icon (cut-outs are transparent). */
 export const FloppyIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -36,34 +40,59 @@ export const EjectIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-/** Horizontal USB-C cable whose plug slides into the mic's port on hover / while connecting. */
-const UsbCable: React.FC<{ plugged: boolean; dim: boolean }> = ({ plugged, dim }) => (
-  <svg viewBox="0 0 96 40" className="w-[96px] h-[40px] shrink-0 overflow-visible" aria-hidden="true">
-    {/* Mic-side port (fixed) */}
-    <g opacity={dim ? 0.5 : 1}>
-      <rect x="80.5" y="10.5" width="14" height="19" fill="#e5e6e6" stroke={EDGE} strokeWidth="0.9" />
-      <rect x="83.5" y="16.5" width="8" height="7" rx="3.5" fill={EDGE} />
-    </g>
-    {/* Cable + plug (slides right when plugged) */}
-    <g
-      className="transition-transform duration-300 ease-out"
-      style={{ transform: plugged ? 'translateX(7px)' : 'translateX(0px)' }}
-      opacity={dim ? 0.5 : 1}
+/**
+ * USB-C plug hanging from a cord, using the same form as the plug in Teenage Engineering's
+ * EP sample tool (strain relief, boot with 45° side/bottom bevels, USB-C tip). The plug drops
+ * into the port drawn at the bottom of the card on hover and while connecting.
+ */
+const UsbPlug: React.FC<{ plugged: boolean; dim: boolean; pageColor: string; cordColor: string }> = ({
+  plugged,
+  dim,
+  pageColor,
+  cordColor
+}) => {
+  const contact = '#dbdddb';
+  const stroke = { stroke: EDGE, strokeWidth: 0.9, vectorEffect: 'non-scaling-stroke' as const, strokeMiterlimit: 10 };
+  return (
+    <svg
+      viewBox="207 22 26 63"
+      className="h-full w-auto shrink-0 overflow-hidden"
+      aria-hidden="true"
+      opacity={dim ? 0.45 : 1}
     >
-      {/* Cable running in from the left edge */}
-      <path d="M-14 20H34" stroke="#e5e6e6" strokeWidth="5" strokeLinecap="square" />
-      {/* Strain relief */}
-      <polygon points="30.5,16.5 38.5,14.5 38.5,25.5 30.5,23.5" fill="#d8dad9" stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
-      {/* Boot with 45° bevel (bottom/right) */}
-      <polygon points="38.5,12.5 62.5,12.5 65.5,15.5 65.5,30.5 41.5,30.5 38.5,27.5" fill="#000" stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
-      <rect x="38.5" y="12.5" width="24" height="15" fill="#f15a22" stroke={EDGE} strokeWidth="0.9" />
-      <circle cx="45" cy="20" r="2.4" fill="none" stroke={EDGE} strokeOpacity="0.55" strokeWidth="0.8" />
-      {/* USB-C shell + contact tongue */}
-      <rect x="62.5" y="15.5" width="15" height="9" rx="4.5" fill="#c9cccb" stroke={EDGE} strokeWidth="0.9" />
-      <rect x="66" y="19" width="8" height="2" rx="1" fill={EDGE} />
-    </g>
-  </svg>
-);
+      {/* Port on the mic, at the bottom edge of the card */}
+      <rect x="214.9" y="80.4" width="10.3" height="4.6" rx="2.3" fill={EDGE} />
+      <g
+        className="transition-transform duration-300 ease-out"
+        style={{ transform: plugged ? 'translateY(4.4px)' : 'translateY(0px)' }}
+      >
+        {/* Cord, running up past the top of the card */}
+        <line x1="220.062" y1="51.312" x2="220.062" y2="-40" stroke={cordColor} strokeWidth="3.75" />
+        {/* Strain relief */}
+        <path
+          d="M220.063,38.812c-2.071,0-3.75,.56-3.75,1.25v17.5h5v-5h2.5v-12.5c0-.69-1.679-1.25-3.75-1.25Z"
+          fill={contact}
+          {...stroke}
+        />
+        {/* Boot + 45° right and bottom bevels */}
+        <rect x="212.562" y="52.562" width="12.5" height="17.5" fill={contact} {...stroke} />
+        <polygon points="225.062 70.062 225.062 52.562 227.562 55.062 227.562 72.562 225.062 70.062" fill={contact} {...stroke} />
+        <polygon points="212.562 70.062 215.062 72.563 227.562 72.562 225.062 70.062 212.562 70.062" fill={contact} {...stroke} />
+        {/* USB-C tip */}
+        <path
+          d="M215.688,71.666h0c0-.524,.725-.948,1.619-.948h5.227c.894,0,1.619,.425,1.619,.948h0v5.393h-8.465v-5.393h0Z"
+          fill={pageColor}
+          {...stroke}
+        />
+        <path
+          d="M217.307,78.007c-.894,0-1.619-.425-1.619-.948h0c0-.524,.725-.948,1.619-.948h5.227c.894,0,1.619,.425,1.619,.948h0c0,.524-.725,.948-1.619,.948h-5.227Z"
+          fill={pageColor}
+          {...stroke}
+        />
+      </g>
+    </svg>
+  );
+};
 
 export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
   theme,
@@ -88,9 +117,15 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
     if (!isConnected) setSaveState('idle');
   }, [isConnected]);
 
+  // Light face for the disconnected card (matches the TOOL block), dark face for EJECT.
+  const lightFace = isTing ? '#e8e9e4' : '#e5e6e6';
+  const lightFaceHover = isTing ? '#f3f3ef' : '#f2f3f3';
+  const lightBevel = isTing ? '#dbd0b9' : '#d8dad9';
   const darkFace = isTing ? '#00503a' : '#141617';
   const darkFaceHover = isTing ? '#006348' : '#272a2c';
   const darkBevel = isTing ? '#003828' : '#000000';
+  const ink = isTing ? '#00503a' : '#141617';
+  const pageColor = isTing ? '#dbd0b9' : '#abb5ba';
 
   const handleSave = async () => {
     if (saveState === 'saving') return;
@@ -105,30 +140,38 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
     savedTimer.current = setTimeout(() => setSaveState('idle'), 1600);
   };
 
-  const cornerRing = (pos: string, light: boolean) => (
-    <span
-      className={`w-[11px] h-[11px] rounded-full border absolute ${pos} pointer-events-none ${
-        light ? 'border-white/40' : 'border-[#141617]/55'
-      }`}
-    />
+  const ring = (pos: string, cls: string) => (
+    <span className={`w-[11px] h-[11px] rounded-full border absolute ${pos} pointer-events-none ${cls}`} />
   );
+
+  const half = BLOCK_W / 2;
+  const W = BLOCK_W;
+  const H = BLOCK_H;
 
   return (
     <div className="relative pr-[5px] pb-[5px]" data-testid="device-connector">
       {/* 45° axonometric bevels (bottom & right), colour-matched to the faces above them */}
-      <svg className="absolute inset-0 w-[241px] h-[71px] pointer-events-none" viewBox="0 0 241 71" fill="none">
+      <svg
+        className="absolute inset-0 pointer-events-none"
+        style={{ width: W + 5, height: H + 5 }}
+        viewBox={`0 0 ${W + 5} ${H + 5}`}
+        fill="none"
+      >
         {isConnected ? (
           <>
-            <polygon points="0.5,65.5 118,65.5 123,70.5 5.5,70.5" fill="#c94a1b" stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
-            <polygon points="118,65.5 235.5,65.5 240.5,70.5 123,70.5" fill={darkBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+            <polygon points={`0.5,${H - 0.5} ${half},${H - 0.5} ${half + 5},${H + 4.5} 5.5,${H + 4.5}`} fill="#c94a1b" stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+            <polygon points={`${half},${H - 0.5} ${W - 0.5},${H - 0.5} ${W + 4.5},${H + 4.5} ${half + 5},${H + 4.5}`} fill={darkBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+            <polygon points={`${W - 0.5},0.5 ${W + 4.5},5.5 ${W + 4.5},${H + 4.5} ${W - 0.5},${H - 0.5}`} fill={darkBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
           </>
         ) : (
-          <polygon points="0.5,65.5 235.5,65.5 240.5,70.5 5.5,70.5" fill={darkBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+          <>
+            <polygon points={`0.5,${H - 0.5} ${W - 0.5},${H - 0.5} ${W + 4.5},${H + 4.5} 5.5,${H + 4.5}`} fill={lightBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+            <polygon points={`${W - 0.5},0.5 ${W + 4.5},5.5 ${W + 4.5},${H + 4.5} ${W - 0.5},${H - 0.5}`} fill={lightBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
+          </>
         )}
-        <polygon points="235.5,0.5 240.5,5.5 240.5,70.5 235.5,65.5" fill={darkBevel} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
       </svg>
 
-      <div className="relative z-10 w-[236px] h-[66px] border border-[#141617] flex">
+      <div className="relative z-10 border border-[#141617] flex" style={{ width: W, height: H }}>
         {!isConnected ? (
           <button
             type="button"
@@ -144,21 +187,37 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 ? 'Connect your EP-2350 over USB-C to load and save its presets'
                 : 'Web Serial is not available in this browser. Use Chrome or Edge on desktop.'
             }
-            className="group w-full h-full relative flex items-center gap-2 pl-1 pr-3 overflow-hidden transition-colors cursor-pointer disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
-            style={{ backgroundColor: hovered && isSupported && !isConnecting ? darkFaceHover : darkFace }}
+            className="group w-full h-full relative flex items-stretch gap-3 pl-3 pr-3 overflow-hidden transition-colors cursor-pointer disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
+            style={{ backgroundColor: hovered && isSupported && !isConnecting ? lightFaceHover : lightFace }}
           >
-            <UsbCable plugged={(hovered && isSupported) || isConnecting} dim={!isSupported} />
-            <span className="flex flex-col items-start gap-[5px] min-w-0 flex-1">
-              <span className="font-te-regular text-[13px] tracking-wider uppercase leading-none text-white whitespace-nowrap">
-                {isConnecting ? 'connecting…' : 'connect the mic'}
+            <UsbPlug
+              plugged={(hovered && isSupported) || isConnecting}
+              dim={!isSupported}
+              pageColor={pageColor}
+              cordColor={ink}
+            />
+            <span className="flex flex-col justify-center items-start gap-[4px] min-w-0">
+              <span
+                className="font-te-regular text-[13px] tracking-wider uppercase leading-none whitespace-nowrap"
+                style={{ color: ink }}
+              >
+                {isConnecting ? 'connecting' : 'connect'}
               </span>
-              <span className="font-mono text-[8px] tracking-wider uppercase leading-none text-white/60 whitespace-nowrap">
-                {isSupported ? (isConnecting ? 'pick the ep-2350 port' : 'click · usb-c') : 'needs chrome / edge'}
+              <span
+                className="font-te-regular text-[13px] tracking-wider uppercase leading-none whitespace-nowrap"
+                style={{ color: ink }}
+              >
+                {isConnecting ? 'the mic…' : 'the mic'}
               </span>
+              {!isSupported && (
+                <span className="font-mono text-[7.5px] tracking-wider uppercase leading-none text-[#73787a] whitespace-nowrap mt-[2px]">
+                  needs chrome / edge
+                </span>
+              )}
             </span>
             {/* Call-to-action dot: pulses to invite a click */}
             {isSupported && (
-              <span className="relative w-[11px] h-[11px] shrink-0 self-start mt-[7px]">
+              <span className="absolute top-[7px] right-[7px] w-[11px] h-[11px]">
                 <span
                   className={`absolute inset-0 rounded-full bg-[#f15a22] ${
                     isConnecting ? 'animate-ping' : 'motion-safe:animate-pulse group-hover:animate-none'
@@ -175,37 +234,40 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               onClick={handleSave}
               disabled={saveState === 'saving'}
               aria-label="Save to the mic"
-              title="Write this pack to the mic (config.json) and reload the active preset"
-              className="relative flex flex-col items-center justify-center gap-[6px] border-r border-[#141617] bg-[#f15a22] hover:bg-[#ff6b35] cursor-pointer transition-colors disabled:cursor-wait focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-inset"
+              title={
+                saveState === 'saved'
+                  ? 'Saved to the mic'
+                  : hasUnsavedChanges
+                  ? 'Save to the mic: unsaved changes (writes config.json and reloads the active preset)'
+                  : 'Save to the mic (writes config.json and reloads the active preset)'
+              }
+              className="relative flex items-center justify-center border-r border-[#141617] bg-[#f15a22] hover:bg-[#ff6b35] cursor-pointer transition-colors disabled:cursor-wait focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-inset"
             >
-              {cornerRing('top-[7px] left-[7px]', false)}
+              {ring('top-[7px] left-[7px]', 'border-[#141617]/55')}
               {hasUnsavedChanges && saveState === 'idle' && (
                 <span
                   className="w-[11px] h-[11px] rounded-full border border-[#141617] bg-white absolute top-[7px] right-[7px]"
-                  title="Unsaved changes"
                   data-testid="unsaved-indicator"
                 />
               )}
-              <FloppyIcon className={`w-[20px] h-[20px] text-white ${saveState === 'saving' ? 'animate-pulse' : ''}`} />
-              <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
-                {saveState === 'saving' ? 'saving…' : saveState === 'saved' ? 'saved' : 'save'}
-              </span>
+              {saveState === 'saved' ? (
+                <Check className="w-[26px] h-[26px] text-white" strokeWidth={3} data-testid="saved-indicator" />
+              ) : (
+                <FloppyIcon className={`w-[26px] h-[26px] text-white ${saveState === 'saving' ? 'animate-pulse' : ''}`} />
+              )}
             </button>
             <button
               type="button"
               onClick={onEject}
               aria-label="Eject the mic"
-              title="Disconnect from the mic. Also eject the TINGDISK drive in your OS before unplugging."
-              className="group relative flex flex-col items-center justify-center gap-[6px] cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
+              title="Eject: disconnect from the mic. Also eject the TINGDISK drive in your OS before unplugging."
+              className="group relative flex items-center justify-center cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
               style={{ backgroundColor: darkFace }}
               onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = darkFaceHover)}
               onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = darkFace)}
             >
-              {cornerRing('top-[7px] right-[7px]', true)}
-              <EjectIcon className="w-[20px] h-[20px] text-white group-hover:text-[#f15a22] transition-colors" />
-              <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
-                eject
-              </span>
+              {ring('top-[7px] right-[7px]', 'border-white/40')}
+              <EjectIcon className="w-[24px] h-[24px] text-white group-hover:text-[#f15a22] transition-colors" />
             </button>
           </div>
         )}
