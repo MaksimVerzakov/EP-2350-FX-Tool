@@ -23,6 +23,7 @@ function buildSourceModulesForTest() {
     'src/constants/defaultPresets.ts',
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
+    'src/utils/webSerial.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts'
@@ -75,6 +76,9 @@ const { parseConfigJson } = await import(
 );
 const { serializeToConfigJson, validatePackConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/serializer.mjs')).href
+);
+const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/webSerial.mjs')).href
 );
 const {
   NoiseGateKernel,
@@ -240,7 +244,49 @@ assert.ok(
   oversizedIssues.some((i) => i.type === 'warning' && i.message.includes("'EQUALISER' is documented in the TE guide")),
   'Validator must warn about EQUALISER firmware <= 1.0.8 compatibility'
 );
-console.log('✓ Suite 3: Validator constraints, 16-row hardware limit & out-of-bounds modulation checks verified');
+
+// Verify 16 non-SAMPLE effects triggers 17-effect limit error because SAMPLE is required
+const sixteenWithoutSamplePack = {
+  name: 'SIXTEEN WITHOUT SAMPLE',
+  useBuiltInSamples: true,
+  samples: [],
+  presets: [
+    {
+      id: 'p-16-no-s',
+      pos: 0,
+      name: 'NO SAMPLE 16',
+      comment: '',
+      list: Array.from({ length: 16 }, (_, idx) => ({ id: `fx-${idx}`, effect: 'LOWPASS', cutoff: 50 }))
+    }
+  ]
+};
+const sixteenNoSampleIssues = validatePackConfig(sixteenWithoutSamplePack);
+assert.ok(
+  sixteenNoSampleIssues.some((i) => i.type === 'error' && i.message.includes('17 total including required SAMPLE')),
+  '16 non-SAMPLE effects must fail validation because adding required SAMPLE makes 17 effects'
+);
+
+// Verify serializer auto-appends SAMPLE when missing (within 16-effect limit)
+const missingSamplePack = {
+  name: 'AUTO SAMPLE PACK',
+  useBuiltInSamples: true,
+  samples: [],
+  presets: [
+    {
+      id: 'p-auto-s',
+      pos: 0,
+      name: 'AUTO SAMPLE',
+      comment: '',
+      list: [{ id: 'fx-0', effect: 'DIST', amount: 10, mix: 50 }]
+    }
+  ]
+};
+const serializedAutoSample = JSON.parse(serializeToConfigJson(missingSamplePack));
+assert.strictEqual(serializedAutoSample.presets[0].list.length, 2);
+assert.strictEqual(serializedAutoSample.presets[0].list[1].effect, 'SAMPLE');
+assert.deepStrictEqual(serializedAutoSample.presets[0].trigger, { row: 1 });
+
+console.log('✓ Suite 3: Validator constraints, 16-row hardware limit (incl. SAMPLE) & auto-append verified');
 
 // ---------------------------------------------------------------------------
 // SUITE 4: Parser Resilience, Custom Samples, Parallel Buses & Bipolar Depths
@@ -617,6 +663,12 @@ assert.ok(
   !presetLedgerSrc.includes('phase: 0'),
   'PresetLedger must not inject spurious phase: 0 when toggling LFO ON'
 );
+assert.ok(
+  presetLedgerSrc.includes('isHiddenTrailingSample') &&
+    presetLedgerSrc.includes('visibleBusItems') &&
+    presetLedgerSrc.includes('effectiveEffectCount'),
+  'PresetLedger must skip unchanged trailing SAMPLE and reserve 1 slot toward the 16-effect limit when SAMPLE is missing'
+);
 
 // 7. Side hardware buttons are 3D cylindrical buttons mounted on the right side wall
 assert.ok(
@@ -626,7 +678,7 @@ assert.ok(
   'MicDevice must render 3D side-mounted cylindrical buttons with elliptical end caps and inward press motion'
 );
 
-console.log('✓ Suite 7: UX horizontal Push/Shake arrows, 3D side buttons, Mic FX block shake & balanced TopBanner verified');
+console.log('✓ Suite 7: UX horizontal Push/Shake arrows, 3D side buttons, Mic FX block shake, trailing SAMPLE hiding & balanced TopBanner verified');
 
 // -----------------------------------------------------------------------------
 // SUITE 8: DspAudioEngine Graph Routing, Live Modulation, Safety Limiter & Race Protection
@@ -1045,4 +1097,166 @@ assert.ok(emptyPresetsIssues.some((i) => i.type === 'error' && i.message.include
 
 console.log('✓ Suite 8: DspAudioEngine all 11 effects, bundled WAV samples, AudioWorklet & race protection verified');
 
-console.log('\n=== ALL 8 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 9: Web Serial Live Hardware Mode (Ep2350SerialClient & UI Integration)
+// ============================================================================
+assert.strictEqual(EP2350_USB_VID, 0x2367, 'EP-2350 USB Vendor ID must be 0x2367');
+assert.strictEqual(EP2350_USB_PID, 0x0620, 'EP-2350 USB Product ID must be 0x0620');
+
+const sentCommands = [];
+let openedOptions = null;
+let requestedFilters = null;
+let readController = null;
+const mockDeviceConfigJson = JSON.stringify({
+  name: 'TING HARDWARE PACK',
+  presets: [
+    {
+      pos: 0,
+      name: 'HW DELAY',
+      list: [{ EFFECT: 'DELAY', time: 0.25, echo: 0.5, 'dry-level': 0.8 }]
+    },
+    { pos: 1, name: 'HW REVERB', list: [{ EFFECT: 'REVERB', time: 0.4, 'wet-level': 0.5 }] },
+    { pos: 2, name: 'HW DIST', list: [{ EFFECT: 'DIST', amount: 0.3, mix: 0.5 }] },
+    { pos: 3, name: 'HW RING', list: [{ EFFECT: 'RING', frequency: 220, mix: 0.8 }] }
+  ]
+});
+
+function createMockSerialPort() {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const readable = new ReadableStream({
+    start(controller) {
+      readController = controller;
+    }
+  });
+  const writable = new WritableStream({
+    write(chunk) {
+      const text = decoder.decode(chunk);
+      sentCommands.push(text);
+      if (text.includes('__CFG_START__')) {
+        const reply = `${text}__CFG_START__${mockDeviceConfigJson}__CFG_END__\r\n>>> `;
+        readController.enqueue(encoder.encode(reply));
+      } else {
+        readController.enqueue(encoder.encode(`${text}>>> `));
+      }
+    }
+  });
+
+  return {
+    readable,
+    writable,
+    getInfo: () => ({ usbVendorId: EP2350_USB_VID, usbProductId: EP2350_USB_PID }),
+    open: async (opts) => {
+      openedOptions = opts;
+    },
+    close: async () => {}
+  };
+}
+
+globalThis.navigator = {
+  serial: {
+    requestPort: async (opts) => {
+      requestedFilters = opts?.filters;
+      return createMockSerialPort();
+    },
+    getPorts: async () => [createMockSerialPort()]
+  }
+};
+
+assert.strictEqual(Ep2350SerialClient.isSupported(), true, 'isSupported() must detect navigator.serial');
+const serialClient = new Ep2350SerialClient(25);
+let disconnectedCount = 0;
+serialClient.onDisconnect(() => {
+  disconnectedCount++;
+});
+
+await serialClient.connect();
+assert.strictEqual(serialClient.isConnected, true, 'serialClient must report connected after connect()');
+assert.strictEqual(openedOptions.baudRate, 115200, 'Serial port must open at 115200 baud');
+assert.strictEqual(requestedFilters[0].usbVendorId, 0x2367, 'requestPort filter must match VID 0x2367');
+assert.strictEqual(requestedFilters[0].usbProductId, 0x0620, 'requestPort filter must match PID 0x0620');
+assert.ok(sentCommands[0].includes('\x03\x03\r\n'), 'Connect must send double Ctrl+C interrupt to reach REPL');
+
+// Read /fat/config.json and verify parsed device pack name
+const rawDeviceJson = await serialClient.readConfigJson();
+const parsedDevice = parseConfigJson(rawDeviceJson);
+assert.ok(parsedDevice.pack, 'Device config.json must parse into a valid PackConfig');
+assert.strictEqual(parsedDevice.pack.name, 'TING HARDWARE PACK', 'Parsed pack must preserve the device pack name');
+
+// Preset switching via fx.load_preset(slot)
+await serialClient.loadPreset(2);
+assert.ok(
+  sentCommands.some((c) => c.includes('fx.load_preset(2)')),
+  'loadPreset(2) must send fx.load_preset(2) over REPL'
+);
+await assert.rejects(() => serialClient.loadPreset(4), /Invalid preset slot/, 'Out-of-range slot 4 must reject');
+
+// Live parameter updates: percent scaling, BUS guard, and throttling
+const beforeParamCount = sentCommands.length;
+serialClient.setParam(0, 0, 'BUS', 2, 'DELAY');
+assert.strictEqual(sentCommands.length, beforeParamCount, 'setParam must never send BUS over REPL');
+
+serialClient.setParam(0, 0, 'dry-level', 75, 'DELAY');
+await new Promise((r) => setTimeout(r, 40));
+assert.ok(
+  sentCommands.some((c) => c.includes('fx.param(0, 0, "dry-level", 0.75)')),
+  'Percent param dry-level=75 on DELAY must be scaled to 0.75'
+);
+
+// Rapid updates within throttle window coalesce to trailing value
+serialClient.setParam(0, 0, 'time', 0.1, 'DELAY');
+serialClient.setParam(0, 0, 'time', 0.2, 'DELAY');
+serialClient.setParam(0, 0, 'time', 0.42, 'DELAY');
+await new Promise((r) => setTimeout(r, 50));
+assert.ok(
+  sentCommands.some((c) => c.includes('fx.param(0, 0, "time", 0.42)')),
+  'Trailing throttled setParam value 0.42 must be sent'
+);
+assert.ok(
+  !sentCommands.some((c) => c.includes('fx.param(0, 0, "time", 0.2)')),
+  'Intermediate throttled value 0.2 must be coalesced'
+);
+
+// Line-by-line save to /fat/config.json with os.sync() and teenage.examine_drive(False)
+await serialClient.saveConfigJson('{"name":"SAVED"}\n', 1);
+assert.ok(
+  sentCommands.some((c) => c.includes('_f = open("/fat/config.json", "w")')),
+  'saveConfigJson must open /fat/config.json for writing'
+);
+assert.ok(
+  sentCommands.some((c) => c.includes('import os; os.sync()')),
+  'saveConfigJson must call os.sync()'
+);
+assert.ok(
+  sentCommands.some((c) => c.includes('import teenage; teenage.examine_drive(False)')),
+  'saveConfigJson must call teenage.examine_drive(False)'
+);
+assert.ok(
+  sentCommands.some((c) => c.includes('fx.load_preset(1)')),
+  'saveConfigJson must reload active preset slot after saving'
+);
+
+await serialClient.disconnect();
+assert.strictEqual(serialClient.isConnected, false, 'serialClient must report disconnected after disconnect()');
+assert.strictEqual(disconnectedCount, 1, 'onDisconnect listener must fire on disconnect');
+
+// Auto-connect via navigator.serial.getPorts()
+const autoConnected = await serialClient.tryAutoConnect();
+assert.strictEqual(autoConnected, true, 'tryAutoConnect() must connect to authorized EP-2350 port via getPorts()');
+await serialClient.disconnect();
+
+// Verify TopBanner.tsx and App.tsx include connected-device pack icon & state
+const topBannerUpdatedSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/TopBanner.tsx'), 'utf8');
+const appUpdatedSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+assert.ok(
+  topBannerUpdatedSrc.includes('data-testid="connected-device-icon"') && topBannerUpdatedSrc.includes('isDevicePack'),
+  'TopBanner.tsx must render connected-device-icon when isDevicePack is active'
+);
+assert.ok(
+  appUpdatedSrc.includes('ep2350Serial') && appUpdatedSrc.includes('syncFromConnectedDevice'),
+  'App.tsx must integrate ep2350Serial and switch to the device pack on connect'
+);
+
+console.log('✓ Suite 9: Web Serial Live Hardware Mode (Ep2350SerialClient & UI Integration) verified');
+
+console.log('\n=== ALL 9 PRODUCTION TEST SUITES PASSED (100%) ===');
