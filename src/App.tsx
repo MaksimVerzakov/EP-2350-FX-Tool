@@ -53,6 +53,7 @@ export const App: React.FC = () => {
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
   const [devicePack, setDevicePack] = useState<PackConfig | null>(null);
 
+  const isEffectsOff = activeSlot < 0;
   const activePreset = pack.presets.find((p) => p.pos === activeSlot) || pack.presets[0];
 
   const syncFromConnectedDevice = useCallback(async () => {
@@ -63,10 +64,16 @@ export const App: React.FC = () => {
     }
     setPack(parsed.pack);
     setDevicePack(parsed.pack);
-    setActiveSlot(0);
+    const hwSlots = await ep2350Serial.pollHardwareSlot().catch(() => null);
+    if (hwSlots) {
+      setActiveSlot(hwSlots.fxSlot);
+      setActiveSampleSlot(hwSlots.samSlot);
+      audioEngine.setActiveSampleSlot(hwSlots.samSlot);
+    } else {
+      setActiveSlot(0);
+    }
     setIsDeviceConnected(true);
     setIsDevicePack(true);
-    void ep2350Serial.loadPreset(0).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -205,10 +212,14 @@ export const App: React.FC = () => {
     safeSetLocalStorage('ep2350_pack_config', serializeToConfigJson(pack));
   }, [pack]);
 
-  // Synchronize active preset with DSP engine
+  // Synchronize active preset with DSP engine (dry bypass when FX are switched off)
   useEffect(() => {
-    audioEngine.updatePreset(activePreset);
-  }, [activePreset]);
+    if (isEffectsOff) {
+      audioEngine.updatePreset({ id: 'fx-off', name: 'FX OFF', pos: -1, list: [] });
+    } else {
+      audioEngine.updatePreset(activePreset);
+    }
+  }, [activePreset, isEffectsOff]);
 
   // Synchronize active sample slot with DSP engine and connected hardware
   const handleSelectSampleSlot = useCallback(
@@ -429,6 +440,8 @@ export const App: React.FC = () => {
             <PresetLedger
               preset={activePreset}
               totalPresets={pack.presets.length}
+              isEffectsOff={isEffectsOff}
+              presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
               onUpdatePreset={handleUpdateActivePreset}
               onSelectPreset={handleSelectSlot}
               theme={theme}

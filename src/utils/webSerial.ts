@@ -279,7 +279,7 @@ export class Ep2350SerialClient {
   }
 
   async loadPreset(slot: number): Promise<void> {
-    if (!Number.isInteger(slot) || slot < 0 || slot > 3) {
+    if (!Number.isInteger(slot) || slot < -1 || slot > 3) {
       throw new Error(`Invalid preset slot: ${slot}`);
     }
     this.lastKnownFxSlot = slot;
@@ -296,7 +296,7 @@ export class Ep2350SerialClient {
     this.lastKnownSamSlot = slot;
     this.pausePolling(600);
     await this.evalRepl(
-      `sam_pos = ${slot}; (setattr(teenage, 'sam_pos', ${slot}) if 'teenage' in globals() else None); import ui; ui.leds(teenage.fx_pos if 'teenage' in globals() else globals().get('fx_pos', 0), ${slot})`
+      `sam_pos = ${slot}; (setattr(teenage, 'sam_pos', ${slot}) if 'teenage' in globals() else None); import ui; ui.leds(teenage.fx_pos if 'teenage' in globals() else globals().get('fx_pos', -1), ${slot})`
     );
   }
 
@@ -316,7 +316,7 @@ export class Ep2350SerialClient {
     if (Number.isInteger(fxSlot) && fxSlot >= -1 && fxSlot <= 3) {
       const prevFx = this.lastKnownFxSlot;
       this.lastKnownFxSlot = fxSlot;
-      if (fxSlot >= 0 && fxSlot !== prevFx) {
+      if (fxSlot !== prevFx) {
         this.notifyPresetSlotChange(fxSlot);
       }
     }
@@ -381,7 +381,7 @@ export class Ep2350SerialClient {
       await this.evalRepl('_f.close()').catch(() => undefined);
     }
     await this.evalRepl('import os; os.sync()');
-    if (activeSlot !== undefined && Number.isInteger(activeSlot) && activeSlot >= 0 && activeSlot <= 3) {
+    if (activeSlot !== undefined && Number.isInteger(activeSlot) && activeSlot >= -1 && activeSlot <= 3) {
       await this.loadPreset(activeSlot);
     }
   }

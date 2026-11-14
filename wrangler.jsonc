@@ -1,8 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ep2350-fx-tool",
+  "name": "ep-2350-fx-tool",
   "main": "dist/_worker.js",
   "compatibility_date": "2025-03-01",
+  "previews": {},
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

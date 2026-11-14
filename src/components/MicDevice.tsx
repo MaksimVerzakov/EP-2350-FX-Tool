@@ -162,7 +162,8 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
 
   const cyclePreset = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onSelectSlot((activeSlot + 1) % 4);
+    const nextSlot = activeSlot + 1 >= 4 ? -1 : activeSlot + 1;
+    onSelectSlot(nextSlot);
   };
 
   const cycleSampleSlot = (e: React.MouseEvent) => {
@@ -656,11 +657,11 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                 key={slot}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onSelectSlot(slot);
+                  onSelectSlot(activeSlot === slot ? -1 : slot);
                 }}
                 className="cursor-pointer group"
               >
-                <title>{`Preset ${slot + 1}`}</title>
+                <title>{activeSlot === slot ? `Preset ${slot + 1} (Click to switch FX OFF)` : `Preset ${slot + 1}`}</title>
                 {/* Hit area */}
                 <circle cx={521.08} cy={cy} r={8} fill="transparent" />
 
