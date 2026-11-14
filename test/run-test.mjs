@@ -2473,4 +2473,64 @@ const badMod = await lintOf({
 assert.ok(badMod.some((m) => m.includes('has no parameter "cutoff"')), 'Mod param mismatch must warn');
 console.log('✓ Suite 19: Typed MCP tool schemas, annotations & structuredContent verified');
 
-console.log('\n=== ALL 19 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 20: Shared rolldown MCP bundle (stdio server + Cloudflare Worker)
+// ============================================================================
+const { bundleMcp, MCP_CORE_ENTRY } = await import(
+  pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-mcp.mjs')).href
+);
+const bundleOut = path.join(TMP_TEST_BUILD, 'bundle-check', 'mcp-core.mjs');
+const { version: bundledVersion } = await bundleMcp({
+  rootDir: ROOT_DIR,
+  entry: MCP_CORE_ENTRY,
+  outFile: bundleOut,
+  version: '9.9.9-test'
+});
+assert.strictEqual(bundledVersion, '9.9.9-test');
+const bundleSrc = fs.readFileSync(bundleOut, 'utf8');
+assert.ok(!bundleSrc.includes('__APP_VERSION__'), 'Bundle must not contain the raw __APP_VERSION__ token');
+assert.ok(!/from\s+['"][^'"]+\?raw['"]/.test(bundleSrc), 'Bundle must inline ?raw imports');
+const bundledCore = await import(pathToFileURL(bundleOut).href);
+assert.strictEqual(bundledCore.MCP_SERVER_VERSION, '9.9.9-test', 'Injected version must reach serverInfo');
+assert.strictEqual(
+  bundledCore.MCP_TOOLS.length,
+  7,
+  'Bundled core must expose all tools (toolSchemas.ts followed via imports, no file list)'
+);
+const officialRead = await bundledCore.handleMcpCoreRequest({
+  jsonrpc: '2.0',
+  id: 500,
+  method: 'resources/read',
+  params: { uri: 'ep2350://presets/official-packs' }
+});
+assert.strictEqual(
+  JSON.parse(officialRead.result.contents[0].text).length,
+  3,
+  'Official packs (?raw JSON imports) must be inlined into the bundle'
+);
+
+// Unresolved imports fail the build instead of producing a broken bundle
+const brokenEntryDir = path.join(TMP_TEST_BUILD, 'bundle-broken');
+fs.mkdirSync(brokenEntryDir, { recursive: true });
+fs.writeFileSync(path.join(brokenEntryDir, 'entry.ts'), "import { nope } from './missing';\nexport const x: number = nope;\n");
+await assert.rejects(
+  bundleMcp({
+    rootDir: brokenEntryDir,
+    entry: 'entry.ts',
+    outFile: path.join(brokenEntryDir, 'out.mjs'),
+    version: '0.0.0'
+  }),
+  'bundleMcp must reject when an import cannot be resolved'
+);
+
+// No hand-maintained compile lists remain in the MCP entry points
+for (const rel of ['mcp/server.mjs', 'scripts/build-cloudflare-worker.mjs']) {
+  const src = fs.readFileSync(path.join(ROOT_DIR, rel), 'utf8');
+  assert.ok(
+    !src.includes('stripTypeScriptTypes') && !src.includes('filesToCompile'),
+    `${rel} must use scripts/bundle-mcp.mjs instead of a per-file compile list`
+  );
+}
+console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare Worker) verified');
+
+console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');

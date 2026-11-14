@@ -15,113 +15,42 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import { stripTypeScriptTypes } from 'node:module';
-import { injectAppVersion, resolveAppVersion } from '../scripts/app-version.mjs';
+import { MCP_CORE_ENTRY, bundleMcp } from '../scripts/bundle-mcp.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 
-let cachedEngineModules = null;
+let engineModulesPromise = null;
 
 /**
- * Compile and load the TypeScript DSP & MCP core modules on the fly using Node 22+
- * built-in `stripTypeScriptTypes`. Zero external bundler or build step required.
+ * Bundle the TypeScript MCP core (and everything it imports) with rolldown into a temp ESM
+ * file and import it. Runs once per process; there is no file list to maintain.
  */
-export async function loadEp2350EngineModules() {
-  if (cachedEngineModules) return cachedEngineModules;
-
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-mcp-'));
-  process.on('exit', () => {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {}
-  });
-
-  const filesToCompile = [
-    'src/types/config.ts',
-    'src/constants/effectsRegistry.ts',
-    'src/constants/defaultPresets.ts',
-    'src/utils/parser.ts',
-    'src/utils/serializer.ts',
-    'src/utils/presetUrl.ts',
-    'src/utils/wavCodec.ts',
-    'src/dsp/math.ts',
-    'src/dsp/offlineRenderer.ts',
-    'src/dsp/analyzer.ts',
-    'src/dsp/optimizer.ts',
-    'src/mcp/toolSchemas.ts',
-    'src/mcp/mcpCore.ts'
-  ];
-
-  const appVersion = resolveAppVersion(ROOT_DIR);
-  for (const relPath of filesToCompile) {
-    const absIn = path.join(ROOT_DIR, relPath);
-    let source = fs.readFileSync(absIn, 'utf8');
-
-    source = source.replace(
-      /import\s+([a-zA-Z0-9_]+)\s+from\s+['"]([^'"]+)\?raw['"]/g,
-      (_, varName, importPath) => {
-        const fullJsonPath = path.resolve(path.dirname(absIn), importPath);
-        const jsonContent = fs.readFileSync(fullJsonPath, 'utf8');
-        return `const ${varName} = ${JSON.stringify(jsonContent)};`;
-      }
-    );
-
-    source = injectAppVersion(source, appVersion);
-
-    const stripped = stripTypeScriptTypes(source);
-    const rewritten = stripped.replace(
-      /from\s+['"](\.[^'"]+)['"]/g,
-      (_, spec) => `from '${spec}.mjs'`
-    );
-
-    const absOut = path.join(tmpDir, relPath.replace(/\.ts$/, '.mjs'));
-    fs.mkdirSync(path.dirname(absOut), { recursive: true });
-    fs.writeFileSync(absOut, rewritten, 'utf8');
+export function loadEp2350EngineModules() {
+  if (!engineModulesPromise) {
+    engineModulesPromise = (async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-mcp-'));
+      process.on('exit', () => {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {}
+      });
+      const { outFile } = await bundleMcp({
+        rootDir: ROOT_DIR,
+        entry: MCP_CORE_ENTRY,
+        outFile: path.join(tmpDir, 'mcp-core.mjs'),
+        platform: 'node'
+      });
+      return import(pathToFileURL(outFile).href);
+    })();
+    // Allow a retry after a failed build (e.g. a syntax error fixed while the dev server runs).
+    engineModulesPromise.catch(() => {
+      engineModulesPromise = null;
+    });
   }
-
-  const importMod = (relMjs) => import(pathToFileURL(path.join(tmpDir, relMjs)).href);
-
-  const [
-    effectsRegistryMod,
-    defaultPresetsMod,
-    parserMod,
-    serializerMod,
-    presetUrlMod,
-    wavCodecMod,
-    offlineRendererMod,
-    analyzerMod,
-    optimizerMod,
-    mcpCoreMod
-  ] = await Promise.all([
-    importMod('src/constants/effectsRegistry.mjs'),
-    importMod('src/constants/defaultPresets.mjs'),
-    importMod('src/utils/parser.mjs'),
-    importMod('src/utils/serializer.mjs'),
-    importMod('src/utils/presetUrl.mjs'),
-    importMod('src/utils/wavCodec.mjs'),
-    importMod('src/dsp/offlineRenderer.mjs'),
-    importMod('src/dsp/analyzer.mjs'),
-    importMod('src/dsp/optimizer.mjs'),
-    importMod('src/mcp/mcpCore.mjs')
-  ]);
-
-  cachedEngineModules = {
-    ...effectsRegistryMod,
-    ...defaultPresetsMod,
-    ...parserMod,
-    ...serializerMod,
-    ...presetUrlMod,
-    ...wavCodecMod,
-    ...offlineRendererMod,
-    ...analyzerMod,
-    ...optimizerMod,
-    ...mcpCoreMod
-  };
-
-  return cachedEngineModules;
+  return engineModulesPromise;
 }
 
 function createNodeRuntimeOptions(overrides = {}) {
