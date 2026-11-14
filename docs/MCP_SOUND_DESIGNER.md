@@ -54,8 +54,8 @@ The model writes presets itself: there is no keyword-based "design from descript
 ### Tool Schemas & Preset Scale
 - Every tool has a `title`, `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`) and an `outputSchema`; successful calls return `structuredContent` alongside the JSON text block.
 - `validate_preset` and `simulate_preset` publish a full typed `preset` schema generated from `EFFECTS_REGISTRY` (effect names, every parameter with min/max, modulation rows 0..15, LFO shapes). Other tools reference the same shape to keep `tools/list` small.
-- **`preset` objects use the editor (UI) scale**: percent knobs `0..100`, percent modulation depths `-100..100`. Hardware `config.json` uses `0.0..1.0`; pass such files as `configJson`, or multiply by 100.
-- `validate_preset` and `simulate_preset` warn about unknown parameter names, out-of-range values, modulation targets that don't exist on the row's effect, and presets that look like they use the 0..1 hardware scale.
+- **Either preset scale is accepted.** The editor (UI) scale uses percent knobs `0..100` and percent modulation depths `-100..100`; hardware `config.json`, the official packs and every `hardwarePresetJson` / `normalizedPresetJson` output use `0.0..1.0`. A preset in `config.json` scale is detected (all non-zero percent values within ±1) and converted with the same parser as imported files; `validate_preset` / `simulate_preset` report `inputScale`. Tool outputs can be passed straight back in.
+- `validate_preset` and `simulate_preset` warn about unknown parameter names, out-of-range values, and modulation targets that don't exist on the row's effect.
 - On HTTP transports, file-path arguments are not advertised at all and annotations reflect what a call can do there (for example, `export_pack_config` is read-only on HTTP).
 
 ### Transport Security

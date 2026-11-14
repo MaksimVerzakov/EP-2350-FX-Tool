@@ -76,7 +76,7 @@ export const EFFECT_ROW_SCHEMA: JsonSchema = {
 export const PRESET_SCHEMA: JsonSchema = {
   type: 'object',
   description:
-    'EP-2350 preset in editor (UI) scale: percent (%) knobs 0..100, percent modulation depths -100..100. Signal flows top to bottom through `list`; SAMPLE marks where the trigger sample is injected (appended automatically if missing). Optional BUS 1/2 rows run in parallel. Effect descriptions and modulation depth ranges: get_effects_reference.',
+    'EP-2350 preset in editor (UI) scale: percent (%) knobs 0..100, percent modulation depths -100..100. A preset in config.json scale (0.0..1.0, as in hardwarePresetJson or the official packs) is detected and converted automatically; the result reports inputScale. Signal flows top to bottom through `list`; SAMPLE marks where the trigger sample is injected (appended automatically if missing). Optional BUS 1/2 rows run in parallel. Effect descriptions and modulation depth ranges: get_effects_reference.',
   properties: {
     id: { type: 'string' },
     pos: { type: 'integer', minimum: 0, maximum: 3, description: 'Preset slot (0..3).' },
@@ -229,6 +229,7 @@ const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
     type: 'object',
     properties: {
       isValid: { type: 'boolean' },
+      inputScale: { enum: ['editor', 'config'], description: 'Scale the preset argument was given in.' },
       errors: { type: 'array', items: issueSchema },
       warnings: { type: 'array', items: issueSchema },
       normalizedPresetJson: { type: 'object' },
@@ -241,6 +242,7 @@ const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
     type: 'object',
     properties: {
       presetName: { type: 'string' },
+      inputScale: { enum: ['editor', 'config'], description: 'Scale the preset argument was given in.' },
       ...shareFields,
       presetWarnings: { type: 'array', items: issueSchema },
       dryBaseline: analysisSchema,
@@ -518,6 +520,34 @@ export interface PresetLintIssue {
 
 const ROW_META_KEYS = new Set(['id', 'effect', 'BUS']);
 
+/**
+ * Which scale a raw preset uses. The tools take the editor scale (percent parameters 0..100,
+ * percent modulation depths -100..100), but config.json, the official-packs resource and every
+ * `hardwarePresetJson` output use 0.0..1.0. A preset counts as config scale when it has at least
+ * one non-zero percent value (effect parameters and percent modulation depths) and all of them
+ * are within ±1: an editor-scale preset whose percentages are all 1% or less is not a realistic
+ * intent (two official TE presets have a single percent value, e.g. `mix: 0.2`).
+ */
+export function detectPresetScale(preset: Record<string, any>): 'editor' | 'config' {
+  const values: number[] = [];
+  const list: any[] = Array.isArray(preset?.list) ? preset.list : [];
+  for (const fx of list) {
+    const meta = EFFECTS_REGISTRY[String(fx?.effect ?? fx?.EFFECT ?? '').toUpperCase() as EffectType];
+    if (!meta) continue;
+    for (const p of meta.params) {
+      if (p.unit === '%' && typeof fx[p.name] === 'number' && fx[p.name] !== 0) values.push(fx[p.name]);
+    }
+  }
+  for (const key of ['handle', 'shake', 'lfo'] as const) {
+    const mod = preset?.[key];
+    if (!mod || typeof mod !== 'object' || mod.target === 'lfo' || typeof mod.depth !== 'number' || mod.depth === 0) continue;
+    const target = typeof mod.row === 'number' ? list[mod.row] : undefined;
+    const effect = String(target?.effect ?? target?.EFFECT ?? '').toUpperCase();
+    if (getModDepthConfig(effect, mod.param).isNormalizedPercent) values.push(mod.depth);
+  }
+  return values.length >= 1 && values.every((v) => Math.abs(v) <= 1) ? 'config' : 'editor';
+}
+
 export function lintPresetAgainstRegistry(preset: Record<string, any>): PresetLintIssue[] {
   const issues: PresetLintIssue[] = [];
   const pos = typeof preset?.pos === 'number' ? preset.pos : undefined;
@@ -558,7 +588,7 @@ export function lintPresetAgainstRegistry(preset: Record<string, any>): PresetLi
 
   if (percentValues >= 2 && percentValuesAtMostOne === percentValues) {
     warn(
-      'All percent parameters are between 0 and 1. `preset` uses the editor scale (0..100); values from config.json (0.0..1.0) must be multiplied by 100, or pass the file as configJson.'
+      'All percent parameters are between 0 and 1. If these are config.json values (0.0..1.0), multiply them by 100 or pass the file as configJson; as written they are read as editor-scale percentages (0..100).'
     );
   }
 

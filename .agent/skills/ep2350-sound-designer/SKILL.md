@@ -34,6 +34,8 @@ The repository includes a Model Context Protocol (MCP) server at `mcp/server.mjs
 7. **`push_to_live_ui`**
    - Returns a `#preset=` share link; with the Vite dev server running it also loads the preset into the open Web UI.
 
+> **Scale:** tools accept presets in the editor scale (percent knobs `0..100`, percent mod depths `-100..100`) or in hardware `config.json` scale (`0.0..1.0`, as in the official packs and `hardwarePresetJson`); the latter is detected and converted, and `inputScale` says which was used. Read `warnings` / `presetWarnings` and fix them before exporting.
+
 ## Recommended Agent Workflow
 
 ### Workflow A: Text Description -> Verified Preset

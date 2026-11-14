@@ -2490,10 +2490,14 @@ const badParam = await lintOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effec
 assert.ok(badParam.some((m) => m.includes('unknown parameter "cutof"')), 'Typo in param name must warn');
 const outOfRange = await lintOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
 assert.ok(outOfRange.some((m) => m.includes('"amount"=99 is outside')), 'Out-of-range value must warn');
-const hwScale = await lintOf({
-  list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }]
-});
-assert.ok(hwScale.some((m) => m.includes('editor scale (0..100)')), 'Hardware 0..1 scale must warn');
+const hwScaleRes = (
+  await rpc('tools/call', {
+    name: 'validate_preset',
+    arguments: { preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }] } }
+  })
+).result.structuredContent;
+assert.strictEqual(hwScaleRes.inputScale, 'config', 'A 0..1 preset is detected as config.json scale');
+assert.deepStrictEqual(hwScaleRes.warnings, [], '...and converted instead of warned about');
 const badMod = await lintOf({
   list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
   handle: { row: 0, param: 'cutoff', depth: 50 }
@@ -2857,4 +2861,58 @@ console.log('✓ Suite 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporti
 }
 console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder) verified');
 
-console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 23: Presets accepted in either scale (editor 0..100 or config.json 0..1)
+// ============================================================================
+{
+  const callTool = async (name, args) =>
+    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 700, method: 'tools/call', params: { name, arguments: args } }))
+      .result.structuredContent;
+  const sortKeys = (v) =>
+    Array.isArray(v)
+      ? v.map(sortKeys)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]))
+        : v;
+  const packsDoc = JSON.parse(
+    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 701, method: 'resources/read', params: { uri: 'ep2350://presets/official-packs' } }))
+      .result.contents[0].text
+  );
+
+  // Every official TE preset, passed exactly as the resource shows it (config scale), is detected,
+  // converted, lints clean and serializes back to the identical hardware JSON.
+  let checked = 0;
+  for (const pk of packsDoc) {
+    for (const hw of pk.config.presets) {
+      const v = await callTool('validate_preset', { preset: hw });
+      assert.strictEqual(v.inputScale, 'config', `${hw.name}: config scale detected`);
+      assert.deepStrictEqual(v.warnings, [], `${hw.name}: no warnings`);
+      for (const key of ['list', 'handle', 'shake', 'lfo', 'trigger']) {
+        assert.deepStrictEqual(sortKeys(v.normalizedPresetJson[key]), sortKeys(hw[key]), `${hw.name}: ${key} round-trips`);
+      }
+      checked++;
+    }
+  }
+  assert.strictEqual(checked, 12);
+
+  // Simulation and export use the converted values (SPACE ECHO: 0.9 s delay, 60% feedback)
+  const spaceEcho = packsDoc[1].config.presets[0];
+  const simSpace = await callTool('simulate_preset', { preset: spaceEcho, scenarios: ['idle'] });
+  assert.strictEqual(simSpace.inputScale, 'config');
+  assert.strictEqual(simSpace.scenarios.idle.estimatedDelayMs, 900);
+  assert.deepStrictEqual(simSpace.presetWarnings, []);
+  const exported = await callTool('export_pack_config', { presets: [spaceEcho] });
+  assert.deepStrictEqual(sortKeys(exported.configJson.presets[0].list), sortKeys(spaceEcho.list), 'Export keeps config values');
+
+  // hardwarePresetJson / normalizedPresetJson outputs can be passed straight back in
+  const editorPreset = { list: [{ effect: 'DELAY', time: 0.3, echo: 40, 'wet-level': 50 }, { effect: 'SAMPLE' }] };
+  const fromEditor = await callTool('validate_preset', { preset: editorPreset });
+  assert.strictEqual(fromEditor.inputScale, 'editor');
+  assert.deepStrictEqual(fromEditor.normalizedPresetJson.list[0], { effect: 'DELAY', time: 0.3, echo: 0.4, 'wet-level': 0.5 });
+  const roundTrip = await callTool('validate_preset', { preset: fromEditor.normalizedPresetJson });
+  assert.strictEqual(roundTrip.inputScale, 'config');
+  assert.deepStrictEqual(roundTrip.normalizedPresetJson.list, fromEditor.normalizedPresetJson.list);
+}
+console.log('✓ Suite 23: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
+
+console.log('\n=== ALL 23 PRODUCTION TEST SUITES PASSED (100%) ===');

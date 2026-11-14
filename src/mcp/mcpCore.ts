@@ -23,7 +23,7 @@ import type { ModulationScenario } from '../dsp/offlineRenderer';
 import { renderPresetOffline } from '../dsp/offlineRenderer';
 import { analyzeImpulseResponse, analyzePcmAudio, generateImpulseProbePcm } from '../dsp/analyzer';
 import { matchReferenceAudio, optimizePresetParameters } from '../dsp/optimizer';
-import { MCP_TOOL_NAMES, buildToolList, lintPresetAgainstRegistry } from './toolSchemas';
+import { MCP_TOOL_NAMES, buildToolList, detectPresetScale, lintPresetAgainstRegistry } from './toolSchemas';
 
 export interface McpRuntimeOptions {
   /** Base URL of the web UI for generating #preset= shareable deep-links */
@@ -78,7 +78,7 @@ const EFFECTS_REFERENCE_RULES = [
   'DELAY, REVERB, HARMONY and SSB may each appear at most once per preset.',
   'SAMPLE marks where the trigger sample is injected into the chain; it is appended automatically if missing.',
   'Rows with BUS 1 and BUS 2 run in parallel and are summed back together.',
-  'Preset objects passed to the tools use the editor scale: percent (%) parameters are 0..100 and percent modulation depths -100..100. Hardware config.json stores them as 0.0..1.0.'
+  'Preset objects passed to the tools use the editor scale: percent (%) parameters are 0..100 and percent modulation depths -100..100. Hardware config.json stores them as 0.0..1.0; presets in that scale (e.g. hardwarePresetJson or the official packs) are detected and converted automatically, and the tools report inputScale.'
 ];
 
 const MODULATION_REFERENCE = {
@@ -251,6 +251,29 @@ export function normalizeSinglePreset(rawPreset: Record<string, any>, pos = 0): 
     lfo: rawPreset?.lfo,
     trigger: rawPreset?.trigger
   };
+}
+
+/**
+ * Read a preset argument in either scale. Config-scale presets (0.0..1.0, e.g. copied from
+ * hardwarePresetJson or the official packs) are converted with the same parser the web app uses
+ * for imported config.json files.
+ */
+export function readPreset(
+  raw: Record<string, any>,
+  pos = 0
+): { preset: PresetConfig; inputScale: 'editor' | 'config' } {
+  const slot = Math.max(0, Math.min(3, typeof raw?.pos === 'number' ? raw.pos : pos));
+  if (detectPresetScale(raw) === 'config') {
+    const parsed = parseConfigJson(JSON.stringify({ name: 'MCP INPUT', presets: [{ ...raw, pos: slot }] }));
+    const converted = parsed.pack?.presets.find((p) => p.pos === slot);
+    if (converted) {
+      return {
+        preset: normalizeSinglePreset({ ...converted, id: raw.id, name: raw.name ?? converted.name }, slot),
+        inputScale: 'config'
+      };
+    }
+  }
+  return { preset: normalizeSinglePreset(raw, slot), inputScale: 'editor' };
 }
 
 function wrapPresetInPack(preset: PresetConfig, packName = 'AI CUSTOM PACK'): PackConfig {
@@ -569,7 +592,7 @@ async function executeMcpToolCall(
       }
 
       if (args.preset && typeof args.preset === 'object') {
-        const normPreset = normalizeSinglePreset(args.preset, args.preset.pos ?? 0);
+        const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
         const pack = wrapPresetInPack(normPreset);
         const issues = [
           ...validatePackConfig(pack).filter(
@@ -582,6 +605,7 @@ async function executeMcpToolCall(
         const normalizedPresetJson = serializedPack.presets[normPreset.pos];
         return {
           isValid: errors.length === 0,
+          inputScale,
           errors,
           warnings: issues.filter((i) => i.type === 'warning'),
           normalizedPresetJson,
@@ -597,7 +621,7 @@ async function executeMcpToolCall(
       if (!args.preset || typeof args.preset === 'object' === false) {
         return { error: '`preset` object is required.' };
       }
-      const normPreset = normalizeSinglePreset(args.preset, args.preset.pos ?? 0);
+      const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
       let dryPcm;
       if (typeof args.inputWavBase64 === 'string' && args.inputWavBase64.trim()) {
         dryPcm = decodeWavBuffer(decodeBase64Bytes(args.inputWavBase64));
@@ -633,6 +657,7 @@ async function executeMcpToolCall(
 
       return {
         presetName: normPreset.name,
+        inputScale,
         shareHash,
         shareUrl,
         presetWarnings: lintPresetAgainstRegistry(normPreset),
@@ -725,7 +750,7 @@ async function executeMcpToolCall(
           : defaultIter;
 
       const optResult = args.candidatePreset
-        ? optimizePresetParameters(normalizeSinglePreset(args.candidatePreset, 0), targetPcm, {
+        ? optimizePresetParameters(readPreset(args.candidatePreset, 0).preset, targetPcm, {
             dryPcm,
             maxIterations
           })
@@ -764,7 +789,7 @@ async function executeMcpToolCall(
       if (Array.isArray(args.presets)) {
         args.presets.slice(0, 4).forEach((p: Record<string, any>, idx: number) => {
           const slot = typeof p.pos === 'number' ? Math.max(0, Math.min(3, p.pos)) : idx;
-          pack.presets[slot] = normalizeSinglePreset(p, slot);
+          pack.presets[slot] = readPreset(p, slot).preset;
         });
       }
       for (let i = 0; i < 4; i++) {
@@ -804,7 +829,7 @@ async function executeMcpToolCall(
         shareUrl = buildPackShareUrl(shareBaseUrl, args.pack, args.slot);
       } else if (args.preset && typeof args.preset === 'object') {
         const slot = typeof args.slot === 'number' ? args.slot : args.preset.pos ?? 0;
-        payload.preset = normalizeSinglePreset(args.preset, slot);
+        payload.preset = readPreset({ ...args.preset, pos: slot }, slot).preset;
         payload.slot = slot;
         shareHash = encodePresetToHash(payload.preset, slot);
         shareUrl = buildPresetShareUrl(shareBaseUrl, payload.preset, slot);
