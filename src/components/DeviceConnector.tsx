@@ -49,13 +49,16 @@ export const EjectIcon: React.FC<{ className?: string }> = ({ className }) => (
 const PLUG_SCALE = 0.72;
 const PLUG_TIP_END = 78.0; // source y of the USB-C tip end
 const PLUG_CORD_X = 220.062; // source x of the cord centre line
-const PLUG_TRAVEL = 6; // how far the plug drops on hover; the tip then meets the body's bottom edge
+const PLUG_BOOT_END = 72.563; // source y of the boot's bottom bevel (where the USB-C tip begins)
+const PLUG_REST_GAP = 6; // gap between the tip and the body's bottom edge at rest
+/** How far the plug drops when plugged: the whole USB-C tip disappears below the bottom edge. */
+const PLUG_TRAVEL = PLUG_REST_GAP + (PLUG_TIP_END - PLUG_BOOT_END) * PLUG_SCALE + 0.5;
 
 /**
  * USB-C cable hanging into the connector body from the top, with the same form as the plug in
  * Teenage Engineering's EP sample tool (strain relief, boot with 45° bevels, USB-C tip). It is
- * still at rest; on hover it drops into the mic (the body's bottom edge) and lifts out on a
- * loop, and while connecting it stays plugged in.
+ * still at rest; on hover it drops into the mic (the tip disappears below the body's bottom edge)
+ * and lifts out on a loop, and while connecting it stays plugged in.
  */
 const UsbCable: React.FC<{
   width: number;
@@ -69,7 +72,7 @@ const UsbCable: React.FC<{
   const stroke = { stroke: EDGE, strokeWidth: 0.9, vectorEffect: 'non-scaling-stroke' as const, strokeMiterlimit: 10 };
   const s = PLUG_SCALE;
   const tx = width / 2 - PLUG_CORD_X * s;
-  const ty = height - PLUG_TRAVEL - PLUG_TIP_END * s;
+  const ty = height - PLUG_REST_GAP - PLUG_TIP_END * s;
   const motion = mode === 'loop' ? 'ep-plug-loop' : mode === 'in' ? 'ep-plug-in' : '';
   return (
     <svg
