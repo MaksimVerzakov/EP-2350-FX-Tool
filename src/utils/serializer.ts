@@ -22,10 +22,12 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
   const SINGLE_INSTANCE_EFFECTS = new Set(['DELAY', 'REVERB', 'HARMONY', 'SSB']);
 
   pack.presets.forEach((preset) => {
-    if (preset.list.length > MAX_EFFECTS_PER_PRESET) {
+    const hasSampleBlockInPreset = preset.list.some((fx) => fx.effect === 'SAMPLE');
+    const effectiveLength = hasSampleBlockInPreset ? preset.list.length : preset.list.length + 1;
+    if (effectiveLength > MAX_EFFECTS_PER_PRESET) {
       issues.push({
         type: 'error',
-        message: `Preset ${preset.pos} (${preset.name || 'Unnamed'}): Exceeds hardware limit of ${MAX_EFFECTS_PER_PRESET} effects per preset (${preset.list.length} configured).`,
+        message: `Preset ${preset.pos} (${preset.name || 'Unnamed'}): Exceeds hardware limit of ${MAX_EFFECTS_PER_PRESET} effects per preset (${effectiveLength} total including required SAMPLE).`,
         presetPos: preset.pos
       });
     }
@@ -162,6 +164,15 @@ export function serializeToConfigJson(pack: PackConfig): string {
 
       return effectEntry;
     });
+
+    // Hardware requires SAMPLE in the chain; auto-append as the last effect if missing (within 16-effect limit)
+    const hasSampleInSerialized = presetObj.list.some((item: any) => item.effect === 'SAMPLE');
+    if (!hasSampleInSerialized && presetObj.list.length < MAX_EFFECTS_PER_PRESET) {
+      presetObj.list.push({ effect: 'SAMPLE' });
+      if (!p.trigger) {
+        presetObj.trigger = { row: presetObj.list.length - 1 };
+      }
+    }
 
     // Modulations
     if (p.handle) {

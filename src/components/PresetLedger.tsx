@@ -42,6 +42,12 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
   // Auto-scroll target when an effect is newly added or moved
   const [lastAddedEffectId, setLastAddedEffectId] = useState<string | null>(null);
+  // Reveal an unchanged trailing SAMPLE card if the user explicitly selects SAMPLE INJECTOR
+  const [revealedSampleId, setRevealedSampleId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRevealedSampleId(null);
+  }, [preset.id]);
 
   // Popover state for effect addition with dynamic anchor positioning
   const [addMenuTarget, setAddMenuTarget] = useState<null | {
@@ -181,13 +187,47 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     .map((fx, idx) => ({ fx, idx }))
     .filter((item) => item.fx.BUS === 2);
 
-  const currentBusItems = activeBus === 1 ? bus1Items : bus2Items;
+  // Skip rendering SAMPLE INJECTOR in the UI if it is the last item in Bus 1, unchanged, and unmodulated
+  const lastBus1Item = bus1Items[bus1Items.length - 1];
+  const isHiddenTrailingSample = (globalIdx: number): boolean => {
+    if (!lastBus1Item || globalIdx !== lastBus1Item.idx) return false;
+    const fx = preset.list[globalIdx];
+    if (!fx || fx.effect !== 'SAMPLE' || fx.id === revealedSampleId) return false;
 
-  // 1-Click Smart Effect Addition
-  const isAtEffectLimit = preset.list.length >= MAX_EFFECTS_PER_PRESET;
+    const isUnchanged = EFFECTS_REGISTRY.SAMPLE.params.every(
+      (p) => fx[p.name] === undefined || fx[p.name] === p.defaultVal
+    );
+    if (!isUnchanged) return false;
+
+    const isModulated =
+      (preset.handle?.target !== 'lfo' && preset.handle?.row === globalIdx) ||
+      preset.shake?.row === globalIdx ||
+      (preset.lfo?.target !== 'lfo' && preset.lfo?.row === globalIdx);
+    return !isModulated;
+  };
+
+  const hiddenTrailingSample =
+    lastBus1Item && isHiddenTrailingSample(lastBus1Item.idx) ? lastBus1Item : undefined;
+  const visibleBus1Items = bus1Items.filter((item) => !isHiddenTrailingSample(item.idx));
+  const visibleBusItems = activeBus === 1 ? visibleBus1Items : bus2Items;
+
+  // Hardware requires SAMPLE in the chain (auto-added on export if missing), so reserve 1 slot if absent
+  const hasSampleInChain = preset.list.some((fx) => fx.effect === 'SAMPLE');
+  const effectiveEffectCount = hasSampleInChain ? preset.list.length : preset.list.length + 1;
+  const isAtEffectLimit = effectiveEffectCount >= MAX_EFFECTS_PER_PRESET;
 
   const handleAddEffect = (effectType: EffectType, insertBusIndex?: number) => {
-    if (preset.list.length >= MAX_EFFECTS_PER_PRESET) {
+    // If user explicitly adds SAMPLE at the bottom while an unchanged trailing SAMPLE is hidden, reveal it instead of duplicating
+    if (effectType === 'SAMPLE' && typeof insertBusIndex !== 'number' && hiddenTrailingSample) {
+      setRevealedSampleId(hiddenTrailingSample.fx.id);
+      setLastAddedEffectId(hiddenTrailingSample.fx.id);
+      setAddMenuTarget(null);
+      return;
+    }
+
+    const canFillMissingSample =
+      effectType === 'SAMPLE' && !hasSampleInChain && preset.list.length < MAX_EFFECTS_PER_PRESET;
+    if (effectiveEffectCount >= MAX_EFFECTS_PER_PRESET && !canFillMissingSample) {
       setAddMenuTarget(null);
       return;
     }
@@ -209,18 +249,23 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     let insertedGlobalIndex = newList.length;
 
     // Determine insertion position in the global preset.list
-    if (typeof insertBusIndex === 'number' && insertBusIndex >= 0 && insertBusIndex < currentBusItems.length) {
-      insertedGlobalIndex = currentBusItems[insertBusIndex].idx;
+    if (typeof insertBusIndex === 'number' && insertBusIndex >= 0 && insertBusIndex < visibleBusItems.length) {
+      insertedGlobalIndex = visibleBusItems[insertBusIndex].idx;
       newList.splice(insertedGlobalIndex, 0, newEffect);
     } else if (activeBus === 1) {
-      // Append at end of Bus 1 items or start of Bus 2 items
-      const lastBus1 = bus1Items[bus1Items.length - 1];
-      if (lastBus1) {
-        insertedGlobalIndex = lastBus1.idx + 1;
+      // Insert before a hidden trailing SAMPLE so SAMPLE remains at the end of the chain
+      if (hiddenTrailingSample) {
+        insertedGlobalIndex = hiddenTrailingSample.idx;
         newList.splice(insertedGlobalIndex, 0, newEffect);
       } else {
-        insertedGlobalIndex = 0;
-        newList.unshift(newEffect);
+        const lastBus1 = bus1Items[bus1Items.length - 1];
+        if (lastBus1) {
+          insertedGlobalIndex = lastBus1.idx + 1;
+          newList.splice(insertedGlobalIndex, 0, newEffect);
+        } else {
+          insertedGlobalIndex = 0;
+          newList.unshift(newEffect);
+        }
       }
     } else {
       // Append at end of preset.list
@@ -233,15 +278,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       list: newList
     };
 
-    // Auto-bind trigger if SAMPLE was added
-    if (effectType === 'SAMPLE') {
-      const sampleIdx = newList.findIndex((e) => e.effect === 'SAMPLE');
-      if (sampleIdx !== -1) {
-        updatedPreset.trigger = { row: sampleIdx };
-      }
-    }
-
-    // Shift modulation rows if inserted before existing rows
+    // Shift modulation & trigger rows if inserted before existing rows
     const shiftRow = (row?: number) => {
       if (typeof row !== 'number') return undefined;
       return row >= insertedGlobalIndex ? row + 1 : row;
@@ -255,6 +292,17 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     }
     if (updatedPreset.lfo && updatedPreset.lfo.target !== 'lfo' && typeof updatedPreset.lfo.row === 'number') {
       updatedPreset.lfo = { ...updatedPreset.lfo, row: shiftRow(updatedPreset.lfo.row)! };
+    }
+    if (updatedPreset.trigger && typeof updatedPreset.trigger.row === 'number') {
+      updatedPreset.trigger = { row: shiftRow(updatedPreset.trigger.row)! };
+    }
+
+    // Auto-bind trigger if SAMPLE was added
+    if (effectType === 'SAMPLE') {
+      const sampleIdx = newList.findIndex((e) => e.effect === 'SAMPLE');
+      if (sampleIdx !== -1) {
+        updatedPreset.trigger = { row: sampleIdx };
+      }
     }
 
     setLastAddedEffectId(newEffect.id);
@@ -309,10 +357,10 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   // Reordering within the active bus
   const handleMoveBusItem = (busItemIdx: number, direction: 'up' | 'down') => {
     const targetBusItemIdx = direction === 'up' ? busItemIdx - 1 : busItemIdx + 1;
-    if (targetBusItemIdx < 0 || targetBusItemIdx >= currentBusItems.length) return;
+    if (targetBusItemIdx < 0 || targetBusItemIdx >= visibleBusItems.length) return;
 
-    const fromGlobalIdx = currentBusItems[busItemIdx].idx;
-    const toGlobalIdx = currentBusItems[targetBusItemIdx].idx;
+    const fromGlobalIdx = visibleBusItems[busItemIdx].idx;
+    const toGlobalIdx = visibleBusItems[targetBusItemIdx].idx;
 
     const newList = [...preset.list];
     const [moved] = newList.splice(fromGlobalIdx, 1);
@@ -673,7 +721,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
               {/* Move Down */}
               <button
-                disabled={busPosition === currentBusItems.length - 1}
+                disabled={busPosition === visibleBusItems.length - 1}
                 onClick={() => handleMoveBusItem(busPosition, 'down')}
                 className={`p-1 ${
                   isTing
@@ -928,7 +976,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     activeBus === 1 ? 'text-[#00a69c]' : 'text-[#73787a]'
                   }`}
                 >
-                  {bus1Items.length} FX
+                  {visibleBus1Items.length} FX
                 </span>
               </div>
             </div>
@@ -1012,7 +1060,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           isTing ? 'bg-[#f4f1ea]' : 'bg-[#ffffff]'
         } flex flex-col items-center relative`}
       >
-        {currentBusItems.length === 0 ? (
+        {visibleBusItems.length === 0 ? (
           <div
             className={`w-full h-full flex-1 flex flex-col items-center justify-center gap-3 border border-dashed ${
               isTing
@@ -1056,11 +1104,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </div>
         ) : (
           <div className="w-full flex flex-col items-center max-w-3xl">
-            {currentBusItems.map((item, bIdx) => (
+            {visibleBusItems.map((item, bIdx) => (
               <React.Fragment key={item.fx.id}>
                 {renderEffectCard(item, bIdx)}
                 {/* Vertical Connector Line & Mid-Chain Insert Plus Button */}
-                {bIdx < currentBusItems.length - 1 && (
+                {bIdx < visibleBusItems.length - 1 && (
                   <div className="flex flex-col items-center relative my-1.5">
                     <div
                       className={`w-[2px] h-7 ${
@@ -1107,8 +1155,8 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 } hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors active:translate-x-[1px] active:translate-y-[1px] active:shadow-none disabled:opacity-40 disabled:pointer-events-none`}
                 title={
                   isAtEffectLimit
-                    ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached`
-                    : `Add effect (${preset.list.length}/${MAX_EFFECTS_PER_PRESET})`
+                    ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached (including required SAMPLE)`
+                    : `Add effect (${effectiveEffectCount}/${MAX_EFFECTS_PER_PRESET})`
                 }
               >
                 <Plus className="w-3.5 h-3.5" />
