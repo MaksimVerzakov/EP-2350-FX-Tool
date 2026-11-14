@@ -1429,6 +1429,27 @@ assert.ok(
   'App.tsx must integrate ep2350Serial and switch to the device pack on connect'
 );
 
+const deviceConnectorSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/DeviceConnector.tsx'), 'utf8');
+assert.ok(
+  deviceConnectorSrc.includes("'Connect the mic'") &&
+    deviceConnectorSrc.includes('aria-label="Save to the mic"') &&
+    deviceConnectorSrc.includes('aria-label="Eject the mic"') &&
+    deviceConnectorSrc.includes('FloppyIcon') &&
+    deviceConnectorSrc.includes('EjectIcon'),
+  'DeviceConnector must render a "connect the mic" card that splits into SAVE (floppy) and EJECT'
+);
+assert.ok(
+  !topBannerUpdatedSrc.includes('CONNECT DEVICE') &&
+    !topBannerUpdatedSrc.includes('onSaveToDevice') &&
+    !topBannerUpdatedSrc.includes('onDisconnectDevice') &&
+    topBannerUpdatedSrc.includes('deviceConnector') &&
+    topBannerUpdatedSrc.includes('onSelectDevicePack'),
+  'Pack list must keep the mic pack entry but no connect/save/disconnect actions'
+);
+assert.ok(
+  appUpdatedSrc.includes('<DeviceConnector') && appUpdatedSrc.includes('savedDeviceJson'),
+  'App.tsx must render DeviceConnector and track unsaved changes against the mic'
+);
 console.log('✓ Suite 9: Web Serial Live Hardware Mode (Ep2350SerialClient & UI Integration) verified');
 
 // ============================================================================
