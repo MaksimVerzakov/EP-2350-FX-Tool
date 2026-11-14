@@ -21,12 +21,19 @@ export interface SerialPortInfo {
   usbProductId?: number;
 }
 
+export interface SerialOutputSignals {
+  dataTerminalReady?: boolean;
+  requestToSend?: boolean;
+  break?: boolean;
+}
+
 export interface SerialPortLike {
   readable: ReadableStream<Uint8Array> | null;
   writable: WritableStream<Uint8Array> | null;
   open(options: SerialOptions): Promise<void>;
   close(): Promise<void>;
   getInfo?(): SerialPortInfo;
+  setSignals?(signals: SerialOutputSignals): Promise<void>;
   addEventListener?(type: string, listener: EventListenerOrEventListenerObject): void;
   removeEventListener?(type: string, listener: EventListenerOrEventListenerObject): void;
 }
@@ -42,6 +49,13 @@ interface NavigatorWithSerial {
   serial?: SerialLike;
 }
 
+interface PromptWaiter {
+  resolve: (text: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  requiredMarker?: string;
+}
+
 const DEFAULT_THROTTLE_MS = 220;
 const REPL_PROMPT = '>>> ';
 const CFG_START_MARKER = '__CFG_START__';
@@ -55,13 +69,10 @@ export class Ep2350SerialClient {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private readLoopPromise: Promise<void> | null = null;
+  private connectingPromise: Promise<void> | null = null;
   private connected = false;
   private rxBuffer = '';
-  private promptWaiters: Array<{
-    resolve: (text: string) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }> = [];
+  private promptWaiters: PromptWaiter[] = [];
   private commandQueue: Promise<unknown> = Promise.resolve();
   private disconnectListeners = new Set<() => void>();
   private paramTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -101,6 +112,7 @@ export class Ep2350SerialClient {
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    if (this.connectingPromise) return this.connectingPromise;
     if (!Ep2350SerialClient.isSupported()) {
       throw new Error('Web Serial API is not supported in this browser.');
     }
@@ -110,11 +122,14 @@ export class Ep2350SerialClient {
       filters: [{ usbVendorId: EP2350_USB_VID, usbProductId: EP2350_USB_PID }],
     });
 
-    await this.openPort(port);
+    this.connectingPromise = this.openPort(port).finally(() => {
+      this.connectingPromise = null;
+    });
+    return this.connectingPromise;
   }
 
   async tryAutoConnect(): Promise<boolean> {
-    if (this.connected) return true;
+    if (this.connected || this.connectingPromise) return false;
     if (!Ep2350SerialClient.isSupported()) return false;
 
     const nav = navigator as NavigatorWithSerial;
@@ -128,7 +143,10 @@ export class Ep2350SerialClient {
         return info.usbVendorId === EP2350_USB_VID && info.usbProductId === EP2350_USB_PID;
       });
       if (!matchingPort) return false;
-      await this.openPort(matchingPort);
+      this.connectingPromise = this.openPort(matchingPort).finally(() => {
+        this.connectingPromise = null;
+      });
+      await this.connectingPromise;
       return true;
     } catch {
       return false;
@@ -144,6 +162,10 @@ export class Ep2350SerialClient {
       flowControl: 'none',
     });
 
+    await port
+      .setSignals?.({ dataTerminalReady: true, requestToSend: true })
+      .catch(() => undefined);
+
     if (!port.readable || !port.writable) {
       await port.close().catch(() => undefined);
       throw new Error('Serial port streams are unavailable.');
@@ -154,6 +176,7 @@ export class Ep2350SerialClient {
     this.writer = port.writable.getWriter();
     this.connected = true;
     this.rxBuffer = '';
+    this.commandQueue = Promise.resolve();
 
     port.addEventListener?.('disconnect', this.handlePortDisconnect);
     this.readLoopPromise = this.startReadLoop();
@@ -214,21 +237,24 @@ export class Ep2350SerialClient {
   }
 
   async readConfigJson(): Promise<string> {
-    const cmd = `print("${CFG_START_MARKER}" + open('/fat/config.json','r').read() + "${CFG_END_MARKER}")`;
-    const output = await this.evalRepl(cmd, 6000);
-    const startIdx = output.indexOf(CFG_START_MARKER);
-    const endIdx = output.indexOf(CFG_END_MARKER, startIdx + CFG_START_MARKER.length);
+    // Split marker literals in Python so the echoed REPL command never contains the contiguous markers
+    const cmd = 'print("__CFG_" + "START__" + open("/fat/config.json", "r").read() + "__CFG_" + "END__")';
+    const raw = await this.evalReplRaw(cmd, 8000, CFG_END_MARKER);
+    const startIdx = raw.indexOf(CFG_START_MARKER);
+    const endIdx = raw.indexOf(CFG_END_MARKER, startIdx + CFG_START_MARKER.length);
     if (startIdx === -1 || endIdx === -1) {
       throw new Error('Failed to read /fat/config.json from EP-2350.');
     }
-    return output.slice(startIdx + CFG_START_MARKER.length, endIdx).trim();
+    return raw.slice(startIdx + CFG_START_MARKER.length, endIdx).trim();
   }
 
   async loadPreset(slot: number): Promise<void> {
     if (!Number.isInteger(slot) || slot < 0 || slot > 3) {
       throw new Error(`Invalid preset slot: ${slot}`);
     }
-    await this.evalRepl(`fx.load_preset(${slot})`);
+    await this.evalRepl(
+      `fx_pos = ${slot}; fx.load_preset(${slot}); import ui; ui.leds(${slot}, globals().get('sam_pos', 0))`
+    );
   }
 
   setParam(
@@ -277,7 +303,7 @@ export class Ep2350SerialClient {
     await this.evalRepl('import os; os.sync()');
     await this.evalRepl('import teenage; teenage.examine_drive(False)');
     if (activeSlot !== undefined && Number.isInteger(activeSlot) && activeSlot >= 0 && activeSlot <= 3) {
-      await this.evalRepl(`fx.load_preset(${activeSlot})`);
+      await this.loadPreset(activeSlot);
     }
   }
 
@@ -307,22 +333,32 @@ export class Ep2350SerialClient {
   private async interruptToRepl(): Promise<void> {
     return this.enqueueCommand(async () => {
       if (!this.writer) throw new Error('Serial writer unavailable.');
+
+      // Step 1: First Ctrl+C to interrupt any running program
       this.rxBuffer = '';
-      const waitPromise = this.waitForPrompt(4000);
-      await this.writer.write(this.encoder.encode('\x03\x03\r\n'));
-      await waitPromise;
+      const p1 = this.waitForPrompt(250).catch(() => '');
+      await this.writer.write(this.encoder.encode('\x03'));
+      await p1;
+
+      // Step 2: Second Ctrl+C to exit any nested input/continuation prompt
+      this.rxBuffer = '';
+      const p2 = this.waitForPrompt(200).catch(() => '');
+      await this.writer.write(this.encoder.encode('\x03'));
+      await p2;
+
+      // Step 3: Send CRLF and wait for a clean fresh REPL prompt
+      this.rxBuffer = '';
+      const p3 = this.waitForPrompt(4000);
+      await this.writer.write(this.encoder.encode('\r\n'));
+      await p3;
+
+      // Clear any trailing prompt bytes before normal commands run
+      this.rxBuffer = '';
     });
   }
 
   private evalRepl(cmd: string, timeoutMs = 4000): Promise<string> {
-    return this.enqueueCommand(async () => {
-      if (!this.connected || !this.writer) {
-        throw new Error('Serial device is not connected.');
-      }
-      this.rxBuffer = '';
-      const waitPromise = this.waitForPrompt(timeoutMs);
-      await this.writer.write(this.encoder.encode(`${cmd}\r\n`));
-      const raw = await waitPromise;
+    return this.evalReplRaw(cmd, timeoutMs).then((raw) => {
       const promptIdx = raw.lastIndexOf(REPL_PROMPT);
       const body = promptIdx >= 0 ? raw.slice(0, promptIdx) : raw;
       const firstNewline = body.indexOf('\n');
@@ -333,14 +369,48 @@ export class Ep2350SerialClient {
     });
   }
 
+  private evalReplRaw(
+    cmd: string,
+    timeoutMs = 4000,
+    requiredMarker?: string
+  ): Promise<string> {
+    return this.enqueueCommand(async () => {
+      if (!this.connected || !this.writer) {
+        throw new Error('Serial device is not connected.');
+      }
+      this.rxBuffer = '';
+      const waitPromise = this.waitForPrompt(timeoutMs, requiredMarker);
+      await this.writer.write(this.encoder.encode(`${cmd}\r\n`));
+      return waitPromise;
+    });
+  }
+
   private enqueueCommand<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.commandQueue.then(fn, fn);
     this.commandQueue = next.catch(() => undefined);
     return next;
   }
 
-  private waitForPrompt(timeoutMs: number): Promise<string> {
-    if (this.rxBuffer.includes(REPL_PROMPT)) {
+  private isBufferReadyForWaiter(requiredMarker?: string): boolean {
+    if (!this.rxBuffer.includes(REPL_PROMPT)) {
+      return false;
+    }
+    if (!requiredMarker) {
+      return true;
+    }
+    if (this.rxBuffer.includes('Traceback (most recent call last):')) {
+      const tbIdx = this.rxBuffer.indexOf('Traceback (most recent call last):');
+      return this.rxBuffer.indexOf(REPL_PROMPT, tbIdx) !== -1;
+    }
+    const markerIdx = this.rxBuffer.indexOf(requiredMarker);
+    if (markerIdx === -1) {
+      return false;
+    }
+    return this.rxBuffer.indexOf(REPL_PROMPT, markerIdx + requiredMarker.length) !== -1;
+  }
+
+  private waitForPrompt(timeoutMs: number, requiredMarker?: string): Promise<string> {
+    if (this.isBufferReadyForWaiter(requiredMarker)) {
       const text = this.rxBuffer;
       this.rxBuffer = '';
       return Promise.resolve(text);
@@ -353,7 +423,7 @@ export class Ep2350SerialClient {
         reject(new Error('Timed out waiting for EP-2350 REPL prompt.'));
       }, timeoutMs);
 
-      this.promptWaiters.push({ resolve, reject, timer });
+      this.promptWaiters.push({ resolve, reject, timer, requiredMarker });
     });
   }
 
@@ -377,7 +447,11 @@ export class Ep2350SerialClient {
   }
 
   private resolvePromptWaitersIfReady(): void {
-    if (!this.rxBuffer.includes(REPL_PROMPT) || this.promptWaiters.length === 0) {
+    if (this.promptWaiters.length === 0) {
+      return;
+    }
+    const head = this.promptWaiters[0];
+    if (!this.isBufferReadyForWaiter(head.requiredMarker)) {
       return;
     }
     const text = this.rxBuffer;

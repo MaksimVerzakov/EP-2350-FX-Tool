@@ -1133,11 +1133,15 @@ function createMockSerialPort() {
     write(chunk) {
       const text = decoder.decode(chunk);
       sentCommands.push(text);
-      if (text.includes('__CFG_START__')) {
-        const reply = `${text}__CFG_START__${mockDeviceConfigJson}__CFG_END__\r\n>>> `;
-        readController.enqueue(encoder.encode(reply));
+      if (text.includes('/fat/config.json') && text.includes('read()')) {
+        // Simulate real EP-2350 hardware: leading prompt, echoed command, and multi-chunk JSON output
+        readController.enqueue(encoder.encode(`\r\n>>> ${text}`));
+        const fullOut = `__CFG_START__${mockDeviceConfigJson}__CFG_END__\r\n>>> `;
+        const mid = Math.floor(fullOut.length / 2);
+        readController.enqueue(encoder.encode(fullOut.slice(0, mid)));
+        readController.enqueue(encoder.encode(fullOut.slice(mid)));
       } else {
-        readController.enqueue(encoder.encode(`${text}>>> `));
+        readController.enqueue(encoder.encode(`\r\n${text}>>> `));
       }
     }
   });
@@ -1175,10 +1179,14 @@ assert.strictEqual(serialClient.isConnected, true, 'serialClient must report con
 assert.strictEqual(openedOptions.baudRate, 115200, 'Serial port must open at 115200 baud');
 assert.strictEqual(requestedFilters[0].usbVendorId, 0x2367, 'requestPort filter must match VID 0x2367');
 assert.strictEqual(requestedFilters[0].usbProductId, 0x0620, 'requestPort filter must match PID 0x0620');
-assert.ok(sentCommands[0].includes('\x03\x03\r\n'), 'Connect must send double Ctrl+C interrupt to reach REPL');
+assert.ok(sentCommands[0].includes('\x03'), 'Connect must send Ctrl+C interrupt to reach REPL');
 
 // Read /fat/config.json and verify parsed device pack name
 const rawDeviceJson = await serialClient.readConfigJson();
+assert.ok(
+  sentCommands.some((c) => c.includes('"__CFG_" + "START__"') && !c.includes('__CFG_START__')),
+  'readConfigJson command must split marker literals so REPL echo never collides with markers'
+);
 const parsedDevice = parseConfigJson(rawDeviceJson);
 assert.ok(parsedDevice.pack, 'Device config.json must parse into a valid PackConfig');
 assert.strictEqual(parsedDevice.pack.name, 'TING HARDWARE PACK', 'Parsed pack must preserve the device pack name');
