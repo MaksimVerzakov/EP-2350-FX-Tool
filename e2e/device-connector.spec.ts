@@ -67,6 +67,13 @@ test.describe('Device connector block', () => {
     await expect(card).toBeVisible();
     await expect(card).toBeEnabled();
     await expect(card).toHaveCSS('cursor', 'pointer');
+    await expect(card).toContainText(/connect the mic/i);
+
+    // The cable loops in and out on its own and plugs in on hover
+    const cable = page.getByTestId('usb-cable');
+    await expect(cable).toHaveAttribute('data-mode', 'loop');
+    await card.hover();
+    await expect(cable).toHaveAttribute('data-mode', 'in');
     await expect(page.getByRole('button', { name: 'Save to the mic' })).toHaveCount(0);
 
     // Device actions no longer live in the pack list
@@ -92,14 +99,15 @@ test.describe('Device connector block', () => {
     await expect(page.getByRole('button', { name: /DISCONNECT/ })).toHaveCount(0);
     await page.getByLabel('Select default pack').click();
 
-    // Editing the current preset flags unsaved changes
-    await expect(page.getByTestId('unsaved-indicator')).toHaveCount(0);
+    // SAVE is disabled until the current preset changes
+    await expect(save).toBeDisabled();
     await page.getByPlaceholder('PRESET NAME').fill('MY NEW TAKE');
-    await expect(page.getByTestId('unsaved-indicator')).toHaveCount(1);
+    await expect(save).toBeEnabled();
 
-    // Saving writes config.json to the mic and clears the flag
+    // Saving writes config.json to the mic, shows a check, then disables SAVE again
     await save.click();
-    await expect(page.getByTestId('unsaved-indicator')).toHaveCount(0);
+    await expect(page.getByTestId('saved-indicator')).toBeVisible();
+    await expect(save).toBeDisabled();
     const log = await serialLog(page);
     expect(log.some((l) => l.includes('open("/fat/config.json", "w")'))).toBe(true);
     expect(log.some((l) => l.includes('_f.write') && l.includes('MY NEW TAKE'))).toBe(true);
@@ -116,10 +124,11 @@ test.describe('Device connector block', () => {
     await page.getByLabel('Select default pack').click();
     await page.getByRole('button', { name: /NEW PACK/i }).click();
     await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('NEW PACK');
-    await expect(page.getByTestId('unsaved-indicator')).toHaveCount(1);
+    const save = page.getByRole('button', { name: 'Save to the mic' });
+    await expect(save).toBeEnabled();
 
-    await page.getByRole('button', { name: 'Save to the mic' }).click();
-    await expect(page.getByTestId('unsaved-indicator')).toHaveCount(0);
+    await save.click();
+    await expect(page.getByTestId('saved-indicator')).toBeVisible();
     const log = await serialLog(page);
     expect(log.some((l) => l.includes('_f.write') && l.includes('NEW PACK'))).toBe(true);
   });

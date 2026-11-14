@@ -369,3 +369,34 @@ html[data-theme='ting'] .te-bevel-frame::after {
   border-color: #00503a;
 }
 
+
+/* Device connector: the USB-C plug slides into the mic's port and back out on a loop. */
+@keyframes epPlugInOut {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+  42%,
+  68% {
+    transform: translateX(var(--ep-plug-travel, 7px));
+  }
+  92%,
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.ep-plug-loop {
+  animation: epPlugInOut 2.6s ease-in-out infinite;
+}
+
+.ep-plug-in {
+  transform: translateX(var(--ep-plug-travel, 7px));
+  transition: transform 250ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ep-plug-loop {
+    animation: none;
+  }
+}
