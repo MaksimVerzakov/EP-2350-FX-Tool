@@ -52,7 +52,7 @@ export const MultiTabBanner: React.FC<MultiTabBannerProps> = ({ theme }) => {
 
           {/* Body */}
           <div
-            className={`px-7 py-5 relative flex flex-col gap-2 text-center ${
+            className={`px-8 py-6 relative flex items-center justify-center text-center ${
               isTing ? 'bg-[#e8e9e4]/45' : 'bg-[#f8f9f8]'
             }`}
           >
@@ -83,13 +83,6 @@ export const MultiTabBanner: React.FC<MultiTabBannerProps> = ({ theme }) => {
             >
               EP-2350 FX TOOL IS OPEN IN ANOTHER TAB OR BROWSER
             </h2>
-            <p
-              className={`font-mono text-[10.5px] leading-relaxed uppercase tracking-wide ${
-                isTing ? 'text-[#4b6b5d]' : 'text-[#73787a]'
-              }`}
-            >
-              ONLY ONE TAB CAN CONNECT TO THE MIC OVER USB AT A TIME. CLOSE THE OTHER TAB OR SWITCH BACK TO IT — THIS TAB WILL UNLOCK AUTOMATICALLY.
-            </p>
           </div>
         </div>
       </div>
