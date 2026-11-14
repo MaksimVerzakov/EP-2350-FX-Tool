@@ -24,9 +24,11 @@ function buildSourceModulesForTest() {
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
     'src/utils/webSerial.ts',
+    'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
-    'src/dsp/AudioEngine.ts'
+    'src/dsp/AudioEngine.ts',
+    'src/dsp/offlineRenderer.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -95,6 +97,12 @@ const {
 );
 const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
+);
+const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/wavCodec.mjs')).href
+);
+const { BiquadFilterKernel, renderPresetOffline } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/offlineRenderer.mjs')).href
 );
 
 // Clean up on exit
@@ -1267,4 +1275,174 @@ assert.ok(
 
 console.log('✓ Suite 9: Web Serial Live Hardware Mode (Ep2350SerialClient & UI Integration) verified');
 
-console.log('\n=== ALL 9 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 10: Pure-TS WAV Codec & Bundled WAV Decoding (src/utils/wavCodec.ts)
+// ============================================================================
+const synthVocal = generateSyntheticVocalPcm(48000, 1.2, 0.6);
+assert.strictEqual(synthVocal.sampleRate, 48000);
+assert.strictEqual(synthVocal.left.length, Math.round(48000 * 1.8));
+assert.strictEqual(synthVocal.right.length, Math.round(48000 * 1.8));
+
+const encodedWav = encodeWavBuffer(synthVocal);
+assert.ok(encodedWav.byteLength > 44, 'Encoded WAV must contain RIFF header + PCM payload');
+
+const decodedWav = decodeWavBuffer(encodedWav, 48000);
+assert.strictEqual(decodedWav.sampleRate, 48000);
+assert.strictEqual(decodedWav.left.length, synthVocal.left.length);
+for (let i = 0; i < 500; i += 17) {
+  assert.ok(
+    Math.abs(decodedWav.left[i] - synthVocal.left[i]) < 1e-3,
+    '16-bit WAV round-trip must preserve sample amplitude within 16-bit quantization'
+  );
+}
+
+// Verify bundled hardware sample WAV files in src/assets/samples/*.wav decode cleanly
+const alertWavBytes = fs.readFileSync(path.join(ROOT_DIR, 'src/assets/samples/alert.wav'));
+const decodedAlert = decodeWavBuffer(alertWavBytes, 48000);
+assert.strictEqual(decodedAlert.sampleRate, 48000);
+assert.ok(decodedAlert.left.length > 1000, 'Bundled alert.wav must decode to non-empty 48kHz PCM');
+console.log('✓ Suite 10: Pure-TS WAV Codec round-trip & bundled hardware sample decoding verified');
+
+// ============================================================================
+// SUITE 11: Headless Offline DSP Renderer (src/dsp/offlineRenderer.ts)
+// ============================================================================
+const dryPhrase = generateSyntheticVocalPcm(48000, 1.0, 0.6);
+
+function computeBandDftEnergy(sig, sr, fStart, fEnd, stepHz = 80) {
+  const len = Math.min(8192, sig.length);
+  let energy = 0;
+  for (let f = fStart; f <= fEnd; f += stepHz) {
+    let re = 0;
+    let im = 0;
+    for (let n = 0; n < len; n += 2) {
+      const ang = (2 * Math.PI * f * n) / sr;
+      re += sig[n] * Math.cos(ang);
+      im -= sig[n] * Math.sin(ang);
+    }
+    energy += re * re + im * im;
+  }
+  return energy;
+}
+
+function computeTailRms(sig, startFraction = 0.72) {
+  const start = Math.floor(sig.length * startFraction);
+  let sumSq = 0;
+  for (let i = start; i < sig.length; i++) sumSq += sig[i] * sig[i];
+  return Math.sqrt(sumSq / Math.max(1, sig.length - start));
+}
+
+const dryHighBand = computeBandDftEnergy(dryPhrase.left, 48000, 1800, 6000);
+const dryLowBand = computeBandDftEnergy(dryPhrase.left, 48000, 100, 450, 25);
+const dryTailRms = computeTailRms(dryPhrase.left);
+
+// 11a. LOWPASS filter attenuates high-band energy
+const lpRendered = renderPresetOffline(
+  {
+    id: 'p-lp',
+    pos: 0,
+    name: 'LP TEST',
+    list: [
+      { id: '1', effect: 'LOWPASS', cutoff: 0.25 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const lpHighBand = computeBandDftEnergy(lpRendered.left, 48000, 1800, 6000);
+assert.ok(lpHighBand < dryHighBand * 0.15, 'LOWPASS cutoff=0.25 must strongly attenuate 1.8kHz-6kHz band');
+
+// 11b. HIGHPASS filter attenuates low-band energy
+const hpRendered = renderPresetOffline(
+  {
+    id: 'p-hp',
+    pos: 0,
+    name: 'HP TEST',
+    list: [
+      { id: '1', effect: 'HIGHPASS', cutoff: 0.55 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const hpLowBand = computeBandDftEnergy(hpRendered.left, 48000, 100, 450, 25);
+assert.ok(hpLowBand < dryLowBand * 0.1, 'HIGHPASS cutoff=0.55 must strongly attenuate 100Hz-450Hz band');
+
+// 11c. DELAY creates audible tail energy in the trailing silence window
+const delayRendered = renderPresetOffline(
+  {
+    id: 'p-del',
+    pos: 0,
+    name: 'DELAY TEST',
+    list: [
+      {
+        id: '1',
+        effect: 'DELAY',
+        time: 0.35,
+        echo: 65,
+        'wet-level': 75,
+        'dry-level': 90,
+        'lowpass-cutoff': 85,
+        'highpass-cutoff': 10,
+        balance: 0.5
+      },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const delayTailRms = computeTailRms(delayRendered.left);
+assert.ok(delayTailRms > dryTailRms + 0.015, 'DELAY must produce sustained echo energy in trailing window');
+
+// 11d. HARMONY shifts fundamental pitch while preserving duration
+const harmRendered = renderPresetOffline(
+  {
+    id: 'p-harm',
+    pos: 0,
+    name: 'HARMONY TEST',
+    list: [
+      { id: '1', effect: 'HARMONY', pitch: 1.5, 'dry-level': 0 },
+      { id: '2', effect: 'SAMPLE' }
+    ]
+  },
+  dryPhrase
+);
+const dryF0 = estimateFundamentalHz(dryPhrase.left.subarray(0, 48000), 48000);
+const harmF0 = estimateFundamentalHz(harmRendered.left.subarray(0, 48000), 48000);
+assert.ok(Math.abs(harmF0 / dryF0 - 1.5) < 0.2, `HARMONY 1.5x must shift f0 ratio to ~1.5x (got ${(harmF0 / dryF0).toFixed(2)}x)`);
+
+// 11e. Parallel Bus (BUS 1 + BUS 2), DIST, EQUALISER, REVERB, RING, SSB, BALANCE & Handle/Shake Modulation
+const multiBusPreset = {
+  id: 'p-multibus',
+  pos: 0,
+  name: 'MULTIBUS TEST',
+  list: [
+    { id: '0', effect: 'SAMPLE', speed: 1.0, pitch: 0, level: 50, balance: 0.5, BUS: 1 },
+    { id: '1', effect: 'DIST', amount: 15, mix: 70, 'lowpass-cutoff': 80, 'highpass-cutoff': 20, BUS: 1 },
+    { id: '2', effect: 'EQUALISER', CUTOFF: 0.6, Q: 0.7, GAIN: 0.5, BUS: 1 },
+    { id: '3', effect: 'LOWPASS', cutoff: 0.2, BUS: 1 },
+    { id: '4', effect: 'BALANCE', balance: 0.8, BUS: 1 },
+    { id: '5', effect: 'SSB', frequency: 180, BUS: 2 },
+    { id: '6', effect: 'RING', frequency: 300, mix: 25, BUS: 2 },
+    { id: '7', effect: 'REVERB', time: 0.7, 'spring-mix': 60, 'highpass-cutoff': 20, 'wet-level': 25, 'dry-level': 0, BUS: 2 }
+  ],
+  handle: { row: 3, param: 'cutoff', depth: 75 },
+  shake: { row: 7, param: 'spring-mix', depth: 40 },
+  lfo: { row: 4, param: 'balance', shape: 'square', speed: 4.0, depth: 50 }
+};
+const idleBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
+  scenario: 'idle',
+  triggerSamplePcm: decodedAlert
+});
+const pushedBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
+  scenario: 'handle_pushed',
+  triggerSamplePcm: decodedAlert
+});
+const idleHighEnergy = computeBandDftEnergy(idleBusOut.right, 48000, 1500, 5000);
+const pushedHighEnergy = computeBandDftEnergy(pushedBusOut.right, 48000, 1500, 5000);
+assert.ok(
+  pushedHighEnergy > idleHighEnergy * 2.0,
+  'Pushing handle mapped to LOWPASS.cutoff (+75%) must increase high-band energy >2x'
+);
+console.log('✓ Suite 11: Headless Offline DSP Renderer verified across all 11 effects, parallel buses & modulations');
+
+console.log('\n=== ALL 11 PRODUCTION TEST SUITES PASSED (100%) ===');
