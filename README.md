@@ -1,75 +1,60 @@
 # EP-2350 FX Tool
 
-A companion web application for configuring, tweaking, and live-auditioning effects for the [Teenage Engineering EP-2350 fx mic](https://teenage.engineering/guides/ep-2350).
+A companion web workbench, DSP engine, hardware validator, and **MCP server** for designing, auditioning, and deploying effect packs on the [Teenage Engineering EP-2350 fx mic](https://teenage.engineering/guides/ep-2350).
 
-Built with the exact design aesthetic, typography, and color palette of Teenage Engineering's [EP Sample Tool](https://teenage.engineering/apps/ep-sample-tool).
-
----
-
-## Features
-
-- **Strict Chapter 7 Specification Compliance**:
-  - Implements the complete anatomy of `config.json`.
-  - Enforces all golden rules: strict uppercase effect names, no trailing commas, valid double quotes, and single-instance constraints (`DELAY`, `REVERB`, `HARMONY`, `SSB`).
-  - Signal flow positioning rules for `{ "effect": "SAMPLE" }`.
-  - Automatic `samples` section omission when using internal factory sounds (Chapter 7.5).
-  - Parallel bus routing (`BUS: 1`, `BUS: 2`) support.
-- **Physical Controls & Hardware Emulation**:
-  - **Rotary Knobs**: 270-degree drag controls with styled bezels, indicator notches, and LCD readouts.
-  - **Squeeze Handle Lever**: Interactive fader paddle with Spring-Return and Latch modes to modulate target parameters or LFO speed.
-  - **4 Orange Preset Slots**: Instant switching between slots 0, 1, 2, and 3.
-  - **Shake Sensor Simulator**: Trigger accelerometer transient bursts with a button or `Spacebar`.
-- **Live In-Browser DSP Auditioning**:
-  - Web Audio API graph emulating the EP-2350 effect algorithms in real time.
-  - Built-in audition sources: vocal formant speech ("EP TWO THREE FIVE ZERO"), punchy drum beat, and retro synth chords.
-  - Custom `.WAV` file drag & drop loader.
-  - Real-time TE teal post-FX oscilloscope monitor.
-- **Live JSON Inspector**:
-  - Real-time syntax highlighting, live validation alerts, copy to clipboard, and one-click `config.json` export.
+- **Web App**: [ep-2350-fx-tool.xam-vz.workers.dev](https://ep-2350-fx-tool.xam-vz.workers.dev/) · [GitHub Pages](https://maksimverzakov.github.io/EP-2350-FX-Tool/)
+- **Public MCP Endpoint**: `https://ep-2350-fx-tool.xam-vz.workers.dev/mcp`
 
 ---
 
-## Tech Stack
+## Overview
 
-- **Framework**: React 19 + TypeScript + Vite
-- **Styling**: Tailwind CSS + Custom Teenage Engineering CSS design tokens
-- **Audio Engine**: Web Audio API (BiquadFilter, WaveShaper, Delay, Analyser, custom algorithmic reverb)
-- **Icons**: Lucide Icons + custom SVGs
+### 1. FX Tool Workbench
+- **Preset & Chain Editor**: Build 4-preset packs across dual effect buses with control over Squeeze Handle, Shake, and LFO modulations.
+- **Instant Sharing**: Open and share individual presets or full packs via stateless `#preset=` / `#pack=` links with zero account setup.
+- **USB-C Hardware Integration**: Import and export hardware `config.json` packs, or connect an EP-2350 directly in the browser over Web Serial for live parameter updates and saving.
+
+### 2. DSP Audio Engine
+- **Live Browser Auditioning**: Real-time audio engine modeled on the EP-2350 effects, interactive mic controls (slot switcher, handle lever, shake trigger), built-in sample/speech sources, and custom `.wav` loading.
+- **Headless Simulation & Analysis**: Offline DSP renderer and acoustic analyzer used by the MCP server to verify frequency balance, pitch shifts, echoes, and modulation behavior—and to optimize parameters against a target `.wav` file.
+
+### 3. Hardware Validator
+- Validates preset chains, effect counts, single-instance hardware constraints, modulation targets, and sample routing before exporting `config.json` or sending presets to a device.
+
+### 4. MCP Server (AI Sound Design)
+- Exposes the synthesizer, validator, headless DSP engine, and reference-audio matcher over the **Model Context Protocol (MCP)**—hosted publicly over Streamable HTTP at `/mcp` or runnable locally over `stdio`.
+- AI assistants can generate hardware-ready presets from text descriptions, simulate how they sound across Handle and Shake gestures, validate `config.json`, and return a clickable URL that loads directly in your browser.
+- Full tool, resource, and Cloudflare deployment details: [`docs/MCP_SOUND_DESIGNER.md`](docs/MCP_SOUND_DESIGNER.md).
 
 ---
 
-## Getting Started
+## Using the MCP Server
 
-### 1. Installation
+### Hosted (Zero Setup)
+Add the public endpoint to your MCP client configuration (Antigravity, Claude Desktop, Cursor, etc.):
 
+```json
+{
+  "mcpServers": {
+    "ep2350-fx-tool": {
+      "url": "https://ep-2350-fx-tool.xam-vz.workers.dev/mcp"
+    }
+  }
+}
+```
+
+### Local Development
 ```bash
 npm install
-```
-
-### 2. Development Server
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-### 3. Production Build & Tests
-
-```bash
-# Run automated compliance tests
-npm test
-
-# Build for production
-npm run build
+npm run dev      # Web app + local /mcp at http://localhost:3000
+npm run mcp      # Local stdio MCP server
+npm test         # Run automated test suites
+npm run build    # Build static app and Cloudflare Worker bundle
 ```
 
 ---
 
-## Deploying Config to Hardware
+## Loading Config onto Hardware
 
-1. Remove the lower lid of your EP-2350 fx mic and connect it to your computer via USB-C.
-2. Push the handle to power on the mic. A disk named `fx-mic disk` will mount on your computer.
-3. Click **"EXPORT CONFIG.JSON"** in this tool to download `config.json`.
-4. Copy `config.json` directly into the root folder of `fx-mic disk`.
-5. Eject the disk on your computer. The EP-2350 will automatically restart and load the new config.
+- **USB-C Live Mode**: Click **Connect** in the web app to sync and tweak presets directly on a connected EP-2350 over Web Serial.
+- **Disk Export**: Click **Export `config.json`**, mount the EP-2350 (`fx-mic disk`) over USB-C, copy `config.json` to the root folder, and eject the disk.
