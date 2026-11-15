@@ -6,7 +6,7 @@ import {
 } from '../constants/effectsRegistry';
 import { OFFICIAL_TE_PACKS, createEmptyPack } from '../constants/defaultPresets';
 import { parseConfigJson } from '../utils/parser';
-import { serializeToConfigJson, validatePackConfig } from '../utils/serializer';
+import { serializeToConfigJson } from '../utils/serializer';
 import {
   DEFAULT_PUBLIC_APP_URL,
   buildPackShareUrl,
@@ -14,7 +14,8 @@ import {
   encodePackToHash,
   encodePresetToHash
 } from '../utils/presetUrl';
-import { MCP_TOOL_NAMES, buildToolList, detectPresetScale, lintPresetAgainstRegistry } from './toolSchemas';
+import { MCP_TOOL_NAMES, buildToolList, detectPresetScale } from './toolSchemas';
+import { type PresetIssue, checkPreset, describePreset, hasStructuralErrors } from './presetCheck';
 
 export interface McpRuntimeOptions {
   /** Base URL of the web UI for generating #preset= shareable deep-links */
@@ -481,56 +482,120 @@ async function executeMcpToolCall(
     }
 
     case 'validate_preset': {
+      const split = (issues: PresetIssue[]) => ({
+        errors: issues.filter((i) => i.type === 'error'),
+        warnings: issues.filter((i) => i.type === 'warning')
+      });
+
       if (typeof args.configJson === 'string') {
+        let rawPack: unknown;
+        try {
+          rawPack = JSON.parse(args.configJson);
+        } catch (err) {
+          const issue: PresetIssue = {
+            type: 'error',
+            code: 'invalid_json',
+            path: '(configJson)',
+            message: `configJson is not valid JSON: ${err instanceof Error ? err.message : String(err)}.`,
+            fix: 'config.json must be strict JSON: double-quoted keys and strings, no trailing commas, no comments.'
+          };
+          return { isValid: false, errors: [issue], warnings: [], summary: [] };
+        }
+        const packIssues: PresetIssue[] = [];
+        const addPack = (type: PresetIssue['type'], code: string, path: string, message: string, fix: string) =>
+          packIssues.push({ type, code, path, message, fix });
+        if (!rawPack || typeof rawPack !== 'object' || Array.isArray(rawPack)) {
+          addPack('error', 'pack_not_object', '(configJson)', 'config.json must be an object with "name" and "presets".', 'Use { "name": "MY PACK", "presets": [ { "pos": 0, "name": "...", "list": [...] } ] }.');
+          return { isValid: false, ...split(packIssues), summary: [] };
+        }
+        const packObj = rawPack as Record<string, any>;
+        if (typeof packObj.name !== 'string' || !packObj.name.trim()) {
+          addPack('warning', 'pack_name', 'name', 'The pack has no name.', 'Set "name", e.g. "DUB PACK".');
+        }
+        if (!Array.isArray(packObj.presets) || packObj.presets.length === 0) {
+          addPack('error', 'missing_presets', 'presets', 'config.json has no "presets" array (or it is empty).', 'Add "presets": up to 4 presets with pos 0..3.');
+          return { isValid: false, ...split(packIssues), summary: [] };
+        }
+        if (packObj.presets.length > 4) {
+          addPack('error', 'too_many_presets', 'presets', `config.json has ${packObj.presets.length} presets; the mic has 4 slots.`, 'Keep at most 4 presets (pos 0..3).');
+        }
+        const seenPos = new Map<number, number>();
+        packObj.presets.forEach((p: any, i: number) => {
+          if (p && typeof p === 'object' && Number.isInteger(p.pos)) {
+            if (seenPos.has(p.pos)) {
+              addPack('error', 'duplicate_pos', `presets[${i}].pos`, `presets[${i}] and presets[${seenPos.get(p.pos)}] both use pos ${p.pos}.`, 'Give every preset its own slot 0..3.');
+            } else seenPos.set(p.pos, i);
+          }
+          packIssues.push(...checkPreset(p, 'config', `presets[${i}].`));
+        });
+        if (hasStructuralErrors(packIssues)) {
+          return { isValid: false, ...split(packIssues), summary: [] };
+        }
         const parsed = parseConfigJson(args.configJson);
         if (parsed.error || !parsed.pack) {
-          return { isValid: false, error: parsed.error || 'Failed to parse configJson' };
+          addPack('error', 'parse_failed', '(configJson)', parsed.error || 'config.json could not be read.', 'Fix the reported problem and validate again.');
+          return { isValid: false, ...split(packIssues), summary: [] };
         }
-        const issues = [
-          ...validatePackConfig(parsed.pack),
-          ...parsed.pack.presets.flatMap((p) => lintPresetAgainstRegistry(p))
-        ];
-        const errors = issues.filter((i) => i.type === 'error');
         const normalizedConfigJson = JSON.parse(serializeToConfigJson(parsed.pack));
+        const summary = parsed.pack.presets
+          .filter((p) => p.list.length > 0)
+          .flatMap((p) => [`Preset ${p.pos} "${p.name || ''}":`, ...describePreset(p).map((l) => `  ${l}`)]);
+        const { errors, warnings } = split(packIssues);
         return {
           isValid: errors.length === 0,
+          inputScale: 'config',
           errors,
-          warnings: issues.filter((i) => i.type === 'warning'),
+          warnings,
+          summary,
           normalizedConfigJson,
           shareHash: encodePackToHash(normalizedConfigJson),
           shareUrl: buildPackShareUrl(shareBaseUrl, normalizedConfigJson)
         };
       }
 
-      if (args.preset && typeof args.preset === 'object') {
-        const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
+      if (args.preset !== undefined) {
+        const raw = args.preset;
+        const inputScale = raw && typeof raw === 'object' && !Array.isArray(raw) ? detectPresetScale(raw) : 'editor';
+        const issues = checkPreset(raw, inputScale);
+        if (hasStructuralErrors(issues)) {
+          return { isValid: false, inputScale, ...split(issues), summary: [] };
+        }
+        const { preset: normPreset } = readPreset(raw, raw.pos ?? 0);
         const pack = wrapPresetInPack(normPreset);
-        const issues = [
-          ...validatePackConfig(pack).filter(
-            (i) => i.presetPos === undefined || i.presetPos === normPreset.pos
-          ),
-          ...lintPresetAgainstRegistry(normPreset)
-        ];
-        const errors = issues.filter((i) => i.type === 'error');
         const serializedPack = JSON.parse(serializeToConfigJson(pack));
         const normalizedPresetJson = serializedPack.presets[normPreset.pos];
+        const { errors, warnings } = split(issues);
         return {
           isValid: errors.length === 0,
           inputScale,
           errors,
-          warnings: issues.filter((i) => i.type === 'warning'),
+          warnings,
+          summary: describePreset(normPreset),
           normalizedPresetJson,
           shareHash: encodePresetToHash(normalizedPresetJson, normPreset.pos),
           shareUrl: buildPresetShareUrl(shareBaseUrl, normalizedPresetJson, normPreset.pos)
         };
       }
 
-      return { error: 'Provide either `preset` object or `configJson` string.' };
+      return { error: 'Provide either `preset` (one preset object) or `configJson` (a config.json string).' };
     }
 
     case 'export_pack_config': {
       const pack = createEmptyPack();
       pack.name = String(args.packName || 'AI FX PACK').trim();
+      const issues: PresetIssue[] = [];
+      if (Array.isArray(args.presets)) {
+        args.presets.slice(0, 4).forEach((p: unknown, idx: number) => {
+          const scale = p && typeof p === 'object' && !Array.isArray(p) ? detectPresetScale(p as Record<string, any>) : 'editor';
+          issues.push(...checkPreset(p, scale, `presets[${idx}].`));
+        });
+      }
+      if (hasStructuralErrors(issues)) {
+        return {
+          error: 'Some presets cannot be read; nothing was exported. Fix the errors below (validate_preset gives the same details).',
+          errors: issues.filter((i) => i.type === 'error')
+        };
+      }
       if (Array.isArray(args.presets)) {
         args.presets.slice(0, 4).forEach((p: Record<string, any>, idx: number) => {
           const slot = typeof p.pos === 'number' ? Math.max(0, Math.min(3, p.pos)) : idx;
@@ -543,7 +608,6 @@ async function executeMcpToolCall(
         }
       }
 
-      const issues = validatePackConfig(pack);
       const configJsonString = serializeToConfigJson(pack);
       const configJson = JSON.parse(configJsonString);
       const shareHash = encodePackToHash(configJson);
@@ -573,6 +637,13 @@ async function executeMcpToolCall(
         shareHash = encodePackToHash(args.pack, args.slot);
         shareUrl = buildPackShareUrl(shareBaseUrl, args.pack, args.slot);
       } else if (args.preset && typeof args.preset === 'object') {
+        const pushIssues = checkPreset(args.preset, detectPresetScale(args.preset));
+        if (hasStructuralErrors(pushIssues)) {
+          return {
+            error: 'The preset cannot be read; fix the errors below (validate_preset gives the same details).',
+            errors: pushIssues.filter((i) => i.type === 'error')
+          };
+        }
         const slot = typeof args.slot === 'number' ? args.slot : args.preset.pos ?? 0;
         payload.preset = readPreset({ ...args.preset, pos: slot }, slot).preset;
         payload.slot = slot;

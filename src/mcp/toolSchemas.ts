@@ -1,4 +1,4 @@
-import type { EffectMeta, EffectType } from '../types/config';
+import type { EffectType } from '../types/config';
 import {
   EFFECTS_REGISTRY,
   MAX_EFFECTS_PER_PRESET,
@@ -177,10 +177,13 @@ const issueSchema: JsonSchema = {
   type: 'object',
   properties: {
     type: { enum: ['error', 'warning'] },
-    message: { type: 'string' },
+    code: { type: 'string', description: 'Stable issue code, e.g. unknown_param, out_of_range, bad_row.' },
+    path: { type: 'string', description: 'Exact field, e.g. list[2].cutof or handle.row.' },
+    message: { type: 'string', description: 'What is wrong.' },
+    fix: { type: 'string', description: 'How to fix it.' },
     presetPos: { type: 'integer' }
   },
-  required: ['type', 'message']
+  required: ['type', 'code', 'path', 'message', 'fix']
 };
 const shareFields: JsonSchema = {
   shareHash: { type: 'string', description: 'URL hash payload (#preset=… or #pack=…).' },
@@ -219,11 +222,16 @@ const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
       inputScale: { enum: ['editor', 'config'], description: 'Scale the preset argument was given in.' },
       errors: { type: 'array', items: issueSchema },
       warnings: { type: 'array', items: issueSchema },
+      summary: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'What the preset does, in plain words, computed from its settings. Compare it with the request.'
+      },
       normalizedPresetJson: { type: 'object' },
       normalizedConfigJson: { type: 'object' },
       ...shareFields
     },
-    required: ['isValid', 'errors', 'warnings', 'shareUrl']
+    required: ['isValid', 'errors', 'warnings', 'summary']
   },
   export_pack_config: {
     type: 'object',
@@ -280,7 +288,7 @@ const TOOL_DEFS: ToolDef[] = [
     name: 'validate_preset',
     title: 'Validate preset or config.json',
     description:
-      'Check a preset (editor scale) or a full config.json string against hardware rules: 16-row limit, single DELAY/REVERB/HARMONY/SSB, valid modulation rows, known parameter names and ranges, SAMPLE presence. Returns normalized hardware JSON and a shareable URL.',
+      'Check a preset (or a whole config.json) and explain it. Every problem comes back with the exact field (`path`, e.g. list[2].cutof or handle.row), what is wrong (`message`) and how to fix it (`fix`): unknown effects or parameters (with the closest valid name), wrong types, values out of range (with the allowed range), duplicate single-instance effects, more than 16 rows, bad modulation rows/params/depths, a trigger not on SAMPLE, and settings that make the sound inaudible. `summary` describes in plain words what the preset will do (filter frequencies, echo timing and fade, what the handle, shake and LFO change). Fix every error and validate again before exporting. Accepts editor scale (0..100) or config.json scale (0..1).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -385,18 +393,6 @@ export function buildToolList({ localFiles, edgeMode }: ToolListOptions) {
 
 export const MCP_TOOL_NAMES = TOOL_DEFS.map((t) => t.name);
 
-// ---------------------------------------------------------------------------
-// Registry lint: catches unknown parameter names and out-of-range values that
-// the hardware serializer would otherwise pass through silently.
-// ---------------------------------------------------------------------------
-export interface PresetLintIssue {
-  type: 'warning';
-  message: string;
-  presetPos?: number;
-}
-
-const ROW_META_KEYS = new Set(['id', 'effect', 'BUS']);
-
 /**
  * Which scale a raw preset uses. The tools take the editor scale (percent parameters 0..100,
  * percent modulation depths -100..100), but config.json, the official-packs resource and every
@@ -425,72 +421,3 @@ export function detectPresetScale(preset: Record<string, any>): 'editor' | 'conf
   return values.length >= 1 && values.every((v) => Math.abs(v) <= 1) ? 'config' : 'editor';
 }
 
-export function lintPresetAgainstRegistry(preset: Record<string, any>): PresetLintIssue[] {
-  const issues: PresetLintIssue[] = [];
-  const pos = typeof preset?.pos === 'number' ? preset.pos : undefined;
-  const warn = (message: string) => issues.push({ type: 'warning', message, presetPos: pos });
-  const list: any[] = Array.isArray(preset?.list) ? preset.list : [];
-
-  let percentValues = 0;
-  let percentValuesAtMostOne = 0;
-
-  list.forEach((fx, row) => {
-    const meta = EFFECTS_REGISTRY[String(fx?.effect || '').toUpperCase() as EffectType];
-    if (!meta) {
-      warn(`Row ${row}: unknown effect "${fx?.effect}". Valid: ${EFFECT_TYPES.join(', ')}.`);
-      return;
-    }
-    for (const [key, value] of Object.entries(fx)) {
-      if (ROW_META_KEYS.has(key)) continue;
-      const p = meta.params.find((x) => x.name === key);
-      if (!p) {
-        warn(
-          `Row ${row} (${meta.type}): unknown parameter "${key}". Valid: ${meta.params.map((x) => x.name).join(', ') || 'none'}.`
-        );
-        continue;
-      }
-      if (typeof value !== 'number' || !Number.isFinite(value)) {
-        warn(`Row ${row} (${meta.type}): "${key}" must be a number.`);
-        continue;
-      }
-      if (value < p.min || value > p.max) {
-        warn(`Row ${row} (${meta.type}): "${key}"=${value} is outside ${p.min}..${p.max}${p.unit ? ' ' + p.unit : ''}.`);
-      }
-      if (p.unit === '%') {
-        percentValues++;
-        if (value > 0 && value <= 1) percentValuesAtMostOne++;
-      }
-    }
-  });
-
-  if (percentValues >= 2 && percentValuesAtMostOne === percentValues) {
-    warn(
-      'All percent parameters are between 0 and 1. If these are config.json values (0.0..1.0), multiply them by 100 or pass the file as configJson; as written they are read as editor-scale percentages (0..100).'
-    );
-  }
-
-  for (const key of ['handle', 'shake', 'lfo'] as const) {
-    const mod = preset?.[key];
-    if (!mod || typeof mod !== 'object' || mod.target === 'lfo') continue;
-    if (typeof mod.row !== 'number') continue;
-    const target = list[mod.row];
-    const meta: EffectMeta | undefined = target
-      ? EFFECTS_REGISTRY[String(target.effect || '').toUpperCase() as EffectType]
-      : undefined;
-    if (!meta) continue;
-    if (!meta.params.some((p) => p.name === mod.param)) {
-      warn(
-        `${key}: row ${mod.row} is ${meta.type}, which has no parameter "${mod.param}". Valid: ${meta.params.map((p) => p.name).join(', ') || 'none'}.`
-      );
-      continue;
-    }
-    const depthCfg = getModDepthConfig(meta.type, mod.param);
-    if (typeof mod.depth === 'number' && (mod.depth < depthCfg.min || mod.depth > depthCfg.max)) {
-      warn(
-        `${key}: depth ${mod.depth} for ${meta.type}.${mod.param} is outside ${depthCfg.min}..${depthCfg.max} ${depthCfg.unit}.`
-      );
-    }
-  }
-
-  return issues;
-}

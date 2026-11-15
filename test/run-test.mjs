@@ -1913,8 +1913,11 @@ const badRow = await rpc('tools/call', {
   name: 'validate_preset',
   arguments: { preset: { list: [null] } }
 });
-assert.ok(badRow.result, 'Tool failure must be a result, not a JSON-RPC error');
-assert.strictEqual(badRow.result.isError, true);
+assert.ok(badRow.result, 'A broken preset must be a result, not a JSON-RPC error');
+assert.strictEqual(badRow.result.isError, false, 'A malformed preset is a validation result, not a crash');
+assert.strictEqual(badRow.result.structuredContent.isValid, false);
+assert.strictEqual(badRow.result.structuredContent.errors[0].code, 'row_not_object');
+assert.strictEqual(badRow.result.structuredContent.errors[0].path, 'list[0]');
 
 // 16e. Streamable HTTP transport rules
 const mcpUrl = 'http://localhost:3000/mcp';
@@ -2091,7 +2094,7 @@ for (const officialPack of OFFICIAL_TE_PACKS) {
         .content[0].text
     );
     assert.deepStrictEqual(
-      lint.warnings.filter((w) => !/SAMPLE/.test(w.message)),
+      lint.warnings,
       [],
       `${officialPack.name} / ${p.name} must lint clean`
     );
@@ -2144,15 +2147,13 @@ const errResult = await rpc('tools/call', { name: 'validate_preset', arguments: 
 assert.strictEqual(errResult.result.isError, true);
 assert.ok(!('structuredContent' in errResult.result), 'isError results must omit structuredContent');
 
-// 17f. Registry lint catches common model mistakes
-const lintOf = async (preset) =>
-  JSON.parse(
-    (await rpc('tools/call', { name: 'validate_preset', arguments: { preset } })).result.content[0].text
-  ).warnings.map((w) => w.message);
-const badParam = await lintOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effect: 'SAMPLE' }] });
-assert.ok(badParam.some((m) => m.includes('unknown parameter "cutof"')), 'Typo in param name must warn');
-const outOfRange = await lintOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
-assert.ok(outOfRange.some((m) => m.includes('"amount"=99 is outside')), 'Out-of-range value must warn');
+// 17f. Common model mistakes are errors pointing at the exact field (details in Suite 21)
+const errorsOf = async (preset) =>
+  (await rpc('tools/call', { name: 'validate_preset', arguments: { preset } })).result.structuredContent.errors;
+const badParam = await errorsOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effect: 'SAMPLE' }] });
+assert.ok(badParam.some((e) => e.path === 'list[0].cutof' && e.code === 'unknown_param' && e.fix.includes('"cutoff"')));
+const outOfRange = await errorsOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
+assert.ok(outOfRange.some((e) => e.path === 'list[0].amount' && e.code === 'out_of_range' && e.message.includes('0..40')));
 const hwScaleRes = (
   await rpc('tools/call', {
     name: 'validate_preset',
@@ -2160,12 +2161,12 @@ const hwScaleRes = (
   })
 ).result.structuredContent;
 assert.strictEqual(hwScaleRes.inputScale, 'config', 'A 0..1 preset is detected as config.json scale');
-assert.deepStrictEqual(hwScaleRes.warnings, [], '...and converted instead of warned about');
-const badMod = await lintOf({
+assert.deepStrictEqual(hwScaleRes.errors, [], '...and accepted without errors');
+const badMod = await errorsOf({
   list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
   handle: { row: 0, param: 'cutoff', depth: 50 }
 });
-assert.ok(badMod.some((m) => m.includes('has no parameter "cutoff"')), 'Mod param mismatch must warn');
+assert.ok(badMod.some((e) => e.path === 'handle.param' && e.fix.includes('frequency, mix')));
 // 17g. get_effects_reference: full list, single effect, unknown effect
 const fullRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: {} })).result.structuredContent;
 assert.strictEqual(fullRef.effects.length, 11);
@@ -2498,4 +2499,148 @@ console.log('✓ Suite 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporti
 }
 console.log('✓ Suite 20: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
 
-console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 21: Verbose validation (exact path, message, fix) and plain-language summary
+// ============================================================================
+{
+  const validate = async (args) =>
+    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 800, method: 'tools/call', params: { name: 'validate_preset', arguments: args } }))
+      .result.structuredContent;
+  const find = (res, path, code) => res.errors.concat(res.warnings).find((i) => i.path === path && (!code || i.code === code));
+
+  // Every issue carries type, code, path, message and fix
+  const broken = await validate({
+    preset: {
+      name: 'BROKEN',
+      colour: 'red',
+      list: [
+        { effect: 'LOWPAS', cutoff: 0.5 },
+        { effect: 'DELAY', tme: 0.3, echo: 140, 'wet-level': 50 },
+        { effect: 'DELAY', time: 2 },
+        { effect: 'ECHO' },
+        { effect: 'DIST', amount: 'loud', BUS: 3 },
+        { effect: 'SAMPLE' }
+      ],
+      handle: { row: 9, param: 'cutoff', depth: 40 },
+      shake: { row: 1, param: 'wet-levl', depth: 30 },
+      lfo: { row: 1, param: 'time', depth: 5, shape: 'triangle', speed: 0 },
+      trigger: { row: 1 }
+    }
+  });
+  assert.strictEqual(broken.isValid, false);
+  for (const i of broken.errors.concat(broken.warnings)) {
+    assert.ok(i.type && i.code && i.path && i.message && i.fix, `Issue must be complete: ${JSON.stringify(i)}`);
+  }
+  assert.ok(find(broken, 'colour', 'unknown_preset_key'), 'Unknown preset field');
+  assert.ok(find(broken, 'list[0].effect', 'unknown_effect').fix.includes('"LOWPASS"'), 'Typo suggests LOWPASS');
+  assert.ok(find(broken, 'list[3].effect', 'unknown_effect').fix.includes('"DELAY"'), 'Alias ECHO suggests DELAY');
+  assert.ok(find(broken, 'list[1].tme', 'unknown_param').fix.includes('"time"'), 'Param typo suggests time');
+  assert.ok(find(broken, 'list[1].echo', 'out_of_range').message.includes('0..100 %'), 'Range is stated');
+  assert.ok(find(broken, 'list[2].time', 'out_of_range').fix.includes('between 0 and 1.1'));
+  assert.ok(find(broken, 'list[2].effect', 'duplicate_effect').message.includes('rows 1, 2'));
+  assert.ok(find(broken, 'list[4].amount', 'param_not_number'));
+  assert.ok(find(broken, 'list[4].BUS', 'bad_bus'));
+  assert.ok(find(broken, 'handle.row', 'bad_row').fix.includes('0=LOWPAS'), 'Row fix lists the rows');
+  assert.ok(find(broken, 'shake.param', 'bad_param').fix.includes('"wet-level"'), 'Mod param typo suggests wet-level');
+  assert.ok(find(broken, 'lfo.depth', 'depth_out_of_range').message.includes('-1.1..1.1 s'));
+  assert.ok(find(broken, 'lfo.shape', 'bad_shape'));
+  assert.ok(find(broken, 'lfo.speed', 'bad_speed'));
+  assert.ok(find(broken, 'trigger.row', 'trigger_not_sample').fix.includes('Set trigger.row to 5'));
+  assert.strictEqual(broken.summary.length, 0, 'No summary while the preset cannot be read');
+
+  // Structural problems never crash and never produce a share link
+  for (const [label, preset, code, path] of [
+    ['not an object', 'DELAY', 'preset_not_object', '(preset)'],
+    ['no list', { name: 'X' }, 'missing_list', 'list'],
+    ['row null', { list: [null] }, 'row_not_object', 'list[0]'],
+    ['row without effect', { list: [{ time: 0.3 }] }, 'missing_effect', 'list[0].effect']
+  ]) {
+    const res = await validate({ preset });
+    assert.strictEqual(res.isValid, false, label);
+    assert.ok(find(res, path, code), `${label}: ${code} at ${path}`);
+    assert.strictEqual(res.shareUrl, undefined, `${label}: no shareUrl`);
+  }
+
+  // Too many rows, silent rows, extreme filters, zero depth, firmware support, missing SAMPLE
+  const tooMany = await validate({ preset: { list: Array.from({ length: 16 }, () => ({ effect: 'LOWPASS', cutoff: 0.5 })) } });
+  assert.ok(find(tooMany, 'list', 'too_many_rows').message.includes('17 rows'), 'Counts the SAMPLE row export adds');
+  const quiet = await validate({
+    preset: {
+      list: [
+        { effect: 'LOWPASS', cutoff: 0.05 },
+        { effect: 'REVERB', 'wet-level': 0, 'dry-level': 0 },
+        { effect: 'EQUALISER', CUTOFF: 0.5 }
+      ],
+      handle: { row: 0, param: 'cutoff', depth: 0 }
+    }
+  });
+  assert.strictEqual(quiet.isValid, true, 'Warnings alone do not invalidate a preset');
+  for (const code of ['filter_extreme', 'silent_row', 'zero_depth', 'firmware_support', 'missing_sample']) {
+    assert.ok(quiet.warnings.some((w) => w.code === code), `warning ${code}`);
+  }
+
+  // Config scale ranges and messages use the 0..1 scale
+  const cfgRange = await validate({ preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 1.5 }, { effect: 'SAMPLE' }] } });
+  assert.strictEqual(cfgRange.inputScale, 'editor', 'A value above 1 means editor scale');
+  const cfgOk = await validate({ preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5 }, { effect: 'SAMPLE' }], handle: { row: 0, param: 'wet-level', depth: 2 } } });
+  assert.strictEqual(cfgOk.inputScale, 'editor', 'A depth of 2 (2%) keeps editor scale');
+
+  // configJson: strict JSON errors with position, pack-level checks, per-preset paths
+  const badJson = await validate({ configJson: '{"name":"X","presets":[{"pos":0,}]}' });
+  assert.strictEqual(badJson.errors[0].code, 'invalid_json');
+  assert.ok(/position|column/.test(badJson.errors[0].message), 'JSON error gives the position');
+  const dupPos = await validate({
+    configJson: JSON.stringify({ name: 'P', presets: [{ pos: 0, list: [{ effect: 'SAMPLE' }] }, { pos: 0, list: [{ effect: 'SAMPLE' }] }] })
+  });
+  assert.ok(find(dupPos, 'presets[1].pos', 'duplicate_pos'));
+  const packParam = await validate({
+    configJson: JSON.stringify({ name: 'P', presets: [{ pos: 0, list: [{ effect: 'DIST', amount: 5, mix: 2 }, { effect: 'SAMPLE' }] }] })
+  });
+  assert.ok(find(packParam, 'presets[0].list[0].mix', 'out_of_range').message.includes('0..1'), 'config.json is checked in 0..1 scale');
+
+  // Summary: what the preset does, in plain words, from the settings
+  const good = await validate({
+    preset: {
+      name: 'DUB RADIO',
+      list: [
+        { effect: 'HIGHPASS', cutoff: 0.35 },
+        { effect: 'LOWPASS', cutoff: 0.55 },
+        { effect: 'DELAY', time: 0.35, echo: 50, 'wet-level': 45 },
+        { effect: 'HARMONY', pitch: 1.5, 'dry-level': 30 },
+        { effect: 'SAMPLE' }
+      ],
+      handle: { row: 1, param: 'cutoff', depth: 40 },
+      shake: { row: 2, param: 'wet-level', depth: 40 },
+      lfo: { row: 2, param: 'time', depth: 0.02, shape: 'sine', speed: 0.3 },
+      trigger: { row: 4 }
+    }
+  });
+  assert.strictEqual(good.isValid, true);
+  assert.deepStrictEqual(good.errors, []);
+  assert.deepStrictEqual(good.warnings, []);
+  const text = good.summary.join('\n');
+  assert.ok(text.includes('Signal chain: voice → HIGHPASS → LOWPASS → DELAY → HARMONY → SAMPLE'));
+  assert.ok(text.includes('HIGHPASS at ≈224 Hz'));
+  assert.ok(text.includes('LOWPASS at ≈893 Hz: muffled, dark'));
+  assert.ok(text.includes('echo every 350 ms, feedback 50% (repeats fade out over ≈3.5 s)'));
+  assert.ok(text.includes('+7.0 semitones'));
+  assert.ok(text.includes('handle moves row 1 LOWPASS cutoff from ≈893 Hz to ≈14 kHz'));
+  assert.ok(text.includes('Shaking briefly pushes row 2 DELAY wet-level from 45% to 85%'));
+  assert.ok(text.includes('LFO (sine, 0.3 Hz) swings row 2 DELAY time between 330 ms and 370 ms'));
+  const noMods = await validate({ preset: { list: [{ effect: 'RING', frequency: 200, mix: 60 }, { effect: 'SAMPLE' }] } });
+  assert.ok(noMods.summary.includes('Handle: not used (squeezing does nothing).'));
+
+  // export_pack_config refuses unreadable presets with the same detailed errors
+  const exportBroken = await handleMcpJsonRpcRequest({
+    jsonrpc: '2.0',
+    id: 801,
+    method: 'tools/call',
+    params: { name: 'export_pack_config', arguments: { presets: [{ list: [null] }] } }
+  });
+  assert.strictEqual(exportBroken.result.isError, true);
+  const exportErr = JSON.parse(exportBroken.result.content[0].text);
+  assert.strictEqual(exportErr.errors[0].path, 'presets[0].list[0]');
+}
+console.log('✓ Suite 21: Verbose validation (exact path, message, fix) and plain-language summary verified');
+
+console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');

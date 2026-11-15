@@ -34,5 +34,5 @@ The repository includes a Model Context Protocol (MCP) server at `mcp/server.mjs
 
 ### Workflow: Text Description -> Preset
 1. Call `get_effects_reference` and write the `PresetConfig` yourself (effect chain plus handle/shake/lfo modulation).
-2. Call `validate_preset`; fix every error and warning it reports.
+2. Call `validate_preset`. Fix every error: each one gives the exact `path`, what is wrong and a `fix`. Check warnings too, and read `summary` to confirm the preset does what the user asked (filter frequencies, echo timing, what the handle and shake change). Validate again until there are no errors.
 3. Call `export_pack_config` (or `push_to_live_ui` with the dev server running) and give the user the `shareUrl` so they can listen in the web app.
