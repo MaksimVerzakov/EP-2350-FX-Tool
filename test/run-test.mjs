@@ -2058,6 +2058,14 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   }
   assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
   assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx no longer subscribes to the MCP live-push bridge');
+
+  // 16f. UI exposes the FX CHAIN / SKILL.MD switch and setup guide for Claude, ChatGPT, and Gemini
+  assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes('SKILL.MD'), 'App.tsx must provide the FX CHAIN | SKILL.MD switch');
+  assert.ok(appSrc.includes('SkillPanel'), 'App.tsx must render SkillPanel when switched to SKILL.MD');
+  const skillPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/SkillPanel.tsx'), 'utf8');
+  for (const needle of ['h-[624px]', 'HOW THE SKILL WORKS', 'CLAUDE', 'CHATGPT', 'GEMINI']) {
+    assert.ok(skillPanelSrc.includes(needle), `SkillPanel.tsx must contain ${needle}`);
+  }
 }
 console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) verified');
 

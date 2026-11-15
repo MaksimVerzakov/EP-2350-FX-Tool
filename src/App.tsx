@@ -12,6 +12,7 @@ import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
+import { SkillPanel } from './components/SkillPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
 
@@ -51,6 +52,7 @@ export const App: React.FC = () => {
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
+  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'skill'>('fx');
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -186,12 +188,14 @@ export const App: React.FC = () => {
         setPack(decoded.pack);
         setActiveSlot(decoded.slot);
         setIsDevicePack(false);
+        setRightPanelMode('fx');
       } else if (decoded.type === 'preset') {
         setPack((prev) => ({
           ...prev,
           presets: prev.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
         }));
         setActiveSlot(decoded.slot);
+        setRightPanelMode('fx');
       }
     };
 
@@ -404,7 +408,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen overflow-hidden flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`max-w-[1067px] w-full flex flex-col gap-6 mx-auto transition-opacity duration-200 ${
+        className={`max-w-[1067px] w-full flex flex-col mx-auto transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -437,6 +441,52 @@ export const App: React.FC = () => {
           }
         />
 
+        {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (CENTERED BETWEEN TOP BAR AND FX CHAIN) */}
+        <div className="w-full flex items-center justify-end py-2.5 pr-[4px]">
+          <div
+            className="flex items-start"
+            role="group"
+            aria-label="Right panel view"
+          >
+            {([
+              { id: 'fx', label: 'FX CHAIN', title: 'Show preset FX chain editor' },
+              { id: 'skill', label: 'SKILL.MD', title: 'Show AI sound designer skill guide' }
+            ] as const).map((tab) => {
+              const isActive = rightPanelMode === tab.id;
+              const isTing = theme === 'ting';
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setRightPanelMode(tab.id)}
+                  aria-pressed={isActive}
+                  title={tab.title}
+                  className={`te-btn-3d h-[22px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+                    isTing
+                      ? 'bg-[#ece6d9] text-[#00503a]'
+                      : 'bg-[#e4e5e4] text-[#141617]'
+                  } ${
+                    isActive
+                      ? 'te-btn-3d--pressed z-0'
+                      : 'z-10 hover:brightness-105'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                      isActive
+                        ? 'bg-[#f15a22] border-[#141617]'
+                        : isTing
+                        ? 'bg-transparent border-[#5b695e]'
+                        : 'bg-transparent border-[#73787a]'
+                    }`}
+                  />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 w-full">
           
@@ -457,17 +507,21 @@ export const App: React.FC = () => {
             <AudioPlayerCompact theme={theme} className="-mt-[228px]" />
           </div>
 
-          {/* RIGHT COLUMN: Preset Details Ledger Sheet */}
+          {/* RIGHT COLUMN: Preset Details Ledger Sheet OR SKILL.MD Setup Panel */}
           <div className="flex-1 min-w-0 max-w-[760px] w-full flex flex-col items-center">
-            <PresetLedger
-              preset={activePreset}
-              totalPresets={pack.presets.length}
-              isEffectsOff={isEffectsOff}
-              presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
-              onUpdatePreset={handleUpdateActivePreset}
-              onSelectPreset={handleSelectSlot}
-              theme={theme}
-            />
+            {rightPanelMode === 'fx' ? (
+              <PresetLedger
+                preset={activePreset}
+                totalPresets={pack.presets.length}
+                isEffectsOff={isEffectsOff}
+                presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
+                onUpdatePreset={handleUpdateActivePreset}
+                onSelectPreset={handleSelectSlot}
+                theme={theme}
+              />
+            ) : (
+              <SkillPanel theme={theme} />
+            )}
           </div>
         </div>
       </div>
