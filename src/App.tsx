@@ -444,7 +444,7 @@ export const App: React.FC = () => {
         />
 
         {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (GRID-SNAPPED BETWEEN TOP BAR AND FX CHAIN) */}
-        <div className="w-full flex items-center justify-end pt-[24px] pb-[24px] pr-[5px]">
+        <div className="w-full flex items-center justify-end pt-[24px] md:pt-0 pb-[24px] pr-[5px]">
           <div
             className="flex items-start relative -left-[3px] -top-[3px]"
             role="group"

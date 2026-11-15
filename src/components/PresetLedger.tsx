@@ -632,7 +632,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       <div
         id={`effect-card-${effect.id}`}
         key={effect.id}
-        className={`w-full border ${
+        className={`te-card-3d w-full border ${
           isTing
             ? 'border-[#00503a] bg-[#f7f5ef]'
             : 'border-[#141617] bg-white'
@@ -960,7 +960,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         {/* 2. EFFECTS SWITCHED OFF EMPTY STATE BODY */}
         <div
           className={`flex-1 min-h-0 p-6 ${
-            isTing ? 'bg-[#f4f1ea]' : 'bg-[#ffffff]'
+            isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'
           } flex flex-col items-center justify-center`}
         >
           <div
@@ -1110,131 +1110,98 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         />
       </div>
 
-      {/* 2. DUAL PARALLEL BUS PHYSICAL SWITCH BAR */}
+      {/* 2. DUAL PARALLEL BUS SWITCHER (Joined 3D Switch + Effect Counts Underneath) */}
       <div
         className={`${
           isTing
             ? 'bg-[#e4dac5] border-b border-[#00503a]'
             : 'bg-[#eceeed] border-b border-[#141617]'
-        } flex items-center justify-center px-4 py-2 shrink-0 select-none`}
+        } flex flex-col items-center justify-center px-4 py-2 shrink-0 select-none`}
       >
-        {/* PHYSICAL TE MECHANICAL DUAL BUS CONSOLE */}
         <div
-          className={`flex items-center justify-between ${
-            isTing
-              ? 'bg-[#f7f5ef] border-[#00503a]'
-              : 'bg-[#f8f9f8] border-[#141617]'
-          } px-3 py-1.5 rounded-none border w-full max-w-[360px]`}
+          className="flex items-start relative -left-[1.5px] -top-[1.5px]"
+          role="group"
+          aria-label="Bus selector"
         >
-          {/* Left Station: BUS 1 */}
           <button
             type="button"
             onClick={() => setActiveBus(1)}
-            className="flex items-center gap-2 flex-1 justify-start group cursor-pointer focus:outline-none"
+            aria-pressed={activeBus === 1}
             title="Switch to Bus 1 (Primary signal path)"
+            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+              isTing
+                ? 'bg-[#ece6d9] text-[#00503a]'
+                : 'bg-[#e4e5e4] text-[#141617]'
+            } ${
+              activeBus === 1
+                ? 'te-btn-3d--pressed z-0'
+                : 'z-10 hover:brightness-105'
+            }`}
           >
-            <div className="flex items-center gap-2">
-              {/* Status LED Indicator */}
-              <span
-                className={`w-2.5 h-2.5 rounded-full border border-black/40 transition-all shrink-0 ${
-                  activeBus === 1
-                    ? 'bg-[#00a69c] shadow-[0_0_8px_#00a69c]'
-                    : 'bg-black/15'
-                }`}
-              />
-              <div className="flex flex-col items-start leading-tight">
-                <span
-                  className={`font-mono text-[11px] font-bold tracking-wider uppercase transition-colors ${
-                    activeBus === 1
-                      ? isTing
-                        ? 'text-[#00503a]'
-                        : 'text-[#141617]'
-                      : isTing
-                      ? 'text-[#8a867c] group-hover:text-[#00503a]'
-                      : 'text-[#8a9092] group-hover:text-[#141617]'
-                  }`}
-                >
-                  BUS 1
-                </span>
-                <span
-                  className={`font-mono text-[8.5px] tracking-tight uppercase font-bold transition-colors ${
-                    activeBus === 1 ? 'text-[#00a69c]' : 'text-[#73787a]'
-                  }`}
-                >
-                  {visibleBus1Items.length} FX
-                </span>
-              </div>
-            </div>
+            <span
+              className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                activeBus === 1
+                  ? 'bg-[#00a69c] border-[#141617]'
+                  : isTing
+                  ? 'bg-transparent border-[#5b695e]'
+                  : 'bg-transparent border-[#73787a]'
+              }`}
+            />
+            <span>BUS 1</span>
           </button>
 
-          {/* Center Physical Slider Toggle Switch */}
-          <div className="px-3 shrink-0 flex items-center justify-center">
-            <button
-              type="button"
-              onClick={() => setActiveBus(activeBus === 1 ? 2 : 1)}
-              className={`relative w-14 h-6 ${
-                isTing ? 'bg-[#003828] border-[#00281c]' : 'bg-[#181a1b] border-[#000000]'
-              } rounded-none border p-0.5 cursor-pointer flex items-center focus:outline-none`}
-              title={`Toggle to Bus ${activeBus === 1 ? 2 : 1}`}
-              aria-label={`Toggle between Bus 1 and Bus 2, currently Bus ${activeBus}`}
-            >
-              {/* Recessed slider channel */}
-              <div className="absolute inset-x-2 h-[2px] bg-black/90 top-1/2 -translate-y-1/2 rounded-full" />
-
-              {/* Teenage Engineering Orange Switch Cap with 45° Tactile Facet */}
-              <div
-                className={`w-6 h-5 bg-[#f15a22] rounded-none border border-[#000000] flex items-center justify-center gap-[2px] transition-transform duration-200 ease-out z-10 ${
-                  activeBus === 1 ? 'translate-x-0' : 'translate-x-[26px]'
-                }`}
-              >
-                {/* 3 tactile physical grip micro-ribs */}
-                <span className="w-[1.5px] h-3 bg-black/30 rounded-full" />
-                <span className="w-[1.5px] h-3 bg-black/30 rounded-full" />
-                <span className="w-[1.5px] h-3 bg-black/30 rounded-full" />
-              </div>
-            </button>
-          </div>
-
-          {/* Right Station: BUS 2 */}
           <button
             type="button"
             onClick={() => setActiveBus(2)}
-            className="flex items-center gap-2 flex-1 justify-end group cursor-pointer focus:outline-none"
+            aria-pressed={activeBus === 2}
             title="Switch to Bus 2 (Parallel signal path)"
+            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+              isTing
+                ? 'bg-[#ece6d9] text-[#00503a]'
+                : 'bg-[#e4e5e4] text-[#141617]'
+            } ${
+              activeBus === 2
+                ? 'te-btn-3d--pressed z-0'
+                : 'z-10 hover:brightness-105'
+            }`}
           >
-            <div className="flex items-center gap-2">
-              <div className="flex flex-col items-end leading-tight">
-                <span
-                  className={`font-mono text-[11px] font-bold tracking-wider uppercase transition-colors ${
-                    activeBus === 2
-                      ? isTing
-                        ? 'text-[#00503a]'
-                        : 'text-[#141617]'
-                      : isTing
-                      ? 'text-[#8a867c] group-hover:text-[#00503a]'
-                      : 'text-[#8a9092] group-hover:text-[#141617]'
-                  }`}
-                >
-                  BUS 2
-                </span>
-                <span
-                  className={`font-mono text-[8.5px] tracking-tight uppercase font-bold transition-colors ${
-                    activeBus === 2 ? 'text-[#d99b26]' : 'text-[#73787a]'
-                  }`}
-                >
-                  {bus2Items.length} FX
-                </span>
-              </div>
-              {/* Status LED Indicator */}
-              <span
-                className={`w-2.5 h-2.5 rounded-full border border-black/40 transition-all shrink-0 ${
-                  activeBus === 2
-                    ? 'bg-[#d99b26] shadow-[0_0_8px_#d99b26]'
-                    : 'bg-black/15'
-                }`}
-              />
-            </div>
+            <span
+              className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                activeBus === 2
+                  ? 'bg-[#d99b26] border-[#141617]'
+                  : isTing
+                  ? 'bg-transparent border-[#5b695e]'
+                  : 'bg-transparent border-[#73787a]'
+              }`}
+            />
+            <span>BUS 2</span>
           </button>
+        </div>
+
+        {/* Plain-text effect counts underneath each bus */}
+        <div className="w-[156px] grid grid-cols-2 mt-[6px] font-mono text-[8.5px] font-bold tracking-wider uppercase leading-none text-center">
+          <span
+            className={
+              activeBus === 1
+                ? 'text-[#00a69c]'
+                : isTing
+                ? 'text-[#5b695e]'
+                : 'text-[#73787a]'
+            }
+          >
+            {visibleBus1Items.length} FX
+          </span>
+          <span
+            className={
+              activeBus === 2
+                ? 'text-[#d99b26]'
+                : isTing
+                ? 'text-[#5b695e]'
+                : 'text-[#73787a]'
+            }
+          >
+            {bus2Items.length} FX
+          </span>
         </div>
       </div>
 
@@ -1242,7 +1209,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       <div
         ref={canvasRef}
         className={`flex-1 min-h-0 overflow-y-auto p-3 ${
-          isTing ? 'bg-[#f4f1ea]' : 'bg-[#ffffff]'
+          isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'
         } flex flex-col items-center relative`}
       >
         {visibleBusItems.length === 0 ? (
@@ -1288,13 +1255,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             </button>
           </div>
         ) : (
-          <div className="w-full flex flex-col items-center max-w-3xl">
+          <div className="w-full flex flex-col items-center max-w-3xl pr-[3px]">
             {visibleBusItems.map((item, bIdx) => (
               <React.Fragment key={item.fx.id}>
                 {renderEffectCard(item, bIdx)}
                 {/* Vertical Connector Line & Mid-Chain Insert Plus Button */}
                 {bIdx < visibleBusItems.length - 1 && (
-                  <div className="flex flex-col items-center relative my-1.5">
+                  <div className="flex flex-col items-center relative mt-[7px] mb-[4px]">
                     <div
                       className={`w-[2px] h-7 ${
                         activeBus === 1 ? 'bg-[#00a69c]' : 'bg-[#d99b26]'
@@ -1323,7 +1290,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             ))}
 
             {/* Single Add Effect Button at the bottom */}
-            <div className="flex flex-col items-center mt-2 mb-3">
+            <div className="flex flex-col items-center mt-[10px] mb-3">
               <div
                 className={`w-[2px] h-4 ${
                   activeBus === 1 ? 'bg-[#00a69c]' : 'bg-[#d99b26]'

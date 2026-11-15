@@ -486,6 +486,47 @@ html[data-theme='ting'] .te-btn-3d--orange {
   --te-btn-bevel: #b83d10;
 }
 
+/* Static 3px 45° Axonometric Extruded 3D Card Block (matches .te-btn-3d geometry for FX blocks) */
+.te-card-3d {
+  position: relative;
+}
+
+.te-card-3d::before {
+  content: '';
+  position: absolute;
+  left: 0.5px;
+  right: -2.5px;
+  bottom: -4px;
+  height: 3px;
+  background-color: #cfd1d0;
+  border-left: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewX(45deg);
+  pointer-events: none;
+}
+
+.te-card-3d::after {
+  content: '';
+  position: absolute;
+  top: 0.5px;
+  bottom: -2.5px;
+  right: -4px;
+  width: 3px;
+  background-color: #cfd1d0;
+  border-top: 1px solid #141617;
+  border-right: 1px solid #141617;
+  border-bottom: 1px solid #141617;
+  transform: skewY(45deg);
+  pointer-events: none;
+}
+
+html[data-theme='ting'] .te-card-3d::before,
+html[data-theme='ting'] .te-card-3d::after {
+  background-color: #cbc0a7;
+  border-color: #00503a;
+}
+
 
 /* Device connector: on hover the USB-C plug drops into the mic and lifts back out, on a loop. */
 @keyframes epPlugInOut {
