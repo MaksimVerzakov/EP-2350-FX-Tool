@@ -1069,9 +1069,23 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Preset Selector (EP Sample Tool PROJECT 07 style) */}
+          {/* Merged Preset Selector + Editable Name (EP Sample Tool PROJECT 07 style) */}
           {renderPresetSelectorBar({
-            label: `PRESET ${preset.pos + 1}`,
+            label: (
+              <input
+                type="text"
+                value={preset.name || ''}
+                onChange={(e) => onUpdatePreset({ ...preset, name: e.target.value.toUpperCase() })}
+                placeholder="PRESET NAME"
+                aria-label={`Preset ${preset.pos + 1} name`}
+                maxLength={20}
+                className={`bg-transparent font-mono font-bold text-[10.5px] tracking-wider uppercase focus:outline-none w-[150px] text-center ${
+                  isTing
+                    ? 'text-[#00503a] placeholder:text-[#00503a]/50'
+                    : 'text-[#141617] placeholder:text-[#141617]/50'
+                }`}
+              />
+            ),
             onPrev: () => onSelectPreset?.(preset.pos === 0 ? -1 : preset.pos - 1),
             prevTitle:
               preset.pos === 0
@@ -1083,18 +1097,6 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 ? 'Switch Effects OFF (Bypass)'
                 : `Next Preset (Preset ${preset.pos + 2})`,
           })}
-
-          {/* Name Field Directly Beside Preset Number (No "NAME:" Label) */}
-          <input
-            type="text"
-            value={preset.name || ''}
-            onChange={(e) => onUpdatePreset({ ...preset, name: e.target.value.toUpperCase() })}
-            placeholder="PRESET NAME"
-            className={`${
-              isTing ? 'bg-[#003828]' : 'bg-black'
-            } text-white placeholder:text-white/40 px-2.5 py-1 font-mono text-xs font-bold tracking-wider uppercase border border-white/30 focus:outline-none focus:border-white w-[180px] shrink-0`}
-            maxLength={20}
-          />
         </div>
 
         {/* Preset Comment / Performance Notes (from TE config.json) */}
