@@ -139,7 +139,7 @@ html[data-theme='ting'] {
 
 /*
  * Layout grid. Like TE's EP sample tool, every block outline sits on a background grid line.
- * The grid is drawn in CSS with a fixed 25px cell and 1px lines, and is anchored to the layout's
+ * The grid is drawn in CSS with a fixed 25px cell and thin lines (--grid-line-width), and is anchored to the layout's
  * top-left corner (.te-grid-origin), so a line runs through x = 0 and y = 0 of the layout and
  * through every 25px from there.
  *
@@ -156,6 +156,8 @@ html[data-theme='ting'] {
  */
 :root {
   --grid: 25px;
+  /* Line thickness. 0.5px is one device pixel on 2x screens. */
+  --grid-line-width: 0.5px;
   --grid-paper: #abb5ba;
   --grid-line: #d7dadb;
 }
@@ -163,6 +165,13 @@ html[data-theme='ting'] {
 html[data-theme='ting'] {
   --grid-paper: #dbd0b9;
   --grid-line: #c3c2ab;
+}
+
+/* 1x screens cannot draw half a pixel cleanly, so keep a full pixel there. */
+@media (max-resolution: 1.5dppx) {
+  :root {
+    --grid-line-width: 1px;
+  }
 }
 
 html {
@@ -191,8 +200,8 @@ html {
   /* Whole cells in every direction, so the pattern stays in phase with the layout origin. */
   inset: calc(var(--grid) * -130);
   background-image:
-    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid-line) var(--grid-line-width), transparent var(--grid-line-width)),
+    linear-gradient(to bottom, var(--grid-line) var(--grid-line-width), transparent var(--grid-line-width));
   background-size: var(--grid) var(--grid);
   pointer-events: none;
 }
