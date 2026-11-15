@@ -114,9 +114,9 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
           </svg>
 
-          {/* Front Modular Blocks: 10 x 3 grid modules of 25px (251px x 76px, borders on the grid lines) */}
+          {/* Front Modular Blocks: 10 x 3 grid cells of 25px (251px x 76px, borders on the grid lines) */}
           <div className="relative z-10 flex w-[251px] h-[76px] border border-[#141617]">
-            {/* Left [EP] Block (4 modules wide, 2 rows tall) */}
+            {/* Left [EP] Block (4 cells wide, 2 rows tall) */}
             <div className="w-[100px] h-full flex items-center justify-center relative border-r border-[#141617] bg-[#f15a22]">
               {/* 4 Corner Modular Circles */}
               <span className="w-[11px] h-[11px] rounded-full border border-[#141617]/55 absolute top-[7px] left-[7px]" />
@@ -240,7 +240,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
       <div className="flex flex-col sm:flex-row items-center sm:items-start gap-[19px]">
       {deviceConnector}
 
-      {/* Right Modular Block (Same 10 x 3 module size & 3D format as Left Block: Row 1 = [EXPORT][IMPORT], Row 2 = Pack Dropdown) */}
+      {/* Right Modular Block (Same 10 x 3 cell size & 3D format as Left Block: Row 1 = [EXPORT][IMPORT], Row 2 = Pack Dropdown) */}
       <div ref={dropdownRef} className="flex flex-col items-start relative">
         <input
           ref={fileInputRef}

@@ -667,7 +667,7 @@ assert.ok(
 assert.strictEqual(
   (topBannerSrc.match(/w-\[251px\] h-\[76px\]/g) || []).length,
   2,
-  'Both left and right TopBanner blocks must share identical 10x3-module (251x76) modular dimensions'
+  'Both left and right TopBanner blocks must share identical 10x3-cell (251x76) modular dimensions'
 );
 assert.ok(
   topBannerSrc.includes('aria-label="Export and Import actions"') &&

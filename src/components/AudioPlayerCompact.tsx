@@ -56,7 +56,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           onClick={() => handleSelectMode('sample')}
           aria-pressed={inputMode === 'sample'}
           title="Use built-in vocal speech loop"
-          className={`te-btn-3d h-[26px] w-[76px] px-2 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+          className={`te-btn-3d h-[26px] w-[51px] px-[5px] flex items-center gap-[3px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
             isTing
               ? 'bg-[#ece6d9] text-[#00503a]'
               : 'bg-[#e4e5e4] text-[#141617]'
@@ -82,7 +82,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           onClick={() => handleSelectMode('mic')}
           aria-pressed={inputMode === 'mic'}
           title="Use live microphone input"
-          className={`te-btn-3d h-[26px] w-[50px] px-2 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+          className={`te-btn-3d h-[26px] w-[50px] px-[5px] flex items-center justify-center gap-[3px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
             isTing
               ? 'bg-[#ece6d9] text-[#00503a]'
               : 'bg-[#e4e5e4] text-[#141617]'

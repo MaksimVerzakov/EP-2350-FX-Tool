@@ -458,7 +458,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen overflow-hidden isolate flex flex-col items-center px-4 py-4 md:px-8 md:py-[25px] select-none font-sans">
-      {/* Layout origin for the background grid: 42 modules of 25px wide (+1px closing line, +5px bevel) */}
+      {/* Layout origin for the background grid: 42 cells of 25px wide (+1px closing line, +5px bevel) */}
       <div className="te-grid-origin max-w-[1056px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}

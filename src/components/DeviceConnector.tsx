@@ -19,7 +19,7 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const EDGE = '#141617';
 /**
- * Block face size: 8 x 3 grid modules of 25px (+1px so both borders sit on grid lines).
+ * Block face size: 8 x 3 grid cells of 25px (+1px so both borders sit on grid lines).
  * Bevels add 5px on the right and bottom; the block is lifted by that depth so its back face,
  * not its front, sits on the grid.
  */

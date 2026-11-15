@@ -15,15 +15,15 @@ interface MicDeviceProps {
 
 /*
  * Grid fit. The mic body outline (source x 338.805..551.475, y 0.5..334.555) is mapped onto the
- * 25px layout module (2 cells of the 12.5px background grid) so it spans exactly 7 x 11 modules.
+ * 25px background grid so it spans exactly 7 x 11 cells.
  * That ratio matches the artwork to within 0.1%, so all four edges land on a line undistorted.
  *
  * As in the EP sample tool, it is the BACK of the body that sits on the grid: the body is
  * extruded 6 source units down and to the right (the hatched bevel), and that far outline has its
- * stroke centred on the grid lines (3 modules in from the left of the 11-module column, flush with
+ * stroke centred on the grid lines (3 cells in from the left of the 11-cell column, flush with
  * the column top). The front face floats up and to the left by the extrusion depth.
  */
-const GRID = 25; // layout module: 2 cells of the 12.5px background grid
+const GRID = 25; // background grid cell
 const MIC_BOX_W = 11 * GRID;
 const MIC_BOX_H = 22 * GRID;
 const MIC_DEPTH = 6;

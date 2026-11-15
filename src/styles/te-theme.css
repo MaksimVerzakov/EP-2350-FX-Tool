@@ -139,24 +139,23 @@ html[data-theme='ting'] {
 
 /*
  * Layout grid. Like TE's EP sample tool, every block outline sits on a background grid line.
- * The grid is drawn in CSS with a fixed 12.5px cell, the cell size of the EP sample tool, and is
- * anchored to the layout's top-left corner (.te-grid-origin), so a line runs through x = 0 and
- * y = 0 of the layout and through every 12.5px from there.
+ * The grid is drawn in CSS with a fixed 25px cell and 1px lines, and is anchored to the layout's
+ * top-left corner (.te-grid-origin), so a line runs through x = 0 and y = 0 of the layout and
+ * through every 25px from there.
  *
- * Blocks are laid out on a 25px module (2 cells), so their edges are always on whole pixels.
- * Sizing rule for outlined blocks: N modules => N * 25 + 1 px (border-box), so both 1px borders
+ * The proportions are the sample tool's: there a line is 1/26 of a cell, the logo block is
+ * 3 cells tall and small controls are 1 cell tall. Here the cell is 25px, the line 1px, the
+ * badges 3 cells and the buttons 1 cell.
+ *
+ * Sizing rule for outlined blocks: N cells => N * 25 + 1 px (border-box), so both 1px borders
  * land exactly on grid lines.
- *
- * The pattern is one 25px tile holding two lines per axis: one at 0 and one at --grid-mid.
- * On 1x screens the middle line snaps to 12px so it stays a crisp single pixel.
  *
  * Extruded (3D) blocks follow the EP sample tool: it is the BACK of the block (the far edge of
  * its 45° bevel) that sits on the grid. The front face floats up and to the left by the bevel
  * depth, which is what makes the blocks read as raised off the page.
  */
 :root {
-  --grid-module: 25px;
-  --grid-mid: 12.5px;
+  --grid: 25px;
   --grid-paper: #abb5ba;
   --grid-line: #d7dadb;
 }
@@ -164,12 +163,6 @@ html[data-theme='ting'] {
 html[data-theme='ting'] {
   --grid-paper: #dbd0b9;
   --grid-line: #c3c2ab;
-}
-
-@media (max-resolution: 1.5dppx) {
-  :root {
-    --grid-mid: 12px;
-  }
 }
 
 html {
@@ -195,26 +188,12 @@ html {
   content: '';
   position: absolute;
   z-index: -1;
-  /* Whole modules in every direction, so the pattern stays in phase with the layout origin. */
-  inset: calc(var(--grid-module) * -130);
+  /* Whole cells in every direction, so the pattern stays in phase with the layout origin. */
+  inset: calc(var(--grid) * -130);
   background-image:
     linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(
-      to right,
-      transparent var(--grid-mid),
-      var(--grid-line) var(--grid-mid),
-      var(--grid-line) calc(var(--grid-mid) + 1px),
-      transparent calc(var(--grid-mid) + 1px)
-    ),
-    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(
-      to bottom,
-      transparent var(--grid-mid),
-      var(--grid-line) var(--grid-mid),
-      var(--grid-line) calc(var(--grid-mid) + 1px),
-      transparent calc(var(--grid-mid) + 1px)
-    );
-  background-size: var(--grid-module) var(--grid-module);
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid) var(--grid);
   pointer-events: none;
 }
 
