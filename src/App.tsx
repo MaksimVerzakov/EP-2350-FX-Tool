@@ -410,7 +410,7 @@ export const App: React.FC = () => {
       <div className="te-grid-origin max-w-[1056px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`w-full flex flex-col transition-opacity duration-200 ${
+        className={`w-full flex flex-col gap-[25px] transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -443,52 +443,6 @@ export const App: React.FC = () => {
           }
         />
 
-        {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (GRID-SNAPPED BETWEEN TOP BAR AND FX CHAIN) */}
-        <div className="w-full flex items-center justify-end pt-[24px] pb-[24px] pr-[5px]">
-          <div
-            className="flex items-start relative -left-[3px] -top-[3px]"
-            role="group"
-            aria-label="Right panel view"
-          >
-            {([
-              { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', title: 'Show preset FX chain editor' },
-              { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', title: 'Show AI sound designer skill guide' }
-            ] as const).map((tab) => {
-              const isActive = rightPanelMode === tab.id;
-              const isTing = theme === 'ting';
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setRightPanelMode(tab.id)}
-                  aria-pressed={isActive}
-                  title={tab.title}
-                  className={`te-btn-3d h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
-                    isTing
-                      ? 'bg-[#ece6d9] text-[#00503a]'
-                      : 'bg-[#e4e5e4] text-[#141617]'
-                  } ${
-                    isActive
-                      ? 'te-btn-3d--pressed z-0'
-                      : 'z-10 hover:brightness-105'
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
-                      isActive
-                        ? 'bg-[#f15a22] border-[#141617]'
-                        : isTing
-                        ? 'bg-transparent border-[#5b695e]'
-                        : 'bg-transparent border-[#73787a]'
-                    }`}
-                  />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[25px] w-full">
           
@@ -509,8 +463,50 @@ export const App: React.FC = () => {
             <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
-          {/* RIGHT COLUMN: Preset Details Ledger Sheet OR SKILL.MD Setup Panel */}
-          <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center">
+          {/* RIGHT COLUMN: Attached FX CHAIN | SKILL.MD Tab Switch + Ledger Sheet / Skill Panel */}
+          <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center relative">
+            <div
+              className="flex items-start self-end mr-[13px] mb-[2px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[34px] lg:right-[13px] z-20"
+              role="group"
+              aria-label="Right panel view"
+            >
+              {([
+                { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
+                { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', isEdge: true, title: 'Show AI sound designer skill guide' }
+              ] as const).map((tab) => {
+                const isActive = rightPanelMode === tab.id;
+                const isTing = theme === 'ting';
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setRightPanelMode(tab.id)}
+                    aria-pressed={isActive}
+                    title={tab.title}
+                    className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
+                      isTing
+                        ? 'bg-[#ece6d9] text-[#00503a]'
+                        : 'bg-[#e4e5e4] text-[#141617]'
+                    } ${
+                      isActive
+                        ? 'te-dock-btn--pressed z-0'
+                        : 'z-10 hover:brightness-105'
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                        isActive
+                          ? 'bg-[#f15a22] border-[#141617]'
+                          : isTing
+                          ? 'bg-transparent border-[#5b695e]'
+                          : 'bg-transparent border-[#73787a]'
+                      }`}
+                    />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
             {rightPanelMode === 'fx' ? (
               <PresetLedger
                 preset={activePreset}

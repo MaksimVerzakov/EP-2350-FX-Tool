@@ -66,11 +66,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   };
 
   return (
-    <div
-      className={`w-full flex flex-col md:flex-row items-center md:items-start justify-between gap-4 pb-3 md:pb-0 md:h-[101px] border-b select-none transition-colors ${
-        isTing ? 'border-[#00503a]/30' : 'border-[#dfe2e0]'
-      }`}
-    >
+    <div className="w-full flex flex-col md:flex-row items-center md:items-start justify-between gap-4 pb-3 md:pb-0 md:h-[100px] select-none transition-colors">
       {/* 1. Iconic TE Modular Badge with Integrated [TING] [FX] Theme Switcher */}
       <div className="flex flex-col items-start">
         <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">

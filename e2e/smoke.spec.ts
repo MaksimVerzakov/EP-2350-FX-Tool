@@ -152,4 +152,20 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(skillPanel).toHaveCount(0);
     await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('WALKIE TALKIE');
   });
+
+  test('switches between BUS 1 and BUS 2 using the 3D bus switcher with FX counts underneath', async ({ page }) => {
+    await page.goto('/');
+
+    const busGroup = page.getByRole('group', { name: 'Bus selector' });
+    const bus1Btn = busGroup.getByRole('button', { name: 'BUS 1', exact: true });
+    const bus2Btn = busGroup.getByRole('button', { name: 'BUS 2', exact: true });
+    await expect(bus1Btn).toHaveAttribute('aria-pressed', 'true');
+    await expect(bus2Btn).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('[id^="effect-card-"].te-card-3d').first()).toBeVisible();
+
+    await bus2Btn.click();
+    await expect(bus2Btn).toHaveAttribute('aria-pressed', 'true');
+    await expect(bus1Btn).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
+  });
 });
