@@ -23,7 +23,7 @@ interface MicDeviceProps {
  * stroke centred on the grid lines (3 cells in from the left of the 13-cell column, flush with
  * the column top). The front face floats up and to the left by the extrusion depth.
  */
-const GRID = 22;
+const GRID = 22; // layout module: 2 cells of the 11px background grid
 const MIC_BOX_W = 13 * GRID;
 const MIC_BOX_H = 25 * GRID;
 const MIC_DEPTH = 6;

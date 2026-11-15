@@ -139,11 +139,12 @@ html[data-theme='ting'] {
 
 /*
  * Layout grid. Like TE's EP sample tool, every block outline sits on a background grid line.
- * The grid is drawn in CSS (crisp 1px lines at any pixel ratio) with a fixed 22px cell and is
+ * The grid is drawn in CSS (crisp 1px lines at any pixel ratio) with a fixed 11px cell and is
  * anchored to the layout's top-left corner (.te-grid-origin), so a line runs through x = 0 and
  * y = 0 of the layout and through every multiple of --grid from there.
  *
- * Sizing rule for outlined blocks: N cells => N * 22 + 1 px (border-box), so both 1px borders
+ * Blocks are laid out on a 22px module (2 cells). Sizing rule for outlined blocks: N modules =>
+ * N * 22 + 1 px (border-box), so both 1px borders
  * land exactly on grid lines.
  *
  * Extruded (3D) blocks follow the EP sample tool: it is the BACK of the block (the far edge of
@@ -151,7 +152,7 @@ html[data-theme='ting'] {
  * depth, which is what makes the blocks read as raised off the page.
  */
 :root {
-  --grid: 22px;
+  --grid: 11px;
   --grid-paper: #abb5ba;
   --grid-line: #d7dadb;
 }
@@ -185,7 +186,7 @@ html {
   position: absolute;
   z-index: -1;
   /* Whole cells in every direction, so the pattern stays in phase with the layout origin. */
-  inset: calc(var(--grid) * -150);
+  inset: calc(var(--grid) * -300);
   background-image:
     linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
     linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
