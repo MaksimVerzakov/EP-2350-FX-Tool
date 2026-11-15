@@ -73,7 +73,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
     >
       {/* 1. Iconic TE Modular Badge with Integrated [TING] [FX] Theme Switcher */}
       <div className="flex flex-col items-start">
-        <div className="relative pr-[5px] pb-[5px]">
+        <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
           {/* 45° Axonometric Extruded 3D Bevels (Bottom & Right) */}
           <svg
             className="absolute inset-0 w-[270px] h-[72px] pointer-events-none"
@@ -250,7 +250,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           className="hidden"
         />
 
-        <div className="relative pr-[5px] pb-[5px]">
+        <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
           {/* 45° Axonometric Extruded 3D Bevels (Bottom & Right) matching Left Block */}
           <svg
             className="absolute inset-0 w-[270px] h-[72px] pointer-events-none"

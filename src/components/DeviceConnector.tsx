@@ -20,7 +20,8 @@ type SaveState = 'idle' | 'saving' | 'saved';
 const EDGE = '#141617';
 /**
  * Block face size: 8 x 3 background-grid cells (+1px so both borders sit on grid lines).
- * Bevels add 5px on the right and bottom.
+ * Bevels add 5px on the right and bottom; the block is lifted by that depth so its back face,
+ * not its front, sits on the grid.
  */
 const BLOCK_W = 177;
 const BLOCK_H = 67;
@@ -178,7 +179,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
   );
 
   return (
-    <div className="relative pr-[5px] pb-[5px]" data-testid="device-connector">
+    <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]" data-testid="device-connector">
       {/* 45° axonometric bevels (bottom & right), colour-matched to the faces beside them */}
       <svg
         className="absolute inset-0 pointer-events-none"

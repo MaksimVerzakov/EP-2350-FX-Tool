@@ -43,7 +43,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
 
   return (
     <div
-      className={`w-[286px] relative z-10 flex flex-col items-end gap-[21px] pr-[21px] select-none ${className}`}
+      className={`w-[286px] relative -left-[3px] -top-[3px] z-10 flex flex-col items-end gap-[21px] pr-[21px] select-none ${className}`}
     >
       {/* Floating PROJECT / SYSTEM style joined 3D switch */}
       <div

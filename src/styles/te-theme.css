@@ -145,11 +145,15 @@ html[data-theme='ting'] {
  *
  * Sizing rule for outlined blocks: N cells => N * 22 + 1 px (border-box), so both 1px borders
  * land exactly on grid lines.
+ *
+ * Extruded (3D) blocks follow the EP sample tool: it is the BACK of the block (the far edge of
+ * its 45° bevel) that sits on the grid. The front face floats up and to the left by the bevel
+ * depth, which is what makes the blocks read as raised off the page.
  */
 :root {
   --grid: 22px;
-  --grid-paper: #d7dadb;
-  --grid-line: #abb5ba;
+  --grid-paper: #abb5ba;
+  --grid-line: #d7dadb;
 }
 
 html[data-theme='ting'] {
@@ -351,6 +355,9 @@ html[data-theme='ting'] .te-hardware-chassis {
 /* 5px 45° Axonometric Extruded 3D Bevel Frame (matches TopBanner EP/FX & Import/Export blocks) */
 .te-bevel-frame {
   position: relative;
+  /* Back face on the grid: lift the front face by the 5px bevel depth. */
+  left: -5px;
+  top: -5px;
   padding-right: 5px;
   padding-bottom: 5px;
 }
