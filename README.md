@@ -16,14 +16,13 @@ A companion web workbench, DSP engine, hardware validator, and **MCP server** fo
 
 ### 2. DSP Audio Engine
 - **Live Browser Auditioning**: Real-time audio engine modeled on the EP-2350 effects, interactive mic controls (slot switcher, handle lever, shake trigger), built-in sample/speech sources, and custom `.wav` loading.
-- **Headless Simulation & Analysis**: Offline DSP renderer and acoustic analyzer used by the MCP server to verify frequency balance, pitch shifts, echoes, and modulation behavior—and to optimize parameters against a target `.wav` file.
 
 ### 3. Hardware Validator
 - Validates preset chains, effect counts, single-instance hardware constraints, modulation targets, and sample routing before exporting `config.json` or sending presets to a device.
 
 ### 4. MCP Server (AI Sound Design)
-- Exposes the synthesizer, validator, headless DSP engine, and reference-audio matcher over the **Model Context Protocol (MCP)**—hosted publicly over Streamable HTTP at `/mcp` or runnable locally over `stdio`.
-- AI assistants can generate hardware-ready presets from text descriptions, simulate how they sound across Handle and Shake gestures, validate `config.json`, and return a clickable URL that loads directly in your browser.
+- Four tools over the **Model Context Protocol (MCP)**, hosted publicly over Streamable HTTP at `/mcp` or runnable locally over `stdio`: an effects reference (format, parameters, rules), a validator, `config.json` export, and a link to review the preset in the web app.
+- AI assistants write the preset themselves, validate it, and return a clickable URL that loads it directly in your browser to listen.
 - Full tool, resource, and Cloudflare deployment details: [`docs/MCP_SOUND_DESIGNER.md`](docs/MCP_SOUND_DESIGNER.md).
 
 ---
