@@ -466,13 +466,13 @@ export const App: React.FC = () => {
           {/* RIGHT COLUMN: Attached FX CHAIN | SKILL.MD Tab Switch + Ledger Sheet / Skill Panel */}
           <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center relative">
             <div
-              className="flex items-start self-end mr-[13px] mb-[2px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[33px] lg:right-[13px] z-20"
+              className="flex items-start self-end mr-[13px] mb-[2px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[34px] lg:right-[13px] z-20"
               role="group"
               aria-label="Right panel view"
             >
               {([
-                { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', title: 'Show preset FX chain editor' },
-                { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', title: 'Show AI sound designer skill guide' }
+                { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
+                { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', isEdge: true, title: 'Show AI sound designer skill guide' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
                 const isTing = theme === 'ting';
@@ -483,13 +483,13 @@ export const App: React.FC = () => {
                     onClick={() => setRightPanelMode(tab.id)}
                     aria-pressed={isActive}
                     title={tab.title}
-                    className={`te-btn-3d h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
+                    className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
                       isTing
                         ? 'bg-[#ece6d9] text-[#00503a]'
                         : 'bg-[#e4e5e4] text-[#141617]'
                     } ${
                       isActive
-                        ? 'te-btn-3d--pressed z-0'
+                        ? 'te-dock-btn--pressed z-0'
                         : 'z-10 hover:brightness-105'
                     }`}
                   >

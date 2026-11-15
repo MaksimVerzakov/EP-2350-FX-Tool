@@ -1183,7 +1183,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           <span
             className={
               activeBus === 1
-                ? 'text-[#00a69c]'
+                ? isTing
+                  ? 'text-[#00503a]'
+                  : 'text-[#141617]'
                 : isTing
                 ? 'text-[#5b695e]'
                 : 'text-[#73787a]'
@@ -1194,7 +1196,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           <span
             className={
               activeBus === 2
-                ? 'text-[#d99b26]'
+                ? isTing
+                  ? 'text-[#00503a]'
+                  : 'text-[#141617]'
                 : isTing
                 ? 'text-[#5b695e]'
                 : 'text-[#73787a]'
@@ -1243,14 +1247,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               data-add-effect-trigger="true"
               disabled={isAtEffectLimit}
               onClick={(e) => openAddMenu(e, undefined, 'empty')}
-              className={`px-4 py-1.5 text-[10px] font-mono font-bold text-white ${
+              className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer text-white ${
                 isTing
-                  ? 'bg-[#00503a] hover:bg-[#f15a22]'
-                  : 'bg-[#141617] hover:bg-[#f15a22]'
-              } rounded-none flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none`}
+                  ? 'bg-[#00503a] hover:bg-[#00664a]'
+                  : 'bg-[#141617] hover:bg-[#232628]'
+              } disabled:opacity-40 disabled:pointer-events-none`}
               title={isAtEffectLimit ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached` : 'Add effect'}
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3 h-3" />
               <span>{isAtEffectLimit ? `MAX ${MAX_EFFECTS_PER_PRESET} FX REACHED` : 'ADD EFFECT'}</span>
             </button>
           </div>
@@ -1259,19 +1263,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             {visibleBusItems.map((item, bIdx) => (
               <React.Fragment key={item.fx.id}>
                 {renderEffectCard(item, bIdx)}
-                {/* Vertical Connector Line & Mid-Chain Insert Plus Button */}
+                {/* 1-cell margin gap & Mid-Chain Insert Plus Button (no connector line) */}
                 {bIdx < visibleBusItems.length - 1 && (
-                  <div className="flex flex-col items-center relative mt-[7px] mb-[4px]">
-                    <div
-                      className={`w-[2px] h-7 ${
-                        activeBus === 1 ? 'bg-[#00a69c]' : 'bg-[#d99b26]'
-                      }`}
-                    />
+                  <div className="h-[25px] flex items-center justify-center pt-[3px] relative">
                     <button
                       data-add-effect-trigger="true"
                       disabled={isAtEffectLimit}
                       onClick={(e) => openAddMenu(e, bIdx + 1, `mid-${bIdx + 1}`)}
-                      className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center cursor-pointer text-[9px] font-bold transition-transform hover:scale-125 z-10 disabled:opacity-30 disabled:pointer-events-none ${
+                      className={`w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center cursor-pointer text-[9px] font-bold transition-transform hover:scale-125 z-10 disabled:opacity-30 disabled:pointer-events-none ${
                         activeBus === 1
                           ? 'border-[#00a69c] text-[#00a69c] hover:bg-[#00a69c] hover:text-white'
                           : 'border-[#d99b26] text-[#d99b26] hover:bg-[#d99b26] hover:text-white'
@@ -1289,29 +1288,24 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               </React.Fragment>
             ))}
 
-            {/* Single Add Effect Button at the bottom */}
-            <div className="flex flex-col items-center mt-[10px] mb-3">
-              <div
-                className={`w-[2px] h-4 ${
-                  activeBus === 1 ? 'bg-[#00a69c]' : 'bg-[#d99b26]'
-                }`}
-              />
+            {/* Single Add Effect Button at the bottom (matches PLAY 3D dark button style) */}
+            <div className="flex flex-col items-center mt-[22px] mb-3">
               <button
                 data-add-effect-trigger="true"
                 disabled={isAtEffectLimit}
                 onClick={(e) => openAddMenu(e, undefined, 'bottom')}
-                className={`px-4 py-1.5 text-[10px] font-mono font-bold rounded-none border ${
+                className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer text-white ${
                   isTing
-                    ? 'border-[#00503a] bg-[#ece6d9] hover:bg-[#00503a] text-[#00503a]'
-                    : 'border-[#141617] bg-[#f8f9f8] hover:bg-[#141617] text-[#141617]'
-                } hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors active:translate-x-[1px] active:translate-y-[1px] disabled:opacity-40 disabled:pointer-events-none`}
+                    ? 'bg-[#00503a] hover:bg-[#00664a]'
+                    : 'bg-[#141617] hover:bg-[#232628]'
+                } disabled:opacity-40 disabled:pointer-events-none`}
                 title={
                   isAtEffectLimit
                     ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached (including required SAMPLE)`
                     : `Add effect (${effectiveEffectCount}/${MAX_EFFECTS_PER_PRESET})`
                 }
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3 h-3" />
                 <span>{isAtEffectLimit ? `MAX ${MAX_EFFECTS_PER_PRESET} FX REACHED` : 'ADD EFFECT'}</span>
               </button>
             </div>
