@@ -1076,7 +1076,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 type="text"
                 value={preset.name || ''}
                 onChange={(e) => onUpdatePreset({ ...preset, name: e.target.value.toUpperCase() })}
-                placeholder={`PRESET ${preset.pos + 1}`}
+                placeholder="PRESET NAME"
                 aria-label={`Preset ${preset.pos + 1} name`}
                 maxLength={20}
                 className={`bg-transparent font-mono font-bold text-[10.5px] tracking-wider uppercase focus:outline-none w-[150px] text-center ${
