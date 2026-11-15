@@ -42,7 +42,7 @@ node mcp/server.mjs
 | Tool Name | Purpose |
 | :--- | :--- |
 | `get_effects_reference` | Every effect with its parameters (editor scale, min/max, units), the modulation depth range of each parameter, how handle/shake/lfo/trigger modulation is written, and the hardware rules. Call it before writing a preset; pass `effect` for one effect. |
-| `validate_preset` | Checks a preset or a `config.json` against the 16-row limit, single-instance rules (`DELAY`, `REVERB`, `HARMONY`, `SSB`), modulation rows, known parameter names/ranges and `SAMPLE` presence. |
+| `validate_preset` | Checks a preset or a whole `config.json` and explains it. Every problem names the exact field (`path`, e.g. `list[2].cutof`, `handle.row`), says what is wrong (`message`) and how to fix it (`fix`, with the closest valid name or the allowed range). `summary` describes in plain words what the preset will do: filter frequencies, echo timing and fade, pitch, and what the handle, shake and LFO change. |
 | `export_pack_config` | Losslessly serializes up to 4 presets to hardware `config.json` and returns a shareable `#pack=` URL. |
 | `push_to_live_ui` | Returns a stateless `#preset=` deep-link URL and, when a local Vite dev server is running, also loads the preset into open tabs (`/__mcp_sync`). Without a dev server the share link is the delivery (not an error). |
 
@@ -52,7 +52,8 @@ The model writes presets itself: there is no keyword-based "design from descript
 - Every tool has a `title`, `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`) and an `outputSchema`; successful calls return `structuredContent` alongside the JSON text block.
 - `validate_preset` publishes a full typed `preset` schema generated from `EFFECTS_REGISTRY` (effect names, every parameter with min/max, modulation rows 0..15, LFO shapes). Other tools reference the same shape to keep `tools/list` small.
 - **Either preset scale is accepted.** The editor (UI) scale uses percent knobs `0..100` and percent modulation depths `-100..100`; hardware `config.json`, the official packs and every `hardwarePresetJson` / `normalizedPresetJson` output use `0.0..1.0`. A preset in `config.json` scale is detected (all non-zero percent values within ±1) and converted with the same parser as imported files; `validate_preset` reports `inputScale`. Tool outputs can be passed straight back in.
-- `validate_preset` warns about unknown parameter names, out-of-range values, and modulation targets that don't exist on the row's effect.
+- `validate_preset` returns `errors` (the preset is invalid until they are fixed) and `warnings` (valid, but probably not intended). Each issue is `{ type, code, path, message, fix }`. Codes include `unknown_effect`, `unknown_param`, `param_not_number`, `out_of_range`, `duplicate_effect`, `too_many_rows`, `bad_bus`, `bad_row`, `bad_param`, `depth_out_of_range`, `bad_shape`, `bad_speed`, `trigger_not_sample` and `invalid_json` (with line/column); warnings include `missing_sample`, `silent_row`, `filter_extreme`, `zero_depth`, `runaway_feedback` and `firmware_support`.
+- A preset that cannot be read at all (not an object, no `list`, a row that is not an object, an unknown effect) returns `isValid: false` with those errors and no share link; it never crashes the tool. `export_pack_config` and `push_to_live_ui` refuse such presets with the same errors.
 - On HTTP transports, file-path arguments are not advertised at all and annotations reflect what a call can do there (for example, `export_pack_config` is read-only on HTTP).
 
 ### Transport Security
