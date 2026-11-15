@@ -6,11 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node --no-warnings scripts/build-cloudflare-worker.mjs",
+    "build": "tsc && vite build && node --no-warnings scripts/build-cloudflare-worker.mjs && node --no-warnings scripts/build-skill.mjs",
     "preview": "vite preview",
     "test": "node test/run-test.mjs",
     "test:e2e": "playwright test",
     "mcp": "node --no-warnings mcp/server.mjs",
+    "skill": "node --no-warnings scripts/build-skill.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version"

@@ -22,8 +22,9 @@ const RAW_SUFFIX = '?raw';
  * Handles the two Vite-only features the shared sources use:
  *   - `import x from './file.json?raw'` → the file's text as a default-exported string
  *   - the `__APP_VERSION__` build-time token → the resolved app version string
+ *   - any extra `define` tokens (e.g. `__EP2350_APP_URL__`) → their JSON-encoded values
  */
-function ep2350SourcePlugin(version) {
+function ep2350SourcePlugin(version, define = {}) {
   return {
     name: 'ep2350-mcp-sources',
     resolveId(source, importer) {
@@ -37,8 +38,12 @@ function ep2350SourcePlugin(version) {
       return { code: `export default ${JSON.stringify(text)};`, moduleType: 'js' };
     },
     transform(code, id) {
-      if (!/\.[cm]?tsx?$/.test(id) || !code.includes('__APP_VERSION__')) return null;
-      return { code: injectAppVersion(code, version), map: null };
+      if (!/\.[cm]?tsx?$/.test(id)) return null;
+      let out = code.includes('__APP_VERSION__') ? injectAppVersion(code, version) : code;
+      for (const [token, value] of Object.entries(define)) {
+        out = out.replaceAll(token, JSON.stringify(value));
+      }
+      return out === code ? null : { code: out, map: null };
     }
   };
 }
@@ -52,12 +57,13 @@ export async function bundleMcp({
   entry,
   outFile,
   platform = 'node',
-  version = resolveAppVersion(rootDir)
+  version = resolveAppVersion(rootDir),
+  define = {}
 }) {
   const bundle = await rolldown({
     input: path.resolve(rootDir, entry),
     platform,
-    plugins: [ep2350SourcePlugin(version)],
+    plugins: [ep2350SourcePlugin(version, define)],
     // Fail loudly instead of emitting a bundle with unresolved imports.
     onwarn(warning, defaultHandler) {
       if (warning.code === 'UNRESOLVED_IMPORT') {

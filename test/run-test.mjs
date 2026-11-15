@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -2643,4 +2644,144 @@ console.log('✓ Suite 20: Presets accepted in either scale (editor 0..100 or co
 }
 console.log('✓ Suite 21: Verbose validation (exact path, message, fix) and plain-language summary verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 22: Sound designer skill (generated SKILL.md, bundled validator CLI, zip)
+// ============================================================================
+{
+  const { spawnSync } = await import('node:child_process');
+  const { buildSkill, SKILL_DIR_NAME } = await import(
+    pathToFileURL(path.join(ROOT_DIR, 'scripts/build-skill.mjs')).href
+  );
+  const skillOut = path.join(TMP_TEST_BUILD, 'skill');
+  const { skillDir, zipPath, files } = await buildSkill({
+    outDir: skillOut,
+    appUrl: 'https://example.test/app/',
+    version: '9.9.9-test'
+  });
+
+  // 22a. SKILL.md: frontmatter and a reference generated from EFFECTS_REGISTRY
+  const skillMd = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+  assert.ok(skillMd.startsWith(`---\nname: ${SKILL_DIR_NAME}\ndescription: `), 'SKILL.md must start with name/description frontmatter');
+  assert.ok(skillMd.includes('9.9.9-test'), 'SKILL.md must carry the build version');
+  assert.ok(
+    skillMd.includes('https://example.test/app/skill/ep2350-sound-designer/scripts/ep2350.mjs'),
+    'SKILL.md must say where the hosted validator script is'
+  );
+  assert.ok(!/\bMCP\b/.test(skillMd), 'The skill must stand alone, without the MCP server');
+  for (const meta of Object.values(EFFECTS_REGISTRY)) {
+    assert.ok(skillMd.includes(`### ${meta.type}\n`), `SKILL.md must document ${meta.type}`);
+    const section = skillMd.split(`### ${meta.type}\n`)[1].split('\n### ')[0];
+    for (const p of meta.params) {
+      assert.ok(section.includes(`| \`${p.name}\` |`), `SKILL.md must list ${meta.type}.${p.name}`);
+    }
+  }
+  // Percent knobs are documented in config.json scale (0..1), never as 0..100
+  assert.ok(/\| `echo` \| [^|]+ \| 0 \.\. 1 \| 0\.4 \| -1 \.\. 1 \|/.test(skillMd), 'Percent parameters must be shown as 0..1');
+  assert.ok(skillMd.includes('| `frequency` | carrier freq | 0 .. 20000 Hz | 440 | -5000 .. 5000 Hz |'));
+
+  // 22b. Bundled validator: one dependency-free file that runs outside the repo
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-skill-test-'));
+  try {
+    fs.cpSync(skillDir, path.join(isolated, SKILL_DIR_NAME), { recursive: true });
+    const cli = path.join(isolated, SKILL_DIR_NAME, 'scripts', 'ep2350.mjs');
+    const cliSrc = fs.readFileSync(cli, 'utf8');
+    assert.ok(cliSrc.startsWith('#!/usr/bin/env node\n'));
+    assert.ok(
+      [...cliSrc.matchAll(/^import .* from ["']([^"']+)["'];?$/gm)].every((m) => m[1].startsWith('node:')),
+      'Validator bundle may only import Node built-ins'
+    );
+    const run = (args, input) =>
+      spawnSync(process.execPath, [cli, ...args], { cwd: isolated, input, encoding: 'utf8' });
+
+    assert.strictEqual(run(['--version']).stdout.trim(), '9.9.9-test');
+
+    // Every bundled example (official pack) is valid and yields a share link the app can open
+    for (const example of ['broken_radio.json', 'dub.json', 'mysterious.json']) {
+      const res = run(['validate', path.join(SKILL_DIR_NAME, 'examples', example), '--json']);
+      assert.strictEqual(res.status, 0, `${example} must validate: ${res.stdout}${res.stderr}`);
+      const out = JSON.parse(res.stdout);
+      assert.strictEqual(out.isValid, true);
+      assert.ok(out.shareUrl.startsWith('https://example.test/app/#pack='), 'Share link must use the build app URL');
+      const decoded = decodeHashPayload(out.shareUrl);
+      assert.strictEqual(decoded?.type, 'pack');
+      assert.strictEqual(decoded.pack.presets.length, 4);
+    }
+
+    // Text report: errors name the exact field and the fix; exit code 1; nothing written
+    const broken = JSON.stringify({
+      name: 'T',
+      presets: [
+        {
+          pos: 0,
+          name: 'X',
+          list: [{ effect: 'ECHO' }, { effect: 'LOWPASS', cutof: 50 }, { effect: 'REVERB' }, { effect: 'REVERB' }],
+          handle: { row: 7, param: 'cutoff', depth: 0.5 }
+        }
+      ]
+    });
+    const bad = run(['validate', '-', '--out', 'bad.json'], broken);
+    assert.strictEqual(bad.status, 1, 'Invalid config must exit with 1');
+    assert.ok(bad.stdout.startsWith('INVALID: 4 errors'), bad.stdout);
+    assert.ok(bad.stdout.includes('presets[0].list[1].cutof:') && bad.stdout.includes('Did you mean "cutoff"?'));
+    assert.ok(bad.stdout.includes('presets[0].handle.row:'));
+    assert.ok(!bad.stdout.includes('Open in the web app'), 'No share link for an invalid config');
+    assert.ok(!fs.existsSync(path.join(isolated, 'bad.json')), '--out must not write an invalid config');
+
+    // A value on the 0..100 scale is rejected in a config.json
+    const percent = run(['validate', '-', '--json'], JSON.stringify({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] }));
+    assert.strictEqual(percent.status, 1);
+    assert.strictEqual(JSON.parse(percent.stdout).errors[0].path, 'presets[0].list[0].echo');
+
+    // A single preset is accepted, and --out writes a complete 4-slot config.json
+    const single = run(
+      ['validate', '-', '--out', 'config.json'],
+      JSON.stringify({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } })
+    );
+    assert.strictEqual(single.status, 0, single.stdout + single.stderr);
+    assert.ok(single.stdout.includes('https://example.test/app/#preset='));
+    const written = JSON.parse(fs.readFileSync(path.join(isolated, 'config.json'), 'utf8'));
+    assert.strictEqual(written.presets.length, 4);
+    assert.deepStrictEqual(written.presets[0].list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
+    assert.strictEqual(validatePackConfig(parseConfigJson(JSON.stringify(written)).pack).filter((i) => i.type === 'error').length, 0);
+
+    // Usage errors
+    assert.strictEqual(run(['validate', 'nope.json']).status, 2);
+    assert.strictEqual(run(['frobnicate']).status, 2);
+    assert.strictEqual(run(['validate', '-'], '{ not json').status, 1);
+  } finally {
+    fs.rmSync(isolated, { recursive: true, force: true });
+  }
+
+  // 22c. Zip: installable archive with the skill folder at its root, reproducible
+  const zip = fs.readFileSync(zipPath);
+  assert.strictEqual(zip.readUInt32LE(0), 0x04034b50, 'Zip must start with a local file header');
+  const eocd = zip.length - 22;
+  assert.strictEqual(zip.readUInt32LE(eocd), 0x06054b50, 'Zip must end with the end-of-central-directory record');
+  assert.strictEqual(zip.readUInt16LE(eocd + 10), files.length);
+  const zlib = await import('node:zlib');
+  let offset = zip.readUInt32LE(eocd + 16);
+  const zipped = {};
+  for (let i = 0; i < files.length; i++) {
+    assert.strictEqual(zip.readUInt32LE(offset), 0x02014b50);
+    const compSize = zip.readUInt32LE(offset + 20);
+    const nameLen = zip.readUInt16LE(offset + 28);
+    const localOffset = zip.readUInt32LE(offset + 42);
+    const name = zip.toString('utf8', offset + 46, offset + 46 + nameLen);
+    const dataStart = localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
+    zipped[name] = zlib.inflateRawSync(zip.subarray(dataStart, dataStart + compSize));
+    offset += 46 + nameLen;
+  }
+  assert.deepStrictEqual(Object.keys(zipped).sort(), files.map((f) => `${SKILL_DIR_NAME}/${f}`).sort());
+  for (const f of files) {
+    assert.ok(zipped[`${SKILL_DIR_NAME}/${f}`].equals(fs.readFileSync(path.join(skillDir, f))), `${f} must round-trip through the zip`);
+  }
+  const rebuilt = await buildSkill({ outDir: path.join(TMP_TEST_BUILD, 'skill-again'), appUrl: 'https://example.test/app/', version: '9.9.9-test' });
+  assert.ok(fs.readFileSync(rebuilt.zipPath).equals(zip), 'The same sources must produce the same zip');
+
+  // 22d. The production build publishes the skill next to the web app
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+  assert.ok(pkg.scripts.build.includes('scripts/build-skill.mjs'), 'npm run build must build the skill into dist/skill');
+}
+console.log('✓ Suite 22: Sound designer skill (SKILL.md, validator CLI, zip) verified');
+
+console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');

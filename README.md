@@ -27,6 +27,28 @@ A companion web workbench, DSP engine, hardware validator, and **MCP server** fo
 
 ---
 
+## AI Sound Designer Skill
+
+A skill is a folder of instructions any AI assistant can load: `SKILL.md` (how to write a preset, with every effect and parameter range), a dependency-free validator script, and the official packs as examples. Nothing to host or connect; the assistant writes `config.json`, checks it, and returns a link that opens it in the web app.
+
+- **Download**: [`ep2350-sound-designer.zip`](https://maksimverzakov.github.io/EP-2350-FX-Tool/skill/ep2350-sound-designer.zip)
+- **Read online**: [`SKILL.md`](https://maksimverzakov.github.io/EP-2350-FX-Tool/skill/ep2350-sound-designer/SKILL.md)
+
+### Installing
+- **Claude Code**: unzip into `~/.claude/skills/` (or a project's `.claude/skills/`), so that `~/.claude/skills/ep2350-sound-designer/SKILL.md` exists.
+- **Claude apps**: upload the zip as a custom skill in settings.
+- **Any other assistant**: attach `SKILL.md` or give it the "Read online" link and ask for a preset. Assistants that can run Node.js 18+ use the validator; the rest follow the checklist in `SKILL.md` and return `config.json` for the web app's **Import**.
+
+### Validator
+```bash
+node ep2350-sound-designer/scripts/ep2350.mjs validate config.json
+```
+Prints each error with the exact field and a fix, a plain-language summary of every preset, and a share link. Exit code is `0` when valid, `1` when not. `--out <file>` writes the normalized `config.json`; `--json` prints machine-readable output.
+
+The skill is generated from the same effect registry and validation code as the web app (`npm run skill` builds it into `dist/skill/`; `npm run build` publishes it with the site).
+
+---
+
 ## Using the MCP Server
 
 ### Hosted (Zero Setup)
@@ -48,7 +70,8 @@ npm install
 npm run dev      # Web app + local /mcp at http://localhost:3000
 npm run mcp      # Local stdio MCP server
 npm test         # Run automated test suites
-npm run build    # Build static app and Cloudflare Worker bundle
+npm run skill    # Build the AI sound designer skill into dist/skill/
+npm run build    # Build static app, Cloudflare Worker bundle and skill
 ```
 
 ---
