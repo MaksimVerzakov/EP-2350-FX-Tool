@@ -665,9 +665,9 @@ assert.ok(
 
 // 5. TopBanner right block matches left block size & 2-row format ([EXPORT][IMPORT] on top, dropdown below + New Pack option)
 assert.strictEqual(
-  (topBannerSrc.match(/w-\[265px\] h-\[67px\]/g) || []).length,
+  (topBannerSrc.match(/w-\[251px\] h-\[76px\]/g) || []).length,
   2,
-  'Both left and right TopBanner blocks must share identical 12x3-cell (265x67) modular dimensions'
+  'Both left and right TopBanner blocks must share identical 10x3-module (251x76) modular dimensions'
 );
 assert.ok(
   topBannerSrc.includes('aria-label="Export and Import actions"') &&

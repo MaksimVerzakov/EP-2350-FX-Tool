@@ -15,20 +15,20 @@ interface MicDeviceProps {
 
 /*
  * Grid fit. The mic body outline (source x 338.805..551.475, y 0.5..334.555) is mapped onto the
- * 22px background grid so it spans exactly 9 x 14 cells. The two axes differ by under 1%, which
- * is invisible but lets all four edges land on a line.
+ * 25px layout module (2 cells of the 12.5px background grid) so it spans exactly 7 x 11 modules.
+ * That ratio matches the artwork to within 0.1%, so all four edges land on a line undistorted.
  *
  * As in the EP sample tool, it is the BACK of the body that sits on the grid: the body is
  * extruded 6 source units down and to the right (the hatched bevel), and that far outline has its
- * stroke centred on the grid lines (3 cells in from the left of the 13-cell column, flush with
+ * stroke centred on the grid lines (3 modules in from the left of the 11-module column, flush with
  * the column top). The front face floats up and to the left by the extrusion depth.
  */
-const GRID = 22; // layout module: 2 cells of the 11px background grid
-const MIC_BOX_W = 13 * GRID;
-const MIC_BOX_H = 25 * GRID;
+const GRID = 25; // layout module: 2 cells of the 12.5px background grid
+const MIC_BOX_W = 11 * GRID;
+const MIC_BOX_H = 22 * GRID;
 const MIC_DEPTH = 6;
-const MIC_SCALE_X = (9 * GRID) / (551.475 - 338.805);
-const MIC_SCALE_Y = (14 * GRID) / (334.555 - 0.5);
+const MIC_SCALE_X = (7 * GRID) / (551.475 - 338.805);
+const MIC_SCALE_Y = (11 * GRID) / (334.555 - 0.5);
 const MIC_VIEWBOX = [
   338.805 + MIC_DEPTH - (3 * GRID + 0.5) / MIC_SCALE_X,
   0.5 + MIC_DEPTH - 0.5 / MIC_SCALE_Y,

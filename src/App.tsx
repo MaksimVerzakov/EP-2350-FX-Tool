@@ -457,12 +457,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen overflow-hidden isolate flex flex-col items-center px-4 py-4 md:px-8 md:py-[22px] select-none font-sans">
-      {/* Layout origin for the background grid: 48 cells wide (+1px closing line, +5px bevel) */}
-      <div className="te-grid-origin max-w-[1062px] w-full mx-auto">
+    <div className="min-h-screen overflow-hidden isolate flex flex-col items-center px-4 py-4 md:px-8 md:py-[25px] select-none font-sans">
+      {/* Layout origin for the background grid: 42 modules of 25px wide (+1px closing line, +5px bevel) */}
+      <div className="te-grid-origin max-w-[1056px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`w-full flex flex-col gap-[21px] transition-opacity duration-200 ${
+        className={`w-full flex flex-col gap-[24px] transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -496,10 +496,10 @@ export const App: React.FC = () => {
         />
 
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
-        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[22px] w-full">
+        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[25px] w-full">
           
           {/* LEFT COLUMN: Hardware Mic Device + Floating Playback Controls */}
-          <div className="w-[286px] shrink-0 flex flex-col items-start">
+          <div className="w-[275px] shrink-0 flex flex-col items-start">
             <MicDevice
               activeSlot={activeSlot}
               onSelectSlot={handleSelectSlot}
@@ -512,11 +512,11 @@ export const App: React.FC = () => {
               theme={theme}
             />
 
-            <AudioPlayerCompact theme={theme} className="-mt-[220px]" />
+            <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
           {/* RIGHT COLUMN: Preset Details Ledger Sheet */}
-          <div className="flex-1 min-w-0 max-w-[754px] w-full flex flex-col items-center">
+          <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center">
             <PresetLedger
               preset={activePreset}
               totalPresets={pack.presets.length}
