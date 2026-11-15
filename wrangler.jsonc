@@ -5,5 +5,7 @@
   // Static site only: the web app and the skill under /skill/. No Worker code.
   "assets": {
     "directory": "./dist"
-  }
+  },
+  // Required by Cloudflare Workers Builds for automatic PR preview deployments (`npx wrangler preview`).
+  "previews": {}
 }
