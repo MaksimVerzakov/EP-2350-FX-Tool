@@ -2,7 +2,7 @@ import type { EffectMeta, EffectType, ParamDef, PresetConfig } from '../types/co
 import { EFFECTS_REGISTRY, MAX_EFFECTS_PER_PRESET, getModDepthConfig } from '../constants/effectsRegistry';
 
 /**
- * Detailed preset checks and a plain-language summary for MCP agents.
+ * Detailed preset checks and a plain-language summary for AI assistants.
  *
  * Checks run on the raw input (before normalization) so every issue can point at the exact
  * field (`list[2].cutof`, `handle.row`), say what is wrong, and say how to fix it.

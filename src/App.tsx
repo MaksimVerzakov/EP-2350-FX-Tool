@@ -202,62 +202,6 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Live MCP Sound Designer Sync Bridge (/ __mcp_sync SSE)
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') return;
-    let es: EventSource | null = null;
-    try {
-      es = new window.EventSource('/__mcp_sync');
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (typeof data?.configJson === 'string') {
-            const parsed = parseConfigJson(data.configJson);
-            if (parsed.pack) {
-              setPack(parsed.pack);
-              if (typeof data.slot === 'number') setActiveSlot(Math.max(0, Math.min(3, data.slot)));
-            }
-          } else if (data?.pack && typeof data.pack === 'object') {
-            const rawStr = JSON.stringify(data.pack);
-            const parsed = parseConfigJson(rawStr);
-            if (parsed.pack) {
-              setPack(parsed.pack);
-              if (typeof data.slot === 'number') setActiveSlot(Math.max(0, Math.min(3, data.slot)));
-            }
-          } else if (data?.preset && typeof data.preset === 'object') {
-            const targetSlot = Math.max(
-              0,
-              Math.min(3, typeof data.slot === 'number' ? data.slot : data.preset.pos ?? 0)
-            );
-            const incomingPreset: PresetConfig = {
-              ...data.preset,
-              id: data.preset.id || `mcp-preset-${targetSlot}-${Date.now()}`,
-              pos: targetSlot,
-              list: Array.isArray(data.preset.list)
-                ? data.preset.list.map((fx: any, idx: number) => ({
-                    id: fx.id || `mcp-fx-${targetSlot}-${idx}`,
-                    ...fx
-                  }))
-                : []
-            };
-            setPack((prev) => ({
-              ...prev,
-              presets: prev.presets.map((p) => (p.pos === targetSlot ? incomingPreset : p))
-            }));
-            setActiveSlot(targetSlot);
-          }
-        } catch {
-          // Ignore malformed SSE messages
-        }
-      };
-    } catch {
-      // Ignore SSE connection failure on static hosts
-    }
-    return () => {
-      es?.close();
-    };
-  }, []);
-
   // Sync theme to document root & localStorage
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
