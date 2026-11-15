@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,7 +30,9 @@ function buildSourceModulesForTest() {
     'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
-    'src/dsp/AudioEngine.ts'
+    'src/dsp/AudioEngine.ts',
+    'src/skill/presetCheck.ts',
+    'src/skill/presetTools.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -114,8 +117,8 @@ const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/wavCodec.mjs')).href
 );
-const { handleMcpJsonRpcRequest } = await import(
-  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
+const { validatePresetInput } = await import(
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/skill/presetTools.mjs')).href
 );
 
 // Clean up on exit
@@ -1434,53 +1437,9 @@ assert.ok(decodedAlert.left.length > 1000, 'Bundled alert.wav must decode to non
 console.log('✓ Suite 10: Pure-TS WAV Codec round-trip & bundled hardware sample decoding verified');
 
 // ============================================================================
-// SUITE 11: MCP Server JSON-RPC 2.0 Tools, Resources & Prompts (mcp/server.mjs)
+// SUITE 11: Preset validation entry point (src/skill/presetTools.ts)
 // ============================================================================
-// 11a. initialize
-const initRes = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 1,
-  method: 'initialize',
-  params: { protocolVersion: '2024-11-05' }
-});
-assert.strictEqual(initRes.result.serverInfo.name, 'ep2350-fx-mcp-server');
-
-// 11b. resources/list & resources/read
-const resList = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 2,
-  method: 'resources/list'
-});
-assert.strictEqual(resList.result.resources.length, 2);
-
-const schemaRead = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 3,
-  method: 'resources/read',
-  params: { uri: 'ep2350://schema/effects-registry' }
-});
-const schemaJson = JSON.parse(schemaRead.result.contents[0].text);
-assert.strictEqual(schemaJson.maxEffectsPerPreset, 16);
-assert.strictEqual(schemaJson.effects.length, 11);
-
-// 11c. tools/list
-const toolsList = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 4,
-  method: 'tools/list'
-});
-assert.deepStrictEqual(
-  toolsList.result.tools.map((t) => t.name),
-  ['get_effects_reference', 'validate_preset', 'export_pack_config', 'push_to_live_ui'],
-  'MCP server exposes exactly the four preset tools: reference, validate, export, review'
-);
-assert.ok(
-  !toolsList.result.tools.some((t) => t.name === 'design_preset_from_description'),
-  'The keyword designer was removed: models write presets themselves'
-);
-assert.ok(toolsList.result.tools.some((t) => t.name === 'get_effects_reference'));
-
-// 11d. A hand-written preset (what a model writes after get_effects_reference) validates
+// 11a. A hand-written editor-scale preset validates and yields a share link
 const cyberWalkiePreset = {
   name: 'CYBER WALKIE',
   pos: 0,
@@ -1494,50 +1453,38 @@ const cyberWalkiePreset = {
   handle: { row: 2, param: 'wet-level', depth: 45 },
   shake: { row: 3, param: 'frequency', depth: 900 }
 };
-const validateCall = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 5,
-  method: 'tools/call',
-  params: { name: 'validate_preset', arguments: { preset: cyberWalkiePreset } }
-});
-assert.strictEqual(validateCall.result.isError, false);
-const validatePayload = validateCall.result.structuredContent;
+const validatePayload = validatePresetInput({ preset: cyberWalkiePreset });
 assert.strictEqual(validatePayload.isValid, true, 'Hand-written preset must have 0 hardware validation errors');
 assert.deepStrictEqual(validatePayload.warnings, [], 'Hand-written preset must lint clean');
 const designPayload = { preset: cyberWalkiePreset, ...validatePayload };
-assert.ok(designPayload.shareUrl.includes('#preset='), 'validate_preset returns a shareUrl to review the preset');
+assert.ok(designPayload.shareUrl.includes('#preset='), 'Validation returns a shareUrl to review the preset');
+assert.strictEqual(decodeHashPayload(designPayload.shareUrl).preset.name, 'CYBER WALKIE');
 
-console.log('✓ Suite 11: MCP Server JSON-RPC 2.0 resources, prompts & tools verified');
+// 11b. Neither a preset nor a config.json
+assert.ok(typeof validatePresetInput({}).error === 'string');
 
-// ============================================================================
-// SUITE 12: Live Web UI Sync Bridge & Agent Skill Verification (M4)
-// ============================================================================
-const viteConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
-const appMcpSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
-const skillMdSrc = fs.readFileSync(
-  path.join(ROOT_DIR, '.agent/skills/ep2350-sound-designer/SKILL.md'),
-  'utf8'
-);
-
-assert.ok(
-  viteConfigSrc.includes('ep2350McpLiveSyncPlugin') && viteConfigSrc.includes('/__mcp_sync'),
-  'vite.config.ts must register ep2350McpLiveSyncPlugin at /__mcp_sync'
-);
-assert.ok(
-  appMcpSrc.includes("EventSource('/__mcp_sync')"),
-  'App.tsx must subscribe to /__mcp_sync via EventSource for live MCP preset pushes'
-);
-assert.ok(
-  skillMdSrc.includes('name: ep2350-sound-designer') &&
-    skillMdSrc.includes('get_effects_reference'),
-  'Antigravity SKILL.md must document the ep2350-sound-designer workflow and MCP tools'
-);
-console.log('✓ Suite 12: Live Web UI Sync Bridge & Antigravity Skill verified');
+// 11c. Common model mistakes are errors pointing at the exact field (details in Suite 15)
+const errorsOf = (preset) => validatePresetInput({ preset }).errors;
+const badParam = errorsOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effect: 'SAMPLE' }] });
+assert.ok(badParam.some((e) => e.path === 'list[0].cutof' && e.code === 'unknown_param' && e.fix.includes('"cutoff"')));
+const outOfRange = errorsOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
+assert.ok(outOfRange.some((e) => e.path === 'list[0].amount' && e.code === 'out_of_range' && e.message.includes('0..40')));
+const hwScaleRes = validatePresetInput({
+  preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }] }
+});
+assert.strictEqual(hwScaleRes.inputScale, 'config', 'A 0..1 preset is detected as config.json scale');
+assert.deepStrictEqual(hwScaleRes.errors, [], '...and accepted without errors');
+const badMod = errorsOf({
+  list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
+  handle: { row: 0, param: 'cutoff', depth: 50 }
+});
+assert.ok(badMod.some((e) => e.path === 'handle.param' && e.fix.includes('frequency, mix')));
+console.log('✓ Suite 11: Preset validation entry point verified');
 
 // ============================================================================
-// SUITE 13: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl
+// SUITE 12: Stateless #preset=... & #pack=... Deep-Link Codec
 // ============================================================================
-// 13a. Base64URL Unicode & ASCII round-trip
+// 12a. Base64URL Unicode & ASCII round-trip
 const unicodeSample = 'DAFT VOCODER · EP–2350 {"mix":0.75}';
 assert.strictEqual(
   decodeBase64Url(encodeBase64Url(unicodeSample)),
@@ -1545,7 +1492,7 @@ assert.strictEqual(
   'encodeBase64Url / decodeBase64Url must round-trip UTF-8 strings losslessly'
 );
 
-// 13b. Single preset round-trip (both UI-scale 0..100 and hardware-scale 0.0..1.0)
+// 12b. Single preset round-trip (both UI-scale 0..100 and hardware-scale 0.0..1.0)
 const sharePresetUrl = buildPresetShareUrl(
   'https://ep2350.example.com/',
   designPayload.preset,
@@ -1566,7 +1513,7 @@ assert.strictEqual(
   'Decoded preset from URL hash must preserve all effects in chain'
 );
 
-// 13c. Full pack round-trip (#pack=<b64url>&slot=1)
+// 12c. Full pack round-trip (#pack=<b64url>&slot=1)
 const dubPackParsed = parseConfigJson(OFFICIAL_TE_PACKS[1].rawJson).pack;
 const sharePackUrl = buildPackShareUrl('https://ep2350.example.com', dubPackParsed, 1);
 assert.ok(sharePackUrl.includes('#pack=') && sharePackUrl.endsWith('&slot=1'));
@@ -1576,683 +1523,22 @@ assert.strictEqual(decodedPackPayload.slot, 1);
 assert.strictEqual(decodedPackPayload.pack.name, dubPackParsed.name);
 assert.strictEqual(decodedPackPayload.pack.presets.length, 4);
 
-// 13d. Malformed hash resilience
+// 12d. Malformed hash resilience
 assert.strictEqual(decodeHashPayload(''), null);
 assert.strictEqual(decodeHashPayload('#preset=!!!not_base64!!!'), null);
 assert.strictEqual(decodeHashPayload('#unknown=123'), null);
 
-// 13e. MCP tools return shareUrl and shareHash
+// 12e. App.tsx integrates decodeHashPayload and hashchange listener
 assert.ok(
-  typeof designPayload.shareUrl === 'string' && designPayload.shareUrl.includes('#preset='),
-  'validate_preset must return shareUrl with #preset= deep-link'
-);
-const decodedFromMcpShareUrl = decodeHashPayload(designPayload.shareUrl);
-assert.strictEqual(decodedFromMcpShareUrl.preset.name, 'CYBER WALKIE');
-
-// 13f. App.tsx integrates decodeHashPayload and hashchange listener
-assert.ok(
-  appMcpSrc.includes('decodeHashPayload') && appMcpSrc.includes("addEventListener('hashchange'"),
+  appSrc.includes('decodeHashPayload') && appSrc.includes("addEventListener('hashchange'"),
   'App.tsx must decode #preset= / #pack= hashes on mount and hashchange'
 );
-console.log('✓ Suite 13: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl verified');
+console.log('✓ Suite 12: Stateless #preset=... & #pack=... Deep-Link Codec verified');
 
 // ============================================================================
-// SUITE 14: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint
+// SUITE 13: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting
 // ============================================================================
-const wranglerConfig = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'wrangler.jsonc'), 'utf8'));
-assert.strictEqual(
-  wranglerConfig.name,
-  'ep-2350-fx-tool',
-  'wrangler.jsonc name must match Cloudflare Worker service ep-2350-fx-tool'
-);
-assert.ok(
-  wranglerConfig.previews && typeof wranglerConfig.previews === 'object',
-  'wrangler.jsonc must include previews: {} block for npx wrangler preview'
-);
-
-const { buildCloudflareWorker } = await import(
-  pathToFileURL(path.join(ROOT_DIR, 'scripts/build-cloudflare-worker.mjs')).href
-);
-const cfOutDir = path.join(TMP_TEST_BUILD, 'cf-dist');
-const { workerPath, routesPath } = await buildCloudflareWorker(cfOutDir);
-
-assert.ok(fs.existsSync(workerPath), 'buildCloudflareWorker must output _worker.js');
-assert.ok(fs.existsSync(routesPath), 'buildCloudflareWorker must output _routes.json');
-const routesJson = JSON.parse(fs.readFileSync(routesPath, 'utf8'));
-assert.deepStrictEqual(
-  routesJson.include,
-  ['/mcp', '/mcp/*'],
-  '_routes.json must route only /mcp to the Worker so static assets remain unlimited'
-);
-
-const cfWorkerMod = await import(pathToFileURL(workerPath).href);
-const cfWorker = cfWorkerMod.default;
-
-// 14a. OPTIONS /mcp preflight CORS
-const optRes = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', { method: 'OPTIONS' })
-);
-assert.strictEqual(optRes.status, 204);
-assert.strictEqual(optRes.headers.get('Access-Control-Allow-Origin'), '*');
-
-// 14b. GET /mcp status summary
-const getRes = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', { method: 'GET' })
-);
-assert.strictEqual(getRes.status, 200);
-const getStatus = await getRes.json();
-assert.strictEqual(getStatus.name, 'ep2350-fx-mcp-server');
-assert.strictEqual(getStatus.endpoint, 'https://ep2350-fx.pages.dev/mcp');
-
-// 14c. POST /mcp -> tools/call (validate_preset) with same-origin shareUrl
-const daftVocoderPreset = {
-  name: 'DAFT VOCODER',
-  pos: 1,
-  list: [
-    { effect: 'HARMONY', pitch: 1.0, 'dry-level': 40 },
-    { effect: 'RING', frequency: 180, mix: 45 },
-    { effect: 'LOWPASS', cutoff: 0.7 },
-    { effect: 'SAMPLE' }
-  ]
-};
-const postDesignRes = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 101,
-      method: 'tools/call',
-      params: { name: 'validate_preset', arguments: { preset: daftVocoderPreset } }
-    })
-  })
-);
-assert.strictEqual(postDesignRes.status, 200);
-const postDesignRpc = await postDesignRes.json();
-const cfDesignOut = { preset: daftVocoderPreset, ...JSON.parse(postDesignRpc.result.content[0].text) };
-assert.ok(
-  cfDesignOut.shareUrl.startsWith('https://ep2350-fx.pages.dev/#preset=') &&
-    cfDesignOut.shareUrl.endsWith('&slot=1'),
-  'Cloudflare /mcp must generate shareUrl pointing to the exact same origin as the hosted website'
-);
-const cfDecoded = decodeHashPayload(cfDesignOut.shareUrl);
-assert.strictEqual(cfDecoded.preset.name, 'DAFT VOCODER');
-assert.strictEqual(cfDecoded.slot, 1);
-
-// 14d. POST /mcp -> push_to_live_ui on remote Cloudflare edge returns shareUrl deliveryMode
-const postPushRes = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 102,
-      method: 'tools/call',
-      params: {
-        name: 'push_to_live_ui',
-        arguments: {
-          preset: cfDesignOut.preset,
-          slot: 1
-        }
-      }
-    })
-  })
-);
-const postPushRpc = await postPushRes.json();
-const cfPushOut = JSON.parse(postPushRpc.result.content[0].text);
-assert.strictEqual(cfPushOut.pushed, true);
-assert.strictEqual(cfPushOut.deliveryMode, 'shareUrl');
-assert.strictEqual(cfPushOut.shareUrl, cfDesignOut.shareUrl);
-
-// 14e. Static asset fallback via env.ASSETS.fetch
-const assetRes = await cfWorker.fetch(new Request('https://ep2350-fx.pages.dev/index.html'), {
-  ASSETS: {
-    fetch: async () => new Response('<html>EP-2350</html>', { status: 200 })
-  }
-});
-assert.strictEqual(assetRes.status, 200);
-assert.strictEqual(await assetRes.text(), '<html>EP-2350</html>');
-
-console.log('✓ Suite 14: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
-
-// ============================================================================
-// SUITE 15: MCP HTTP Transport Security (file access, Origin, Content-Type, SSRF)
-// ============================================================================
-const { handleMcpHttpFetch: handleLocalMcpHttpFetch } = await import(
-  pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
-);
-const secOutRel = '.tmp-test-build/security/pwned.json';
-const secOutAbs = path.join(ROOT_DIR, secOutRel);
-const exportCall = (outputPath) =>
-  JSON.stringify({
-    jsonrpc: '2.0',
-    id: 201,
-    method: 'tools/call',
-    params: {
-      name: 'export_pack_config',
-      arguments: { packName: 'PWNED', presets: [], outputPath }
-    }
-  });
-
-// 15a. Cross-site "simple" POST (text/plain, no preflight) is rejected before any tool runs
-const plainRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: exportCall(secOutAbs)
-  })
-);
-assert.strictEqual(plainRes.status, 415, 'POST /mcp without application/json must return 415');
-assert.ok(!fs.existsSync(secOutAbs), 'Rejected text/plain POST must not write any file');
-
-// 15b. Local file paths are never honoured over HTTP, even with a valid JSON request
-const httpWriteRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: exportCall(secOutAbs)
-  })
-);
-const httpWriteRpc = await httpWriteRes.json();
-assert.strictEqual(httpWriteRpc.result.isError, true, 'HTTP outputPath must be reported as an error');
-assert.ok(
-  JSON.parse(httpWriteRpc.result.content[0].text).error.includes('not available on this transport'),
-  'HTTP path arguments must explain that file access is unavailable'
-);
-assert.ok(!fs.existsSync(secOutAbs), 'HTTP /mcp must never write to the local filesystem');
-
-// 15c. stdio transport keeps local file access
-const stdioWrite = await handleMcpJsonRpcRequest(JSON.parse(exportCall(secOutRel)));
-assert.strictEqual(stdioWrite.result.isError, false);
-assert.ok(fs.existsSync(secOutAbs), 'stdio export_pack_config must still write outputPath');
-
-// 15d. Foreign browser Origins are rejected; loopback Origins are allowed and echoed
-const evilRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 202, method: 'ping' })
-  })
-);
-assert.strictEqual(evilRes.status, 403, 'Foreign Origin must be rejected with 403');
-assert.strictEqual(evilRes.headers.get('Access-Control-Allow-Origin'), null);
-const evilPreflight = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'OPTIONS',
-    headers: { Origin: 'https://evil.example' }
-  })
-);
-assert.strictEqual(evilPreflight.status, 403, 'Foreign Origin preflight must be rejected');
-const loopbackRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:6274' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 203, method: 'ping' })
-  })
-);
-assert.strictEqual(loopbackRes.status, 200);
-assert.strictEqual(
-  loopbackRes.headers.get('Access-Control-Allow-Origin'),
-  'http://localhost:6274',
-  'Loopback Origin must be echoed instead of a wildcard'
-);
-
-// 15e. Oversized request bodies are rejected
-const bigRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 204, method: 'ping', params: { pad: 'x'.repeat(2048) } })
-  }),
-  { maxRequestBytes: 1024 }
-);
-assert.strictEqual(bigRes.status, 413, 'Body above maxRequestBytes must return 413');
-
-// 15f. push_to_live_ui never fetches a caller-supplied non-loopback uiUrl (no SSRF)
-const realFetch = globalThis.fetch;
-let outboundFetches = 0;
-globalThis.fetch = async (...fetchArgs) => {
-  outboundFetches++;
-  return realFetch(...fetchArgs);
-};
-try {
-  const ssrfCall = (id) =>
-    JSON.stringify({
-      jsonrpc: '2.0',
-      id,
-      method: 'tools/call',
-      params: {
-        name: 'push_to_live_ui',
-        arguments: { preset: cfDesignOut.preset, uiUrl: 'http://169.254.169.254/latest' }
-      }
-    });
-  const edgeSsrf = await cfWorker.fetch(
-    new Request('https://ep2350-fx.pages.dev/mcp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: ssrfCall(205)
-    })
-  );
-  const edgeSsrfOut = JSON.parse((await edgeSsrf.json()).result.content[0].text);
-  assert.strictEqual(edgeSsrfOut.deliveryMode, 'shareUrl', 'Edge must always use shareUrl delivery');
-
-  const localSsrf = await handleMcpJsonRpcRequest(JSON.parse(ssrfCall(206)));
-  const localSsrfOut = JSON.parse(localSsrf.result.content[0].text);
-  assert.strictEqual(localSsrfOut.pushed, false, 'Non-loopback uiUrl live push must be refused');
-  assert.strictEqual(outboundFetches, 0, 'No outbound request may be made to a non-loopback uiUrl');
-} finally {
-  globalThis.fetch = realFetch;
-}
-
-// 15g. Worker stays publicly callable from browser-based MCP clients
-const cfCrossOrigin = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'https://some-mcp-client.example' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 207, method: 'ping' })
-  })
-);
-assert.strictEqual(cfCrossOrigin.status, 200);
-assert.strictEqual(cfCrossOrigin.headers.get('Access-Control-Allow-Origin'), '*');
-console.log('✓ Suite 15: MCP HTTP transport security (file access, Origin, Content-Type, SSRF) verified');
-
-// ============================================================================
-// SUITE 16: MCP Protocol Compliance (version negotiation, errors, HTTP + stdio transport)
-// ============================================================================
-const { resolveAppVersion } = await import(
-  pathToFileURL(path.join(ROOT_DIR, 'scripts/app-version.mjs')).href
-);
-const rpc = (method, params, id = 300) => handleMcpJsonRpcRequest({ jsonrpc: '2.0', id, method, params });
-
-// 16a. Version negotiation + serverInfo
-const initKnown = await rpc('initialize', { protocolVersion: '2025-06-18' });
-assert.strictEqual(initKnown.result.protocolVersion, '2025-06-18', 'Supported version must be echoed');
-const initUnknown = await rpc('initialize', { protocolVersion: '1999-01-01' });
-assert.strictEqual(
-  initUnknown.result.protocolVersion,
-  '2025-11-25',
-  'Unsupported version must be answered with the latest supported version'
-);
-assert.strictEqual(
-  initKnown.result.serverInfo.version,
-  resolveAppVersion(ROOT_DIR),
-  'serverInfo.version must come from the shared app version (git tag / package.json)'
-);
-assert.strictEqual(initKnown.result.serverInfo.title, 'EP-2350 FX Tool');
-assert.ok(initKnown.result.instructions.includes('get_effects_reference'));
-
-// 16b. Notifications, client responses and malformed messages
-assert.strictEqual(
-  await handleMcpJsonRpcRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-  null,
-  'Notifications must not get a response'
-);
-assert.strictEqual(
-  await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 5, result: {} }),
-  null,
-  'Client responses must not get a response'
-);
-const noJsonrpc = await handleMcpJsonRpcRequest({ id: 301, method: 'ping' });
-assert.strictEqual(noJsonrpc.error.code, -32600, 'Missing jsonrpc: "2.0" must be -32600');
-assert.strictEqual(noJsonrpc.id, 301);
-const nullId = await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: null, method: 'ping' });
-assert.strictEqual(nullId.error.code, -32600, 'Null id must be rejected with -32600');
-
-// 16c. Spec error codes
-assert.strictEqual((await rpc('tools/call', { name: 'no_such_tool' })).error.code, -32602);
-assert.strictEqual((await rpc('resources/read', { uri: 'ep2350://nope' })).error.code, -32002);
-assert.strictEqual(
-  (await rpc('prompts/get', { name: 'design-fx-from-description', arguments: {} })).error.code,
-  -32602,
-  'Missing required prompt argument must be -32602'
-);
-assert.strictEqual((await rpc('no/such/method')).error.code, -32601);
-
-// 16d. A tool that throws returns isError (model-visible), not a protocol error
-const badRow = await rpc('tools/call', {
-  name: 'validate_preset',
-  arguments: { preset: { list: [null] } }
-});
-assert.ok(badRow.result, 'A broken preset must be a result, not a JSON-RPC error');
-assert.strictEqual(badRow.result.isError, false, 'A malformed preset is a validation result, not a crash');
-assert.strictEqual(badRow.result.structuredContent.isValid, false);
-assert.strictEqual(badRow.result.structuredContent.errors[0].code, 'row_not_object');
-assert.strictEqual(badRow.result.structuredContent.errors[0].path, 'list[0]');
-
-// 16e. Streamable HTTP transport rules
-const mcpUrl = 'http://localhost:3000/mcp';
-const jsonHeaders = { 'Content-Type': 'application/json' };
-const sseGet = await handleLocalMcpHttpFetch(
-  new Request(mcpUrl, { method: 'GET', headers: { Accept: 'text/event-stream' } })
-);
-assert.strictEqual(sseGet.status, 405, 'GET with text/event-stream must be 405 (no SSE stream offered)');
-const statusGet = await handleLocalMcpHttpFetch(new Request(mcpUrl, { method: 'GET' }));
-assert.strictEqual((await statusGet.json()).version, resolveAppVersion(ROOT_DIR));
-const del = await handleLocalMcpHttpFetch(new Request(mcpUrl, { method: 'DELETE' }));
-assert.strictEqual(del.status, 405, 'DELETE must be 405 on a stateless server');
-const badVersion = await handleLocalMcpHttpFetch(
-  new Request(mcpUrl, {
-    method: 'POST',
-    headers: { ...jsonHeaders, 'MCP-Protocol-Version': '1999-01-01' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 302, method: 'ping' })
-  })
-);
-assert.strictEqual(badVersion.status, 400, 'Unsupported MCP-Protocol-Version must be 400');
-const batchBody = JSON.stringify([
-  { jsonrpc: '2.0', id: 303, method: 'ping' },
-  { jsonrpc: '2.0', id: 304, method: 'ping' }
-]);
-const modernBatch = await handleLocalMcpHttpFetch(
-  new Request(mcpUrl, {
-    method: 'POST',
-    headers: { ...jsonHeaders, 'MCP-Protocol-Version': '2025-06-18' },
-    body: batchBody
-  })
-);
-assert.strictEqual(modernBatch.status, 400, 'Batches must be rejected for protocol >= 2025-06-18');
-const legacyBatch = await handleLocalMcpHttpFetch(
-  new Request(mcpUrl, { method: 'POST', headers: jsonHeaders, body: batchBody })
-);
-assert.strictEqual(legacyBatch.status, 200, 'Batches stay allowed for 2025-03-26 (no header)');
-assert.strictEqual((await legacyBatch.json()).length, 2);
-
-// 16f. stdio transport: parse errors, batches and normal requests
-const { spawn } = await import('node:child_process');
-const stdioLines = await new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT_DIR, 'mcp/server.mjs')], {
-    stdio: ['pipe', 'pipe', 'pipe']
-  });
-  let out = '';
-  const timer = setTimeout(() => {
-    child.kill();
-    reject(new Error(`stdio server timed out; got: ${out}`));
-  }, 30000);
-  child.stdout.on('data', (chunk) => {
-    out += chunk;
-    const lines = out.trim().split('\n').filter(Boolean);
-    if (lines.length >= 3) {
-      clearTimeout(timer);
-      child.kill();
-      resolve(lines.map((l) => JSON.parse(l)));
-    }
-  });
-  child.stdin.write('this is not json\n');
-  child.stdin.write('[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n');
-  child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
-  child.stdin.write('{"jsonrpc":"2.0","id":2,"method":"ping"}\n');
-});
-assert.strictEqual(stdioLines[0].error.code, -32700, 'stdio invalid JSON must be -32700');
-assert.strictEqual(stdioLines[1].error.code, -32600, 'stdio batch must be -32600');
-assert.deepStrictEqual(stdioLines[2], { jsonrpc: '2.0', id: 2, result: {} });
-console.log('✓ Suite 16: MCP protocol compliance (version negotiation, error codes, HTTP + stdio) verified');
-
-// ============================================================================
-// SUITE 17: Typed MCP Tool Schemas, Annotations & structuredContent
-// ============================================================================
-/** Minimal JSON Schema checker for the keywords our tool schemas use. Returns error paths. */
-function checkSchema(schema, value, at = '$') {
-  const errs = [];
-  const typeOf = (v) =>
-    v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v;
-  if (schema.oneOf) {
-    const matches = schema.oneOf.filter((s) => checkSchema(s, value, at).length === 0).length;
-    if (matches !== 1) errs.push(`${at}: matched ${matches} oneOf branches`);
-    return errs;
-  }
-  if ('const' in schema && value !== schema.const) errs.push(`${at}: expected const ${schema.const}`);
-  if (schema.enum && !schema.enum.includes(value)) errs.push(`${at}: ${JSON.stringify(value)} not in enum`);
-  if (schema.type) {
-    const t = typeOf(value);
-    const ok = schema.type === t || (schema.type === 'number' && t === 'integer');
-    if (!ok) return [...errs, `${at}: expected ${schema.type}, got ${t}`];
-  }
-  if (typeof value === 'number') {
-    if (schema.minimum !== undefined && value < schema.minimum) errs.push(`${at}: ${value} < ${schema.minimum}`);
-    if (schema.maximum !== undefined && value > schema.maximum) errs.push(`${at}: ${value} > ${schema.maximum}`);
-  }
-  if (Array.isArray(value)) {
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) errs.push(`${at}: too many items`);
-    if (schema.items) value.forEach((v, i) => errs.push(...checkSchema(schema.items, v, `${at}[${i}]`)));
-  }
-  if (typeOf(value) === 'object') {
-    for (const req of schema.required || []) {
-      if (!(req in value)) errs.push(`${at}: missing required "${req}"`);
-    }
-    for (const [k, v] of Object.entries(value)) {
-      if (schema.properties && k in schema.properties) {
-        errs.push(...checkSchema(schema.properties[k], v, `${at}.${k}`));
-      } else if (schema.additionalProperties === false) {
-        errs.push(`${at}: unexpected property "${k}"`);
-      } else if (typeof schema.additionalProperties === 'object') {
-        errs.push(...checkSchema(schema.additionalProperties, v, `${at}.${k}`));
-      }
-    }
-  }
-  return errs;
-}
-
-const PATH_ARG = /Path$/;
-const allPropNames = (tool) => Object.keys(tool.inputSchema.properties || {});
-
-// 17a. stdio tool list: titles, annotations, output schemas, path args present
-const stdioTools = (await rpc('tools/list')).result.tools;
-const stdioByName = Object.fromEntries(stdioTools.map((t) => [t.name, t]));
-assert.strictEqual(stdioTools.length, 4);
-for (const t of stdioTools) {
-  assert.ok(t.title && t.annotations && t.outputSchema, `${t.name} must have title, annotations, outputSchema`);
-  assert.strictEqual(t.outputSchema.type, 'object', `${t.name} outputSchema must be an object schema`);
-}
-assert.ok(allPropNames(stdioByName.export_pack_config).includes('outputPath'));
-assert.strictEqual(stdioByName.validate_preset.annotations.readOnlyHint, true);
-assert.strictEqual(stdioByName.export_pack_config.annotations.destructiveHint, true);
-assert.strictEqual(stdioByName.push_to_live_ui.inputSchema.properties.slot.type, 'integer');
-assert.strictEqual(stdioByName.get_effects_reference.annotations.readOnlyHint, true);
-
-// 17b. HTTP tool lists hide path args; annotations reflect the transport
-const httpToolsRes = await handleLocalMcpHttpFetch(
-  new Request('http://localhost:3000/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 400, method: 'tools/list' })
-  })
-);
-const httpTools = (await httpToolsRes.json()).result.tools;
-const httpByName = Object.fromEntries(httpTools.map((t) => [t.name, t]));
-for (const t of httpTools) {
-  assert.ok(!allPropNames(t).some((n) => PATH_ARG.test(n)), `HTTP ${t.name} must not advertise *Path args`);
-}
-assert.strictEqual(httpByName.export_pack_config.annotations.readOnlyHint, true);
-assert.strictEqual(httpByName.push_to_live_ui.annotations.readOnlyHint, false, 'Local live push changes the UI');
-const cfToolsRes = await cfWorker.fetch(
-  new Request('https://ep2350-fx.pages.dev/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 401, method: 'tools/list' })
-  })
-);
-const cfByName = Object.fromEntries(
-  (await cfToolsRes.json()).result.tools.map((t) => [t.name, t])
-);
-assert.strictEqual(cfByName.push_to_live_ui.annotations.readOnlyHint, true, 'Edge push only returns a URL');
-
-// 17c. The preset schema accepts every official TE preset (editor scale) and they lint clean
-const presetSchema = stdioByName.validate_preset.inputSchema.properties.preset;
-// Sanity: the checker itself must reject bad presets
-assert.ok(checkSchema(presetSchema, { list: [{ effect: 'LOWPASS', cutof: 50 }] }).length > 0);
-assert.ok(checkSchema(presetSchema, { list: [{ effect: 'DIST', amount: 99 }] }).length > 0);
-assert.ok(checkSchema(presetSchema, { list: [{ effect: 'NOPE' }] }).length > 0);
-assert.ok(checkSchema(presetSchema, { list: [], handle: { row: 99, param: 'mix', depth: 1 } }).length > 0);
-let officialPresetsChecked = 0;
-for (const officialPack of OFFICIAL_TE_PACKS) {
-  for (const p of parseConfigJson(officialPack.rawJson).pack.presets) {
-    const cleaned = JSON.parse(JSON.stringify(p));
-    officialPresetsChecked++;
-    const schemaErrs = checkSchema(presetSchema, cleaned);
-    assert.deepStrictEqual(schemaErrs, [], `${officialPack.name} / ${p.name} must match PRESET_SCHEMA`);
-    const lint = JSON.parse(
-      (await rpc('tools/call', { name: 'validate_preset', arguments: { preset: cleaned } })).result
-        .content[0].text
-    );
-    assert.deepStrictEqual(
-      lint.warnings,
-      [],
-      `${officialPack.name} / ${p.name} must lint clean`
-    );
-  }
-}
-
-assert.strictEqual(officialPresetsChecked, 12, 'All 12 official presets must be schema-checked');
-
-// 17d. structuredContent matches the text block and the declared outputSchema
-const checkStructured = (toolName, res) => {
-  assert.strictEqual(res.result.isError, false, `${toolName} should succeed`);
-  assert.deepStrictEqual(res.result.structuredContent, JSON.parse(res.result.content[0].text));
-  assert.deepStrictEqual(
-    checkSchema(stdioByName[toolName].outputSchema, res.result.structuredContent),
-    [],
-    `${toolName} structuredContent must match its outputSchema`
-  );
-  return res.result.structuredContent;
-};
-const sDesign = { preset: cyberWalkiePreset };
-checkStructured('get_effects_reference', await rpc('tools/call', { name: 'get_effects_reference', arguments: {} }));
-assert.deepStrictEqual(checkSchema(presetSchema, sDesign.preset), [], 'Hand-written preset must match PRESET_SCHEMA');
-checkStructured('validate_preset', await rpc('tools/call', { name: 'validate_preset', arguments: { preset: sDesign.preset } }));
-checkStructured(
-  'validate_preset',
-  await rpc('tools/call', { name: 'validate_preset', arguments: { configJson: OFFICIAL_TE_PACKS[0].rawJson } })
-);
-checkStructured(
-  'export_pack_config',
-  await rpc('tools/call', { name: 'export_pack_config', arguments: { presets: [sDesign.preset] } })
-);
-const edgePush = await (
-  await cfWorker.fetch(
-    new Request('https://ep2350-fx.pages.dev/mcp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 402,
-        method: 'tools/call',
-        params: { name: 'push_to_live_ui', arguments: { preset: sDesign.preset } }
-      })
-    })
-  )
-).json();
-checkStructured('push_to_live_ui', edgePush);
-
-// 17e. Error results carry no structuredContent
-const errResult = await rpc('tools/call', { name: 'validate_preset', arguments: {} });
-assert.strictEqual(errResult.result.isError, true);
-assert.ok(!('structuredContent' in errResult.result), 'isError results must omit structuredContent');
-
-// 17f. Common model mistakes are errors pointing at the exact field (details in Suite 21)
-const errorsOf = async (preset) =>
-  (await rpc('tools/call', { name: 'validate_preset', arguments: { preset } })).result.structuredContent.errors;
-const badParam = await errorsOf({ list: [{ effect: 'LOWPASS', cutof: 50 }, { effect: 'SAMPLE' }] });
-assert.ok(badParam.some((e) => e.path === 'list[0].cutof' && e.code === 'unknown_param' && e.fix.includes('"cutoff"')));
-const outOfRange = await errorsOf({ list: [{ effect: 'DIST', amount: 99 }, { effect: 'SAMPLE' }] });
-assert.ok(outOfRange.some((e) => e.path === 'list[0].amount' && e.code === 'out_of_range' && e.message.includes('0..40')));
-const hwScaleRes = (
-  await rpc('tools/call', {
-    name: 'validate_preset',
-    arguments: { preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 0.5, 'dry-level': 0.9 }, { effect: 'SAMPLE' }] } }
-  })
-).result.structuredContent;
-assert.strictEqual(hwScaleRes.inputScale, 'config', 'A 0..1 preset is detected as config.json scale');
-assert.deepStrictEqual(hwScaleRes.errors, [], '...and accepted without errors');
-const badMod = await errorsOf({
-  list: [{ effect: 'RING', frequency: 400, mix: 50 }, { effect: 'SAMPLE' }],
-  handle: { row: 0, param: 'cutoff', depth: 50 }
-});
-assert.ok(badMod.some((e) => e.path === 'handle.param' && e.fix.includes('frequency, mix')));
-// 17g. get_effects_reference: full list, single effect, unknown effect
-const fullRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: {} })).result.structuredContent;
-assert.strictEqual(fullRef.effects.length, 11);
-assert.ok(fullRef.rules.some((r) => r.includes('editor scale')), 'Reference must explain the editor scale');
-const ringRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: { effect: 'ring' } })).result.structuredContent;
-assert.deepStrictEqual(ringRef.effects.map((e) => e.type), ['RING']);
-assert.deepStrictEqual(ringRef.effects[0].params.find((p) => p.name === 'frequency').modDepth, { min: -5000, max: 5000, unit: 'Hz' });
-const badRef = await rpc('tools/call', { name: 'get_effects_reference', arguments: { effect: 'FLANGER' } });
-assert.strictEqual(badRef.result.isError, true);
-
-// 17h. push_to_live_ui without a reachable dev server delivers the shareUrl and is not an error
-const pushNoServer = await rpc('tools/call', {
-  name: 'push_to_live_ui',
-  arguments: { preset: cyberWalkiePreset, uiUrl: 'http://127.0.0.1:9' }
-});
-assert.strictEqual(pushNoServer.result.isError, false, 'A shareUrl delivery is a success');
-assert.strictEqual(pushNoServer.result.structuredContent.pushed, false);
-assert.strictEqual(pushNoServer.result.structuredContent.deliveryMode, 'shareUrl');
-assert.ok(pushNoServer.result.structuredContent.shareUrl.includes('#preset='));
-assert.deepStrictEqual(checkSchema(stdioByName.push_to_live_ui.outputSchema, pushNoServer.result.structuredContent), []);
-console.log('✓ Suite 17: Typed MCP tool schemas, annotations & structuredContent verified');
-
-// ============================================================================
-// SUITE 18: Shared rolldown MCP bundle (stdio server + Cloudflare Worker)
-// ============================================================================
-const { bundleMcp, MCP_CORE_ENTRY } = await import(
-  pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-mcp.mjs')).href
-);
-const bundleOut = path.join(TMP_TEST_BUILD, 'bundle-check', 'mcp-core.mjs');
-const { version: bundledVersion } = await bundleMcp({
-  rootDir: ROOT_DIR,
-  entry: MCP_CORE_ENTRY,
-  outFile: bundleOut,
-  version: '9.9.9-test'
-});
-assert.strictEqual(bundledVersion, '9.9.9-test');
-const bundleSrc = fs.readFileSync(bundleOut, 'utf8');
-assert.ok(!bundleSrc.includes('__APP_VERSION__'), 'Bundle must not contain the raw __APP_VERSION__ token');
-assert.ok(!/from\s+['"][^'"]+\?raw['"]/.test(bundleSrc), 'Bundle must inline ?raw imports');
-const bundledCore = await import(pathToFileURL(bundleOut).href);
-assert.strictEqual(bundledCore.MCP_SERVER_VERSION, '9.9.9-test', 'Injected version must reach serverInfo');
-assert.strictEqual(
-  bundledCore.MCP_TOOLS.length,
-  4,
-  'Bundled core must expose all tools (toolSchemas.ts followed via imports, no file list)'
-);
-const officialRead = await bundledCore.handleMcpCoreRequest({
-  jsonrpc: '2.0',
-  id: 500,
-  method: 'resources/read',
-  params: { uri: 'ep2350://presets/official-packs' }
-});
-assert.strictEqual(
-  JSON.parse(officialRead.result.contents[0].text).length,
-  3,
-  'Official packs (?raw JSON imports) must be inlined into the bundle'
-);
-
-// Unresolved imports fail the build instead of producing a broken bundle
-const brokenEntryDir = path.join(TMP_TEST_BUILD, 'bundle-broken');
-fs.mkdirSync(brokenEntryDir, { recursive: true });
-fs.writeFileSync(path.join(brokenEntryDir, 'entry.ts'), "import { nope } from './missing';\nexport const x: number = nope;\n");
-await assert.rejects(
-  bundleMcp({
-    rootDir: brokenEntryDir,
-    entry: 'entry.ts',
-    outFile: path.join(brokenEntryDir, 'out.mjs'),
-    version: '0.0.0'
-  }),
-  'bundleMcp must reject when an import cannot be resolved'
-);
-
-// No hand-maintained compile lists remain in the MCP entry points
-for (const rel of ['mcp/server.mjs', 'scripts/build-cloudflare-worker.mjs']) {
-  const src = fs.readFileSync(path.join(ROOT_DIR, rel), 'utf8');
-  assert.ok(
-    !src.includes('stripTypeScriptTypes') && !src.includes('filesToCompile'),
-    `${rel} must use scripts/bundle-mcp.mjs instead of a per-file compile list`
-  );
-}
-console.log('✓ Suite 18: Shared rolldown MCP bundle (stdio server + Cloudflare Worker) verified');
-
-// ============================================================================
-// SUITE 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting
-// ============================================================================
-// 19a. Web Locks mode: primary acquires lock, duplicate blocks, closing primary unlocks duplicate
+// 13a. Web Locks mode: primary acquires lock, duplicate blocks, closing primary unlocks duplicate
 {
   const createMockLockManager = () => {
     const held = new Map();
@@ -2341,7 +1627,7 @@ console.log('✓ Suite 18: Shared rolldown MCP bundle (stdio server + Cloudflare
   s2.cleanup();
 }
 
-// 19b. BroadcastChannel fallback mode when navigator.locks is unavailable
+// 13b. BroadcastChannel fallback mode when navigator.locks is unavailable
 {
   const channels = new Map();
   const createMockChannel = (name) => {
@@ -2397,7 +1683,7 @@ console.log('✓ Suite 18: Shared rolldown MCP bundle (stdio server + Cloudflare
   g2.cleanup();
 }
 
-// 19c. Web Serial InvalidStateError ("already open") produces actionable multi-tab/browser error
+// 13c. Web Serial InvalidStateError ("already open") produces actionable multi-tab/browser error
 {
   const prevNav = globalThis.navigator;
   const fakePort = {
@@ -2431,7 +1717,7 @@ console.log('✓ Suite 18: Shared rolldown MCP bundle (stdio server + Cloudflare
   }
 }
 
-// 19d. Centered MultiTabBanner & App UI multi-tab guard wiring check
+// 13d. Centered MultiTabBanner & App UI multi-tab guard wiring check
 const multiTabBannerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/MultiTabBanner.tsx'), 'utf8');
 assert.ok(
   multiTabBannerSrc.includes('EP-2350 FX TOOL IS OPEN IN ANOTHER TAB OR BROWSER') &&
@@ -2447,32 +1733,26 @@ assert.ok(
     appSrc.includes('isMultiTabBlocked'),
   'App must wire createMultiTabGuard, dim/disable the app under MultiTabBanner, and gate serial/storage side effects'
 );
-console.log('✓ Suite 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
+console.log('✓ Suite 13: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
 
 // ============================================================================
-// SUITE 20: Presets accepted in either scale (editor 0..100 or config.json 0..1)
+// SUITE 14: Presets accepted in either scale (editor 0..100 or config.json 0..1)
 // ============================================================================
 {
-  const callTool = async (name, args) =>
-    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 700, method: 'tools/call', params: { name, arguments: args } }))
-      .result.structuredContent;
   const sortKeys = (v) =>
     Array.isArray(v)
       ? v.map(sortKeys)
       : v && typeof v === 'object'
         ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]))
         : v;
-  const packsDoc = JSON.parse(
-    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 701, method: 'resources/read', params: { uri: 'ep2350://presets/official-packs' } }))
-      .result.contents[0].text
-  );
+  const packsDoc = OFFICIAL_TE_PACKS.map((p) => ({ config: JSON.parse(p.rawJson) }));
 
-  // Every official TE preset, passed exactly as the resource shows it (config scale), is detected,
+  // Every official TE preset, passed exactly as config.json has it (config scale), is detected,
   // converted, lints clean and serializes back to the identical hardware JSON.
   let checked = 0;
   for (const pk of packsDoc) {
     for (const hw of pk.config.presets) {
-      const v = await callTool('validate_preset', { preset: hw });
+      const v = validatePresetInput({ preset: hw });
       assert.strictEqual(v.inputScale, 'config', `${hw.name}: config scale detected`);
       assert.deepStrictEqual(v.warnings, [], `${hw.name}: no warnings`);
       for (const key of ['list', 'handle', 'shake', 'lfo', 'trigger']) {
@@ -2483,29 +1763,22 @@ console.log('✓ Suite 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporti
   }
   assert.strictEqual(checked, 12);
 
-  // Export uses the converted values (SPACE ECHO)
-  const spaceEcho = packsDoc[1].config.presets[0];
-  const exported = await callTool('export_pack_config', { presets: [spaceEcho] });
-  assert.deepStrictEqual(sortKeys(exported.configJson.presets[0].list), sortKeys(spaceEcho.list), 'Export keeps config values');
-
-  // hardwarePresetJson / normalizedPresetJson outputs can be passed straight back in
+  // normalizedPresetJson output can be passed straight back in
   const editorPreset = { list: [{ effect: 'DELAY', time: 0.3, echo: 40, 'wet-level': 50 }, { effect: 'SAMPLE' }] };
-  const fromEditor = await callTool('validate_preset', { preset: editorPreset });
+  const fromEditor = validatePresetInput({ preset: editorPreset });
   assert.strictEqual(fromEditor.inputScale, 'editor');
   assert.deepStrictEqual(fromEditor.normalizedPresetJson.list[0], { effect: 'DELAY', time: 0.3, echo: 0.4, 'wet-level': 0.5 });
-  const roundTrip = await callTool('validate_preset', { preset: fromEditor.normalizedPresetJson });
+  const roundTrip = validatePresetInput({ preset: fromEditor.normalizedPresetJson });
   assert.strictEqual(roundTrip.inputScale, 'config');
   assert.deepStrictEqual(roundTrip.normalizedPresetJson.list, fromEditor.normalizedPresetJson.list);
 }
-console.log('✓ Suite 20: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
+console.log('✓ Suite 14: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
 
 // ============================================================================
-// SUITE 21: Verbose validation (exact path, message, fix) and plain-language summary
+// SUITE 15: Verbose validation (exact path, message, fix) and plain-language summary
 // ============================================================================
 {
-  const validate = async (args) =>
-    (await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: 800, method: 'tools/call', params: { name: 'validate_preset', arguments: args } }))
-      .result.structuredContent;
+  const validate = async (args) => validatePresetInput(args);
   const find = (res, path, code) => res.errors.concat(res.warnings).find((i) => i.path === path && (!code || i.code === code));
 
   // Every issue carries type, code, path, message and fix
@@ -2629,18 +1902,171 @@ console.log('✓ Suite 20: Presets accepted in either scale (editor 0..100 or co
   assert.ok(text.includes('LFO (sine, 0.3 Hz) swings row 2 DELAY time between 330 ms and 370 ms'));
   const noMods = await validate({ preset: { list: [{ effect: 'RING', frequency: 200, mix: 60 }, { effect: 'SAMPLE' }] } });
   assert.ok(noMods.summary.includes('Handle: not used (squeezing does nothing).'));
-
-  // export_pack_config refuses unreadable presets with the same detailed errors
-  const exportBroken = await handleMcpJsonRpcRequest({
-    jsonrpc: '2.0',
-    id: 801,
-    method: 'tools/call',
-    params: { name: 'export_pack_config', arguments: { presets: [{ list: [null] }] } }
-  });
-  assert.strictEqual(exportBroken.result.isError, true);
-  const exportErr = JSON.parse(exportBroken.result.content[0].text);
-  assert.strictEqual(exportErr.errors[0].path, 'presets[0].list[0]');
 }
-console.log('✓ Suite 21: Verbose validation (exact path, message, fix) and plain-language summary verified');
+console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and plain-language summary verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 16: Sound designer skill (generated SKILL.md, bundled validator CLI, zip)
+// ============================================================================
+{
+  const { spawnSync } = await import('node:child_process');
+  const { buildSkill, SKILL_DIR_NAME } = await import(
+    pathToFileURL(path.join(ROOT_DIR, 'scripts/build-skill.mjs')).href
+  );
+  const skillOut = path.join(TMP_TEST_BUILD, 'skill');
+  const { skillDir, zipPath, files } = await buildSkill({
+    outDir: skillOut,
+    appUrl: 'https://example.test/app/',
+    version: '9.9.9-test'
+  });
+
+  // 16a. SKILL.md: frontmatter and a reference generated from EFFECTS_REGISTRY
+  const skillMd = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+  assert.ok(skillMd.startsWith(`---\nname: ${SKILL_DIR_NAME}\ndescription: `), 'SKILL.md must start with name/description frontmatter');
+  assert.ok(skillMd.includes('9.9.9-test'), 'SKILL.md must carry the build version');
+  assert.ok(
+    skillMd.includes('https://example.test/app/skill/ep2350-sound-designer/scripts/ep2350.mjs'),
+    'SKILL.md must say where the hosted validator script is'
+  );
+  assert.ok(!/\bMCP\b/.test(skillMd), 'The skill must stand alone, without the MCP server');
+  for (const meta of Object.values(EFFECTS_REGISTRY)) {
+    assert.ok(skillMd.includes(`### ${meta.type}\n`), `SKILL.md must document ${meta.type}`);
+    const section = skillMd.split(`### ${meta.type}\n`)[1].split('\n### ')[0];
+    for (const p of meta.params) {
+      assert.ok(section.includes(`| \`${p.name}\` |`), `SKILL.md must list ${meta.type}.${p.name}`);
+    }
+  }
+  // Percent knobs are documented in config.json scale (0..1), never as 0..100
+  assert.ok(/\| `echo` \| [^|]+ \| 0 \.\. 1 \| 0\.4 \| -1 \.\. 1 \|/.test(skillMd), 'Percent parameters must be shown as 0..1');
+  assert.ok(skillMd.includes('| `frequency` | carrier freq | 0 .. 20000 Hz | 440 | -5000 .. 5000 Hz |'));
+
+  // 16b. Bundled validator: one dependency-free file that runs outside the repo
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-skill-test-'));
+  try {
+    fs.cpSync(skillDir, path.join(isolated, SKILL_DIR_NAME), { recursive: true });
+    const cli = path.join(isolated, SKILL_DIR_NAME, 'scripts', 'ep2350.mjs');
+    const cliSrc = fs.readFileSync(cli, 'utf8');
+    assert.ok(cliSrc.startsWith('#!/usr/bin/env node\n'));
+    assert.ok(
+      [...cliSrc.matchAll(/^import .* from ["']([^"']+)["'];?$/gm)].every((m) => m[1].startsWith('node:')),
+      'Validator bundle may only import Node built-ins'
+    );
+    const run = (args, input) =>
+      spawnSync(process.execPath, [cli, ...args], { cwd: isolated, input, encoding: 'utf8' });
+
+    assert.strictEqual(run(['--version']).stdout.trim(), '9.9.9-test');
+
+    // Every bundled example (official pack) is valid and yields a share link the app can open
+    for (const example of ['broken_radio.json', 'dub.json', 'mysterious.json']) {
+      const res = run(['validate', path.join(SKILL_DIR_NAME, 'examples', example), '--json']);
+      assert.strictEqual(res.status, 0, `${example} must validate: ${res.stdout}${res.stderr}`);
+      const out = JSON.parse(res.stdout);
+      assert.strictEqual(out.isValid, true);
+      assert.ok(out.shareUrl.startsWith('https://example.test/app/#pack='), 'Share link must use the build app URL');
+      const decoded = decodeHashPayload(out.shareUrl);
+      assert.strictEqual(decoded?.type, 'pack');
+      assert.strictEqual(decoded.pack.presets.length, 4);
+    }
+
+    // Text report: errors name the exact field and the fix; exit code 1; nothing written
+    const broken = JSON.stringify({
+      name: 'T',
+      presets: [
+        {
+          pos: 0,
+          name: 'X',
+          list: [{ effect: 'ECHO' }, { effect: 'LOWPASS', cutof: 50 }, { effect: 'REVERB' }, { effect: 'REVERB' }],
+          handle: { row: 7, param: 'cutoff', depth: 0.5 }
+        }
+      ]
+    });
+    const bad = run(['validate', '-', '--out', 'bad.json'], broken);
+    assert.strictEqual(bad.status, 1, 'Invalid config must exit with 1');
+    assert.ok(bad.stdout.startsWith('INVALID: 4 errors'), bad.stdout);
+    assert.ok(bad.stdout.includes('presets[0].list[1].cutof:') && bad.stdout.includes('Did you mean "cutoff"?'));
+    assert.ok(bad.stdout.includes('presets[0].handle.row:'));
+    assert.ok(!bad.stdout.includes('Open in the web app'), 'No share link for an invalid config');
+    assert.ok(!fs.existsSync(path.join(isolated, 'bad.json')), '--out must not write an invalid config');
+
+    // A value on the 0..100 scale is rejected in a config.json
+    const percent = run(['validate', '-', '--json'], JSON.stringify({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] }));
+    assert.strictEqual(percent.status, 1);
+    assert.strictEqual(JSON.parse(percent.stdout).errors[0].path, 'presets[0].list[0].echo');
+
+    // A single preset is accepted, and --out writes a complete 4-slot config.json
+    const single = run(
+      ['validate', '-', '--out', 'config.json'],
+      JSON.stringify({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } })
+    );
+    assert.strictEqual(single.status, 0, single.stdout + single.stderr);
+    assert.ok(single.stdout.includes('https://example.test/app/#preset='));
+    const written = JSON.parse(fs.readFileSync(path.join(isolated, 'config.json'), 'utf8'));
+    assert.strictEqual(written.presets.length, 4);
+    assert.deepStrictEqual(written.presets[0].list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
+    assert.strictEqual(validatePackConfig(parseConfigJson(JSON.stringify(written)).pack).filter((i) => i.type === 'error').length, 0);
+
+    // Usage errors
+    assert.strictEqual(run(['validate', 'nope.json']).status, 2);
+    assert.strictEqual(run(['frobnicate']).status, 2);
+    assert.strictEqual(run(['validate', '-'], '{ not json').status, 1);
+  } finally {
+    fs.rmSync(isolated, { recursive: true, force: true });
+  }
+
+  // 16c. Zip: installable archive with the skill folder at its root, reproducible
+  const zip = fs.readFileSync(zipPath);
+  assert.strictEqual(zip.readUInt32LE(0), 0x04034b50, 'Zip must start with a local file header');
+  const eocd = zip.length - 22;
+  assert.strictEqual(zip.readUInt32LE(eocd), 0x06054b50, 'Zip must end with the end-of-central-directory record');
+  assert.strictEqual(zip.readUInt16LE(eocd + 10), files.length);
+  const zlib = await import('node:zlib');
+  let offset = zip.readUInt32LE(eocd + 16);
+  const zipped = {};
+  for (let i = 0; i < files.length; i++) {
+    assert.strictEqual(zip.readUInt32LE(offset), 0x02014b50);
+    const compSize = zip.readUInt32LE(offset + 20);
+    const nameLen = zip.readUInt16LE(offset + 28);
+    const localOffset = zip.readUInt32LE(offset + 42);
+    const name = zip.toString('utf8', offset + 46, offset + 46 + nameLen);
+    const dataStart = localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
+    zipped[name] = zlib.inflateRawSync(zip.subarray(dataStart, dataStart + compSize));
+    offset += 46 + nameLen;
+  }
+  assert.deepStrictEqual(Object.keys(zipped).sort(), files.map((f) => `${SKILL_DIR_NAME}/${f}`).sort());
+  for (const f of files) {
+    assert.ok(zipped[`${SKILL_DIR_NAME}/${f}`].equals(fs.readFileSync(path.join(skillDir, f))), `${f} must round-trip through the zip`);
+  }
+  const rebuilt = await buildSkill({ outDir: path.join(TMP_TEST_BUILD, 'skill-again'), appUrl: 'https://example.test/app/', version: '9.9.9-test' });
+  assert.ok(fs.readFileSync(rebuilt.zipPath).equals(zip), 'The same sources must produce the same zip');
+
+  // 16d. Unresolved imports fail the bundle instead of producing a broken validator
+  const { bundleTs } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-ts.mjs')).href);
+  const brokenEntryDir = path.join(TMP_TEST_BUILD, 'bundle-broken');
+  fs.mkdirSync(brokenEntryDir, { recursive: true });
+  fs.writeFileSync(path.join(brokenEntryDir, 'entry.ts'), "import { nope } from './missing';\nexport const x: number = nope;\n");
+  await assert.rejects(
+    bundleTs({ rootDir: brokenEntryDir, entry: 'entry.ts', outFile: path.join(brokenEntryDir, 'out.mjs'), version: '0.0.0' }),
+    'bundleTs must reject when an import cannot be resolved'
+  );
+
+  // 16e. The production build publishes the skill next to the web app; the MCP server is gone
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+  assert.ok(pkg.scripts.build.includes('scripts/build-skill.mjs'), 'npm run build must build the skill into dist/skill');
+  assert.ok(!('mcp' in pkg.scripts), 'The MCP server script was retired');
+  for (const gone of ['mcp', 'src/mcp', 'scripts/build-cloudflare-worker.mjs']) {
+    assert.ok(!fs.existsSync(path.join(ROOT_DIR, gone)), `${gone} was retired with the MCP server`);
+  }
+  assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
+  assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx no longer subscribes to the MCP live-push bridge');
+
+  // 16f. UI exposes the FX CHAIN / SKILL.MD switch and setup guide for Claude, ChatGPT, and Gemini
+  assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes('SKILL.MD'), 'App.tsx must provide the FX CHAIN | SKILL.MD switch');
+  assert.ok(appSrc.includes('SkillPanel'), 'App.tsx must render SkillPanel when switched to SKILL.MD');
+  const skillPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/SkillPanel.tsx'), 'utf8');
+  for (const needle of ['h-[626px]', 'HOW THE SKILL WORKS', 'CLAUDE', 'CHATGPT', 'GEMINI']) {
+    assert.ok(skillPanelSrc.includes(needle), `SkillPanel.tsx must contain ${needle}`);
+  }
+}
+console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) verified');
+
+console.log('\n=== ALL 16 PRODUCTION TEST SUITES PASSED (100%) ===');

@@ -12,6 +12,7 @@ import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
+import { SkillPanel } from './components/SkillPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
 
@@ -51,6 +52,7 @@ export const App: React.FC = () => {
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
+  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'skill'>('fx');
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -186,12 +188,14 @@ export const App: React.FC = () => {
         setPack(decoded.pack);
         setActiveSlot(decoded.slot);
         setIsDevicePack(false);
+        setRightPanelMode('fx');
       } else if (decoded.type === 'preset') {
         setPack((prev) => ({
           ...prev,
           presets: prev.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
         }));
         setActiveSlot(decoded.slot);
+        setRightPanelMode('fx');
       }
     };
 
@@ -199,62 +203,6 @@ export const App: React.FC = () => {
     window.addEventListener('hashchange', applyHashPayload);
     return () => {
       window.removeEventListener('hashchange', applyHashPayload);
-    };
-  }, []);
-
-  // Live MCP Sound Designer Sync Bridge (/ __mcp_sync SSE)
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') return;
-    let es: EventSource | null = null;
-    try {
-      es = new window.EventSource('/__mcp_sync');
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (typeof data?.configJson === 'string') {
-            const parsed = parseConfigJson(data.configJson);
-            if (parsed.pack) {
-              setPack(parsed.pack);
-              if (typeof data.slot === 'number') setActiveSlot(Math.max(0, Math.min(3, data.slot)));
-            }
-          } else if (data?.pack && typeof data.pack === 'object') {
-            const rawStr = JSON.stringify(data.pack);
-            const parsed = parseConfigJson(rawStr);
-            if (parsed.pack) {
-              setPack(parsed.pack);
-              if (typeof data.slot === 'number') setActiveSlot(Math.max(0, Math.min(3, data.slot)));
-            }
-          } else if (data?.preset && typeof data.preset === 'object') {
-            const targetSlot = Math.max(
-              0,
-              Math.min(3, typeof data.slot === 'number' ? data.slot : data.preset.pos ?? 0)
-            );
-            const incomingPreset: PresetConfig = {
-              ...data.preset,
-              id: data.preset.id || `mcp-preset-${targetSlot}-${Date.now()}`,
-              pos: targetSlot,
-              list: Array.isArray(data.preset.list)
-                ? data.preset.list.map((fx: any, idx: number) => ({
-                    id: fx.id || `mcp-fx-${targetSlot}-${idx}`,
-                    ...fx
-                  }))
-                : []
-            };
-            setPack((prev) => ({
-              ...prev,
-              presets: prev.presets.map((p) => (p.pos === targetSlot ? incomingPreset : p))
-            }));
-            setActiveSlot(targetSlot);
-          }
-        } catch {
-          // Ignore malformed SSE messages
-        }
-      };
-    } catch {
-      // Ignore SSE connection failure on static hosts
-    }
-    return () => {
-      es?.close();
     };
   }, []);
 
@@ -462,7 +410,7 @@ export const App: React.FC = () => {
       <div className="te-grid-origin max-w-[1056px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`w-full flex flex-col gap-[24px] transition-opacity duration-200 ${
+        className={`w-full flex flex-col transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -495,6 +443,52 @@ export const App: React.FC = () => {
           }
         />
 
+        {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (GRID-SNAPPED BETWEEN TOP BAR AND FX CHAIN) */}
+        <div className="w-full flex items-center justify-end pt-[24px] pb-[24px] pr-[5px]">
+          <div
+            className="flex items-start relative -left-[3px] -top-[3px]"
+            role="group"
+            aria-label="Right panel view"
+          >
+            {([
+              { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', title: 'Show preset FX chain editor' },
+              { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', title: 'Show AI sound designer skill guide' }
+            ] as const).map((tab) => {
+              const isActive = rightPanelMode === tab.id;
+              const isTing = theme === 'ting';
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setRightPanelMode(tab.id)}
+                  aria-pressed={isActive}
+                  title={tab.title}
+                  className={`te-btn-3d h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
+                    isTing
+                      ? 'bg-[#ece6d9] text-[#00503a]'
+                      : 'bg-[#e4e5e4] text-[#141617]'
+                  } ${
+                    isActive
+                      ? 'te-btn-3d--pressed z-0'
+                      : 'z-10 hover:brightness-105'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                      isActive
+                        ? 'bg-[#f15a22] border-[#141617]'
+                        : isTing
+                        ? 'bg-transparent border-[#5b695e]'
+                        : 'bg-transparent border-[#73787a]'
+                    }`}
+                  />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
         <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[25px] w-full">
           
@@ -515,17 +509,21 @@ export const App: React.FC = () => {
             <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
-          {/* RIGHT COLUMN: Preset Details Ledger Sheet */}
+          {/* RIGHT COLUMN: Preset Details Ledger Sheet OR SKILL.MD Setup Panel */}
           <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center">
-            <PresetLedger
-              preset={activePreset}
-              totalPresets={pack.presets.length}
-              isEffectsOff={isEffectsOff}
-              presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
-              onUpdatePreset={handleUpdateActivePreset}
-              onSelectPreset={handleSelectSlot}
-              theme={theme}
-            />
+            {rightPanelMode === 'fx' ? (
+              <PresetLedger
+                preset={activePreset}
+                totalPresets={pack.presets.length}
+                isEffectsOff={isEffectsOff}
+                presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
+                onUpdatePreset={handleUpdateActivePreset}
+                onSelectPreset={handleSelectSlot}
+                theme={theme}
+              />
+            ) : (
+              <SkillPanel theme={theme} />
+            )}
           </div>
         </div>
       </div>
