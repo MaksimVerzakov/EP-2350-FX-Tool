@@ -1263,28 +1263,8 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             {visibleBusItems.map((item, bIdx) => (
               <React.Fragment key={item.fx.id}>
                 {renderEffectCard(item, bIdx)}
-                {/* 1-cell margin gap & Mid-Chain Insert Plus Button (no connector line) */}
-                {bIdx < visibleBusItems.length - 1 && (
-                  <div className="h-[25px] flex items-center justify-center pt-[3px] relative">
-                    <button
-                      data-add-effect-trigger="true"
-                      disabled={isAtEffectLimit}
-                      onClick={(e) => openAddMenu(e, bIdx + 1, `mid-${bIdx + 1}`)}
-                      className={`w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center cursor-pointer text-[9px] font-bold transition-transform hover:scale-125 z-10 disabled:opacity-30 disabled:pointer-events-none ${
-                        activeBus === 1
-                          ? 'border-[#00a69c] text-[#00a69c] hover:bg-[#00a69c] hover:text-white'
-                          : 'border-[#d99b26] text-[#d99b26] hover:bg-[#d99b26] hover:text-white'
-                      }`}
-                      title={
-                        isAtEffectLimit
-                          ? `Maximum ${MAX_EFFECTS_PER_PRESET} effects per preset reached`
-                          : `Insert effect here in Bus ${activeBus}`
-                      }
-                    >
-                      +
-                    </button>
-                  </div>
-                )}
+                {/* 1-cell margin gap between FX blocks */}
+                {bIdx < visibleBusItems.length - 1 && <div className="h-[25px]" aria-hidden="true" />}
               </React.Fragment>
             ))}
 
