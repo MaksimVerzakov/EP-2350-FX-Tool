@@ -405,10 +405,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen overflow-hidden flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
+    <div className="min-h-screen overflow-hidden isolate flex flex-col items-center px-4 py-4 md:px-8 md:py-[25px] select-none font-sans">
+      {/* Layout origin for the background grid: 42 cells of 25px wide (+1px closing line, +5px bevel) */}
+      <div className="te-grid-origin max-w-[1056px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`max-w-[1067px] w-full flex flex-col mx-auto transition-opacity duration-200 ${
+        className={`w-full flex flex-col transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -441,16 +443,16 @@ export const App: React.FC = () => {
           }
         />
 
-        {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (CENTERED BETWEEN TOP BAR AND FX CHAIN) */}
-        <div className="w-full flex items-center justify-end py-2.5 pr-[4px]">
+        {/* RIGHT-ALIGNED WORKBENCH VIEW SWITCH (GRID-SNAPPED BETWEEN TOP BAR AND FX CHAIN) */}
+        <div className="w-full flex items-center justify-end pt-[24px] pb-[24px] pr-[5px]">
           <div
-            className="flex items-start"
+            className="flex items-start relative -left-[3px] -top-[3px]"
             role="group"
             aria-label="Right panel view"
           >
             {([
-              { id: 'fx', label: 'FX CHAIN', title: 'Show preset FX chain editor' },
-              { id: 'skill', label: 'SKILL.MD', title: 'Show AI sound designer skill guide' }
+              { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', title: 'Show preset FX chain editor' },
+              { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', title: 'Show AI sound designer skill guide' }
             ] as const).map((tab) => {
               const isActive = rightPanelMode === tab.id;
               const isTing = theme === 'ting';
@@ -461,7 +463,7 @@ export const App: React.FC = () => {
                   onClick={() => setRightPanelMode(tab.id)}
                   aria-pressed={isActive}
                   title={tab.title}
-                  className={`te-btn-3d h-[22px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+                  className={`te-btn-3d h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
                     isTing
                       ? 'bg-[#ece6d9] text-[#00503a]'
                       : 'bg-[#e4e5e4] text-[#141617]'
@@ -488,7 +490,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
-        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 w-full">
+        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[25px] w-full">
           
           {/* LEFT COLUMN: Hardware Mic Device + Floating Playback Controls */}
           <div className="w-[275px] shrink-0 flex flex-col items-start">
@@ -504,11 +506,11 @@ export const App: React.FC = () => {
               theme={theme}
             />
 
-            <AudioPlayerCompact theme={theme} className="-mt-[228px]" />
+            <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
           {/* RIGHT COLUMN: Preset Details Ledger Sheet OR SKILL.MD Setup Panel */}
-          <div className="flex-1 min-w-0 max-w-[760px] w-full flex flex-col items-center">
+          <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center">
             {rightPanelMode === 'fx' ? (
               <PresetLedger
                 preset={activePreset}
@@ -524,6 +526,7 @@ export const App: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
       </div>
 
       {isMultiTabBlocked && <MultiTabBanner theme={theme} />}

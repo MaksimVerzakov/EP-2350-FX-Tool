@@ -13,6 +13,29 @@ interface MicDeviceProps {
   theme?: ThemeMode;
 }
 
+/*
+ * Grid fit. The mic body outline (source x 338.805..551.475, y 0.5..334.555) is mapped onto the
+ * 25px background grid so it spans exactly 7 x 11 cells.
+ * That ratio matches the artwork to within 0.1%, so all four edges land on a line undistorted.
+ *
+ * As in the EP sample tool, it is the BACK of the body that sits on the grid: the body is
+ * extruded 6 source units down and to the right (the hatched bevel), and that far outline has its
+ * stroke centred on the grid lines (3 cells in from the left of the 11-cell column, flush with
+ * the column top). The front face floats up and to the left by the extrusion depth.
+ */
+const GRID = 25; // background grid cell
+const MIC_BOX_W = 11 * GRID;
+const MIC_BOX_H = 22 * GRID;
+const MIC_DEPTH = 6;
+const MIC_SCALE_X = (7 * GRID) / (551.475 - 338.805);
+const MIC_SCALE_Y = (11 * GRID) / (334.555 - 0.5);
+const MIC_VIEWBOX = [
+  338.805 + MIC_DEPTH - (3 * GRID + 0.5) / MIC_SCALE_X,
+  0.5 + MIC_DEPTH - 0.5 / MIC_SCALE_Y,
+  MIC_BOX_W / MIC_SCALE_X,
+  MIC_BOX_H / MIC_SCALE_Y
+].join(' ');
+
 const TING_LOUVER_Y = [
   4.295,
   19.487,
@@ -251,12 +274,12 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
       {/* Container matching Teenage Engineering EP-2350 silhouette */}
       <div 
         className="relative"
-        style={{ width: 275, height: 545 }}
+        style={{ width: MIC_BOX_W, height: MIC_BOX_H }}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          viewBox="275 2.0 305 588.0"
-          preserveAspectRatio="xMidYMin meet"
+          viewBox={MIC_VIEWBOX}
+          preserveAspectRatio="none"
           className="w-full h-full overflow-visible"
           style={{ overflow: 'visible' }}
           fill="none"

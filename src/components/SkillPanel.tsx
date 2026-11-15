@@ -94,7 +94,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
   return (
     <div className="te-bevel-frame w-full">
       <div
-        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[624px] relative z-10"
+        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10"
         data-testid="skill-md-panel"
       >
         {/* 1. TOP HEADER TAB (Matches PresetLedger header + 45° extruded right binder facet) */}

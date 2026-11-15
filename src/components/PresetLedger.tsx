@@ -907,7 +907,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   if (isEffectsOff) {
     return (
       <div className="te-bevel-frame w-full">
-      <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[624px] relative z-10">
+      <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10">
         {/* 1. TOP HEADER TAB (FX OFF / BYPASS STATE) */}
         <div
           className={`relative ${
@@ -1047,7 +1047,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
   return (
     <div className="te-bevel-frame w-full">
-    <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[624px] relative z-10">
+    <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10">
       {/* 1. TOP HEADER TAB (With 45° Extruded Right Binder Facet) */}
       <div
         className={`relative ${

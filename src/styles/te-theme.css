@@ -137,19 +137,73 @@ html[data-theme='ting'] {
   -moz-osx-font-smoothing: grayscale;
 }
 
-html {
-  scrollbar-gutter: stable;
-  overflow-y: scroll;
-  background-image: url('../assets/bg.png');
-  background-repeat: repeat;
-  background-position: center center;
-  background-size: contain;
-  background-attachment: fixed;
+/*
+ * Layout grid. Like TE's EP sample tool, every block outline sits on a background grid line.
+ * The grid is drawn in CSS with a fixed 25px cell and thin lines (--grid-line-width), and is anchored to the layout's
+ * top-left corner (.te-grid-origin), so a line runs through x = 0 and y = 0 of the layout and
+ * through every 25px from there.
+ *
+ * The proportions are the sample tool's: there a line is 1/26 of a cell, the logo block is
+ * 3 cells tall and small controls are 1 cell tall. Here the cell is 25px, the line 1px, the
+ * badges 3 cells and the buttons 1 cell.
+ *
+ * Sizing rule for outlined blocks: N cells => N * 25 + 1 px (border-box), so both 1px borders
+ * land exactly on grid lines.
+ *
+ * Extruded (3D) blocks follow the EP sample tool: it is the BACK of the block (the far edge of
+ * its 45° bevel) that sits on the grid. The front face floats up and to the left by the bevel
+ * depth, which is what makes the blocks read as raised off the page.
+ */
+:root {
+  --grid: 25px;
+  /* Line thickness. 0.5px is one device pixel on 2x screens. */
+  --grid-line-width: 0.5px;
+  --grid-paper: #abb5ba;
+  --grid-line: #d7dadb;
 }
 
 html[data-theme='ting'] {
-  background-color: #dbd0b9;
-  background-image: url('../assets/bg_ting.png');
+  --grid-paper: #dbd0b9;
+  --grid-line: #c3c2ab;
+}
+
+/* 1x screens cannot draw half a pixel cleanly, so keep a full pixel there. */
+@media (max-resolution: 1.5dppx) {
+  :root {
+    --grid-line-width: 1px;
+  }
+}
+
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+  background-color: var(--grid-paper);
+}
+
+.te-grid-origin {
+  position: relative;
+}
+
+/* Centre on a whole pixel, so grid lines and borders never straddle two device pixels. */
+@supports (margin-left: round(down, 1px, 1px)) {
+  .te-grid-origin {
+    align-self: flex-start;
+    margin-left: round(down, calc((100% - min(100%, 1056px)) / 2), 1px);
+    margin-right: 0;
+  }
+}
+
+.te-grid-origin::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  /* Whole cells in every direction, so the pattern stays in phase with the layout origin. */
+  inset: calc(var(--grid) * -130);
+  background-image:
+    linear-gradient(to right, var(--grid-line) var(--grid-line-width), transparent var(--grid-line-width)),
+    linear-gradient(to bottom, var(--grid-line) var(--grid-line-width), transparent var(--grid-line-width));
+  background-size: var(--grid) var(--grid);
+  pointer-events: none;
 }
 
 body {
@@ -158,21 +212,6 @@ body {
   font-family: 'TechnoType-bold', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   user-select: none;
   min-height: 100vh;
-}
-
-@media (min-width: 700px) {
-  html {
-    background-image: url('../assets/bg_x2.png');
-  }
-  html[data-theme='ting'] {
-    background-image: url('../assets/bg_ting_x2.png');
-  }
-}
-
-@media (min-width: 1400px) and (min-height: 1089px) {
-  html {
-    background-size: 1400px;
-  }
 }
 
 .font-te-bold {
@@ -329,6 +368,9 @@ html[data-theme='ting'] .te-hardware-chassis {
 /* 5px 45° Axonometric Extruded 3D Bevel Frame (matches TopBanner EP/FX & Import/Export blocks) */
 .te-bevel-frame {
   position: relative;
+  /* Back face on the grid: lift the front face by the 5px bevel depth. */
+  left: -5px;
+  top: -5px;
   padding-right: 5px;
   padding-bottom: 5px;
 }

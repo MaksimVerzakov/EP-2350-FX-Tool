@@ -668,9 +668,9 @@ assert.ok(
 
 // 5. TopBanner right block matches left block size & 2-row format ([EXPORT][IMPORT] on top, dropdown below + New Pack option)
 assert.strictEqual(
-  (topBannerSrc.match(/w-\[236px\] h-\[66px\]/g) || []).length,
+  (topBannerSrc.match(/w-\[251px\] h-\[76px\]/g) || []).length,
   2,
-  'Both left and right TopBanner blocks must share identical 236x66 modular dimensions'
+  'Both left and right TopBanner blocks must share identical 10x3-cell (251x76) modular dimensions'
 );
 assert.ok(
   topBannerSrc.includes('aria-label="Export and Import actions"') &&
@@ -2063,7 +2063,7 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes('SKILL.MD'), 'App.tsx must provide the FX CHAIN | SKILL.MD switch');
   assert.ok(appSrc.includes('SkillPanel'), 'App.tsx must render SkillPanel when switched to SKILL.MD');
   const skillPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/SkillPanel.tsx'), 'utf8');
-  for (const needle of ['h-[624px]', 'HOW THE SKILL WORKS', 'CLAUDE', 'CHATGPT', 'GEMINI']) {
+  for (const needle of ['h-[626px]', 'HOW THE SKILL WORKS', 'CLAUDE', 'CHATGPT', 'GEMINI']) {
     assert.ok(skillPanelSrc.includes(needle), `SkillPanel.tsx must contain ${needle}`);
   }
 }

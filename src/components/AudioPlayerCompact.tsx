@@ -43,7 +43,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
 
   return (
     <div
-      className={`w-[275px] relative z-10 flex flex-col items-end gap-2.5 pt-1 pr-[24px] select-none ${className}`}
+      className={`w-[275px] relative -left-[3px] -top-[3px] z-10 flex flex-col items-end gap-[24px] pr-[24px] select-none ${className}`}
     >
       {/* Floating PROJECT / SYSTEM style joined 3D switch */}
       <div
@@ -56,7 +56,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           onClick={() => handleSelectMode('sample')}
           aria-pressed={inputMode === 'sample'}
           title="Use built-in vocal speech loop"
-          className={`te-btn-3d h-[22px] w-[68px] px-1.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+          className={`te-btn-3d h-[26px] w-[51px] px-[5px] flex items-center gap-[3px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
             isTing
               ? 'bg-[#ece6d9] text-[#00503a]'
               : 'bg-[#e4e5e4] text-[#141617]'
@@ -82,7 +82,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           onClick={() => handleSelectMode('mic')}
           aria-pressed={inputMode === 'mic'}
           title="Use live microphone input"
-          className={`te-btn-3d h-[22px] w-[50px] px-1.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+          className={`te-btn-3d h-[26px] w-[50px] px-[5px] flex items-center justify-center gap-[3px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
             isTing
               ? 'bg-[#ece6d9] text-[#00503a]'
               : 'bg-[#e4e5e4] text-[#141617]'
@@ -117,7 +117,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
             ? 'Audition preset with live microphone input'
             : 'Audition preset with speech sample'
         }
-        className={`te-btn-3d te-btn-3d--pressable h-[22px] w-[68px] mr-[3px] flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer ${
+        className={`te-btn-3d te-btn-3d--pressable h-[26px] w-[76px] flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer ${
           isPlaying
             ? 'te-btn-3d--orange te-btn-3d--pressed bg-[#f15a22] text-white'
             : `te-btn-3d--dark ${
