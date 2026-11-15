@@ -110,4 +110,46 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await dialCap.dblclick();
     await expect(mixInput).toHaveValue('50%');
   });
+
+  test('switches between FX CHAIN and SKILL.MD views with matching block size and live skill assets', async ({ page, request }) => {
+    await page.goto('/');
+
+    const fxChainBtn = page.getByRole('button', { name: 'FX CHAIN' });
+    const skillMdBtn = page.getByRole('button', { name: 'SKILL.MD' });
+
+    await expect(fxChainBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(skillMdBtn).toHaveAttribute('aria-pressed', 'false');
+
+    const ledgerBox = await page.locator('.te-ledger-card').first().boundingBox();
+    expect(ledgerBox).not.toBeNull();
+
+    await skillMdBtn.click();
+    await expect(skillMdBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(fxChainBtn).toHaveAttribute('aria-pressed', 'false');
+
+    const skillPanel = page.getByTestId('skill-md-panel');
+    await expect(skillPanel).toBeVisible();
+    await expect(skillPanel).toContainText('HOW THE SKILL WORKS');
+    await expect(skillPanel).toContainText('01 // CLAUDE');
+    await expect(skillPanel).toContainText('02 // CHATGPT');
+    await expect(skillPanel).toContainText('03 // GEMINI');
+
+    const skillBox = await skillPanel.boundingBox();
+    expect(skillBox).not.toBeNull();
+    expect(Math.round(skillBox!.width)).toBe(Math.round(ledgerBox!.width));
+    expect(Math.round(skillBox!.height)).toBe(Math.round(ledgerBox!.height));
+
+    // Verify the dev server serves SKILL.md and the zip archive cleanly
+    const mdRes = await request.get('/skill/ep2350-sound-designer/SKILL.md');
+    expect(mdRes.status()).toBe(200);
+    expect(await mdRes.text()).toContain('ep2350-sound-designer');
+
+    const zipRes = await request.get('/skill/ep2350-sound-designer.zip');
+    expect(zipRes.status()).toBe(200);
+
+    // Switch back to FX CHAIN
+    await fxChainBtn.click();
+    await expect(skillPanel).toHaveCount(0);
+    await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('WALKIE TALKIE');
+  });
 });
