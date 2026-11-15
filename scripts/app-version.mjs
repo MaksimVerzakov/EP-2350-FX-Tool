@@ -1,7 +1,6 @@
 /**
- * Resolves the app version shared by the web UI, the MCP server (stdio + Vite /mcp) and the
- * Cloudflare Worker bundle: `APP_VERSION` env (set by CI) → latest `vX.Y.Z` git tag →
- * package.json version.
+ * Resolves the app version shared by the web UI and the sound designer skill:
+ * `APP_VERSION` env (set by CI) → latest `vX.Y.Z` git tag → package.json version.
  */
 import fs from 'node:fs';
 import path from 'node:path';

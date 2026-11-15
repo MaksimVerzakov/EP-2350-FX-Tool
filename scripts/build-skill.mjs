@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { bundleMcp } from './bundle-mcp.mjs';
+import { bundleTs } from './bundle-ts.mjs';
 import { resolveAppVersion } from './app-version.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -111,7 +111,7 @@ export async function buildSkill({
   // SKILL.md: bundle the renderer (TypeScript, reads EFFECTS_REGISTRY) and run it.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-skill-'));
   try {
-    const { outFile } = await bundleMcp({
+    const { outFile } = await bundleTs({
       rootDir: ROOT_DIR,
       entry: 'src/skill/skillDoc.ts',
       outFile: path.join(tmpDir, 'skill-doc.mjs'),
@@ -133,7 +133,7 @@ export async function buildSkill({
 
   // Validator: one self-contained file.
   const cliPath = path.join(skillDir, 'scripts', 'ep2350.mjs');
-  await bundleMcp({
+  await bundleTs({
     rootDir: ROOT_DIR,
     entry: 'src/skill/cli.mjs',
     outFile: cliPath,

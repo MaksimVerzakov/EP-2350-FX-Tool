@@ -1,20 +1,12 @@
 /**
- * Single build path for the EP-2350 MCP server code.
- *
- * Rolldown bundles the TypeScript sources straight from an entry point (it follows imports and
- * strips types itself), so there is no hand-maintained list of files to compile. Used by:
- *   - mcp/server.mjs                     → stdio server + Vite dev `/mcp` (bundled at startup)
- *   - scripts/build-cloudflare-worker.mjs → dist/_worker.js
+ * Bundles TypeScript sources into one ESM file with rolldown (it follows imports and strips
+ * types itself, so there is no hand-maintained list of files to compile). Used by
+ * scripts/build-skill.mjs for the skill's SKILL.md renderer and validator CLI.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { rolldown } from 'rolldown';
 import { injectAppVersion, resolveAppVersion } from './app-version.mjs';
-
-/** MCP core (JSON-RPC + Streamable HTTP handlers) for Node. */
-export const MCP_CORE_ENTRY = 'src/mcp/mcpCore.ts';
-/** Cloudflare Worker entry (`/mcp` + static assets). */
-export const MCP_WORKER_ENTRY = 'src/mcp/cloudflareWorker.ts';
 
 const RAW_SUFFIX = '?raw';
 
@@ -26,7 +18,7 @@ const RAW_SUFFIX = '?raw';
  */
 function ep2350SourcePlugin(version, define = {}) {
   return {
-    name: 'ep2350-mcp-sources',
+    name: 'ep2350-sources',
     resolveId(source, importer) {
       if (!source.endsWith(RAW_SUFFIX) || !importer) return null;
       const file = path.resolve(path.dirname(importer), source.slice(0, -RAW_SUFFIX.length));
@@ -52,7 +44,7 @@ function ep2350SourcePlugin(version, define = {}) {
  * Bundles `entry` (relative to `rootDir`) into a single ESM file at `outFile`.
  * Returns the output path and the version that was injected.
  */
-export async function bundleMcp({
+export async function bundleTs({
   rootDir,
   entry,
   outFile,
@@ -67,7 +59,7 @@ export async function bundleMcp({
     // Fail loudly instead of emitting a bundle with unresolved imports.
     onwarn(warning, defaultHandler) {
       if (warning.code === 'UNRESOLVED_IMPORT') {
-        throw new Error(`[bundle-mcp] ${warning.message}`);
+        throw new Error(`[bundle-ts] ${warning.message}`);
       }
       defaultHandler(warning);
     }
