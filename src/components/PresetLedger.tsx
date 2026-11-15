@@ -1449,8 +1449,8 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         const safeLfoShapeIdx = lfoShapeIdx !== -1 ? lfoShapeIdx : 0;
 
         const modCardClass = isTing
-          ? 'border border-[#00503a] bg-[#f7f5ef] p-2 flex flex-col justify-between rounded-none'
-          : 'border border-[#141617] bg-white p-2 flex flex-col justify-between rounded-none';
+          ? 'te-card-3d border border-[#00503a] bg-[#f7f5ef] p-2 flex flex-col justify-between rounded-none'
+          : 'te-card-3d border border-[#141617] bg-white p-2 flex flex-col justify-between rounded-none';
         const modHeaderBorder = isTing ? 'border-[#d8ceba]' : 'border-[#eceeed]';
         const modSelectClass = isTing
           ? 'bg-[#ffffff] border border-[#00503a] text-[#00503a] text-[8.5px] font-mono px-1 py-0.5 rounded-none outline-none focus:border-[#f15a22] cursor-pointer truncate w-full disabled:opacity-40 disabled:pointer-events-none'
@@ -1462,9 +1462,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               isTing
                 ? 'border-[#00503a] bg-[#e4dac5]'
                 : 'border-[#141617] bg-[#eceeed]'
-            } p-2 flex flex-col gap-1 select-none`}
+            } p-2 pr-[11px] pb-[11px] flex flex-col gap-1 select-none`}
           >
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr] gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr] gap-[11px]">
               {/* BLOCK 1: HANDLE */}
               <div className={modCardClass}>
                 {/* Header with inline mechanical ON/OFF switch */}
