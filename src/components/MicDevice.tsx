@@ -13,6 +13,24 @@ interface MicDeviceProps {
   theme?: ThemeMode;
 }
 
+/*
+ * Grid fit. The mic body outline (source x 338.805..551.475, y 0.5..334.555) is mapped onto the
+ * 22px background grid so it spans exactly 9 x 14 cells, with its stroke centred on the grid
+ * lines (3 cells in from the left of the 13-cell column, flush with the column top). The two axes
+ * differ by under 1%, which is invisible but lets all four edges land on a line.
+ */
+const GRID = 22;
+const MIC_BOX_W = 13 * GRID;
+const MIC_BOX_H = 25 * GRID;
+const MIC_SCALE_X = (9 * GRID) / (551.475 - 338.805);
+const MIC_SCALE_Y = (14 * GRID) / (334.555 - 0.5);
+const MIC_VIEWBOX = [
+  338.805 - (3 * GRID + 0.5) / MIC_SCALE_X,
+  0.5 - 0.5 / MIC_SCALE_Y,
+  MIC_BOX_W / MIC_SCALE_X,
+  MIC_BOX_H / MIC_SCALE_Y
+].join(' ');
+
 const TING_LOUVER_Y = [
   4.295,
   19.487,
@@ -251,12 +269,12 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
       {/* Container matching Teenage Engineering EP-2350 silhouette */}
       <div 
         className="relative"
-        style={{ width: 275, height: 545 }}
+        style={{ width: MIC_BOX_W, height: MIC_BOX_H }}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          viewBox="275 2.0 305 588.0"
-          preserveAspectRatio="xMidYMin meet"
+          viewBox={MIC_VIEWBOX}
+          preserveAspectRatio="none"
           className="w-full h-full overflow-visible"
           style={{ overflow: 'visible' }}
           fill="none"

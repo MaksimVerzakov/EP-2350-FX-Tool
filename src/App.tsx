@@ -457,10 +457,12 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen overflow-hidden flex flex-col items-center px-4 py-4 md:px-8 md:py-6 select-none font-sans">
+    <div className="min-h-screen overflow-hidden isolate flex flex-col items-center px-4 py-4 md:px-8 md:py-[22px] select-none font-sans">
+      {/* Layout origin for the background grid: 48 cells wide (+1px closing line, +5px bevel) */}
+      <div className="te-grid-origin max-w-[1062px] w-full mx-auto">
       <div
         aria-disabled={isMultiTabBlocked}
-        className={`max-w-[1067px] w-full flex flex-col gap-6 mx-auto transition-opacity duration-200 ${
+        className={`w-full flex flex-col gap-[21px] transition-opacity duration-200 ${
           isMultiTabBlocked ? 'opacity-20 pointer-events-none select-none' : ''
         }`}
       >
@@ -494,10 +496,10 @@ export const App: React.FC = () => {
         />
 
         {/* 2. MAIN TWO-COLUMN WORKBENCH DESK */}
-        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 w-full">
+        <div className="flex flex-col lg:flex-row items-center lg:items-start justify-between gap-8 lg:gap-[22px] w-full">
           
           {/* LEFT COLUMN: Hardware Mic Device + Floating Playback Controls */}
-          <div className="w-[275px] shrink-0 flex flex-col items-start">
+          <div className="w-[286px] shrink-0 flex flex-col items-start">
             <MicDevice
               activeSlot={activeSlot}
               onSelectSlot={handleSelectSlot}
@@ -510,11 +512,11 @@ export const App: React.FC = () => {
               theme={theme}
             />
 
-            <AudioPlayerCompact theme={theme} className="-mt-[228px]" />
+            <AudioPlayerCompact theme={theme} className="-mt-[220px]" />
           </div>
 
           {/* RIGHT COLUMN: Preset Details Ledger Sheet */}
-          <div className="flex-1 min-w-0 max-w-[760px] w-full flex flex-col items-center">
+          <div className="flex-1 min-w-0 max-w-[754px] w-full flex flex-col items-center">
             <PresetLedger
               preset={activePreset}
               totalPresets={pack.presets.length}
@@ -526,6 +528,7 @@ export const App: React.FC = () => {
             />
           </div>
         </div>
+      </div>
       </div>
 
       {isMultiTabBlocked && <MultiTabBanner theme={theme} />}

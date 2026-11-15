@@ -18,11 +18,14 @@ interface DeviceConnectorProps {
 type SaveState = 'idle' | 'saving' | 'saved';
 
 const EDGE = '#141617';
-/** Block face size (bevels add 5px on the right and bottom). */
-const BLOCK_W = 188;
-const BLOCK_H = 66;
+/**
+ * Block face size: 8 x 3 background-grid cells (+1px so both borders sit on grid lines).
+ * Bevels add 5px on the right and bottom.
+ */
+const BLOCK_W = 177;
+const BLOCK_H = 67;
 /** Header row height, identical to the Export/Import block. */
-const HEADER_H = 24;
+const HEADER_H = 22;
 /** Inner body size (inside the 1px border, below the header row). */
 const BODY_W = BLOCK_W - 2;
 const BODY_H = BLOCK_H - 2 - HEADER_H;
@@ -217,11 +220,11 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               }`}
               style={{ height: HEADER_H }}
             >
-              <Ring pos="left-[7px] top-[5.5px]" tone="border-[#141617]/55" />
+              <Ring pos="left-[7px] top-[5px]" tone="border-[#141617]/55" />
               <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold whitespace-nowrap">
                 {!isSupported ? 'chrome / edge only' : isConnecting ? 'connecting…' : 'connect the mic'}
               </span>
-              <Ring pos="right-[7px] top-[5.5px]" tone="border-[#141617]/55" />
+              <Ring pos="right-[7px] top-[5px]" tone="border-[#141617]/55" />
             </span>
             {/* Body row: grey like the TOOL block, cable only (animates on hover) */}
             <span className={`relative w-full flex-1 overflow-hidden transition-colors ${bodyFace} ${isSupported && !isConnecting ? bodyHover : ''}`}>
@@ -240,7 +243,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
             </span>
           </button>
         ) : (
-          <div className="w-full h-full grid grid-cols-2" role="group" aria-label="Connected mic actions">
+          <div className="w-full h-full grid grid-cols-[88px_1fr]" role="group" aria-label="Connected mic actions">
             {/* SAVE column: orange header + grey body with the floppy icon */}
             <button
               type="button"
@@ -260,7 +263,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 className={`relative flex items-center justify-center bg-[#f15a22] border-b border-r border-[#141617] transition-colors ${canSave ? 'group-hover:bg-[#ff6b35]' : ''}`}
                 style={{ height: HEADER_H }}
               >
-                <Ring pos="left-[7px] top-[5.5px]" tone="border-[#141617]/55" />
+                <Ring pos="left-[7px] top-[5px]" tone="border-[#141617]/55" />
                 <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
                   save
                 </span>
@@ -296,7 +299,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
                   eject
                 </span>
-                <Ring pos="right-[7px] top-[5.5px]" tone="border-white/40" />
+                <Ring pos="right-[7px] top-[5px]" tone="border-white/40" />
               </span>
               <span className={`relative flex-1 flex items-center justify-center transition-colors ${bodyFace} ${bodyHover}`}>
                 <Ring pos="top-[7px] right-[7px]" tone={lightRing} />

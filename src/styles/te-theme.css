@@ -137,19 +137,56 @@ html[data-theme='ting'] {
   -moz-osx-font-smoothing: grayscale;
 }
 
-html {
-  scrollbar-gutter: stable;
-  overflow-y: scroll;
-  background-image: url('../assets/bg.png');
-  background-repeat: repeat;
-  background-position: center center;
-  background-size: contain;
-  background-attachment: fixed;
+/*
+ * Layout grid. Like TE's EP sample tool, every block outline sits on a background grid line.
+ * The grid is drawn in CSS (crisp 1px lines at any pixel ratio) with a fixed 22px cell and is
+ * anchored to the layout's top-left corner (.te-grid-origin), so a line runs through x = 0 and
+ * y = 0 of the layout and through every multiple of --grid from there.
+ *
+ * Sizing rule for outlined blocks: N cells => N * 22 + 1 px (border-box), so both 1px borders
+ * land exactly on grid lines.
+ */
+:root {
+  --grid: 22px;
+  --grid-paper: #d7dadb;
+  --grid-line: #abb5ba;
 }
 
 html[data-theme='ting'] {
-  background-color: #dbd0b9;
-  background-image: url('../assets/bg_ting.png');
+  --grid-paper: #dbd0b9;
+  --grid-line: #c3c2ab;
+}
+
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+  background-color: var(--grid-paper);
+}
+
+.te-grid-origin {
+  position: relative;
+}
+
+/* Centre on a whole pixel, so grid lines and borders never straddle two device pixels. */
+@supports (margin-left: round(down, 1px, 1px)) {
+  .te-grid-origin {
+    align-self: flex-start;
+    margin-left: round(down, calc((100% - min(100%, 1062px)) / 2), 1px);
+    margin-right: 0;
+  }
+}
+
+.te-grid-origin::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  /* Whole cells in every direction, so the pattern stays in phase with the layout origin. */
+  inset: calc(var(--grid) * -150);
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid) var(--grid);
+  pointer-events: none;
 }
 
 body {
@@ -158,21 +195,6 @@ body {
   font-family: 'TechnoType-bold', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   user-select: none;
   min-height: 100vh;
-}
-
-@media (min-width: 700px) {
-  html {
-    background-image: url('../assets/bg_x2.png');
-  }
-  html[data-theme='ting'] {
-    background-image: url('../assets/bg_ting_x2.png');
-  }
-}
-
-@media (min-width: 1400px) and (min-height: 1089px) {
-  html {
-    background-size: 1400px;
-  }
 }
 
 .font-te-bold {
