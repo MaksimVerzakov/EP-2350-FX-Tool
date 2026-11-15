@@ -14,30 +14,15 @@ import {
   encodePackToHash,
   encodePresetToHash
 } from '../utils/presetUrl';
-import {
-  decodeWavBuffer,
-  encodeWavBuffer,
-  generateSyntheticVocalPcm
-} from '../utils/wavCodec';
-import type { ModulationScenario } from '../dsp/offlineRenderer';
-import { renderPresetOffline } from '../dsp/offlineRenderer';
-import { analyzeImpulseResponse, analyzePcmAudio, generateImpulseProbePcm } from '../dsp/analyzer';
-import { matchReferenceAudio, optimizePresetParameters } from '../dsp/optimizer';
 import { MCP_TOOL_NAMES, buildToolList, detectPresetScale, lintPresetAgainstRegistry } from './toolSchemas';
 
 export interface McpRuntimeOptions {
   /** Base URL of the web UI for generating #preset= shareable deep-links */
   uiUrl?: string;
-  /**
-   * When true (Cloudflare Worker Free Tier), uses a compact synthetic vocal phrase
-   * (24 kHz, 0.35s) and caps default optimizer iterations so execution stays well
-   * under the 10ms Cloudflare Free CPU limit.
-   */
+  /** Hosted edge (Cloudflare Worker): never makes outbound requests on behalf of callers. */
   edgeMode?: boolean;
-  /** Optional local filesystem callbacks (populated in Node.js CLI/Vite mode) */
-  readLocalFile?: (pathStr: string) => Uint8Array;
+  /** Write a local file (stdio transport only; used by export_pack_config `outputPath`). */
   writeLocalFile?: (pathStr: string, data: Uint8Array | string) => string;
-  resolveLocalPath?: (pathStr: string) => string;
   /**
    * Browser origins allowed to call the Streamable HTTP endpoint. Requests without an
    * `Origin` header (non-browser MCP clients) are always accepted. Defaults to loopback
@@ -70,7 +55,7 @@ export const MCP_SERVER_INFO = {
 };
 
 const MCP_SERVER_INSTRUCTIONS =
-  'Designs and verifies effect presets for the Teenage Engineering EP-2350 fx mic. Call get_effects_reference for the effects, parameter ranges, modulation rules and hardware limits, write the preset yourself, check it with validate_preset and simulate_preset (echo times, tail decay, spectrum, pitch per handle/shake scenario) and adjust, then deliver it with export_pack_config (config.json) or push_to_live_ui. Every preset tool returns a shareUrl that opens the preset in the web app. To match a recording, use analyze_reference_audio and optimize_preset_parameters.';
+  'Builds effect presets for the Teenage Engineering EP-2350 fx mic. 1) Call get_effects_reference for the preset format, every effect and parameter, modulation and the hardware rules. 2) Write the preset. 3) Call validate_preset and fix every error it reports (each issue names the exact field, what is wrong and how to fix it); its summary describes in plain words what the preset will do. 4) Deliver with export_pack_config (hardware config.json), and give the user the shareUrl or call push_to_live_ui so they can listen to it in the web app.'
 
 /** Rules that are not expressed by parameter ranges alone. */
 const EFFECTS_REFERENCE_RULES = [
@@ -138,15 +123,6 @@ const RPC_RESOURCE_NOT_FOUND = -32002;
 function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
-const MAX_OPTIMIZER_ITERATIONS = 200;
-const MAX_OPTIMIZER_ITERATIONS_EDGE = 24;
-const LOCAL_PATH_ARGS = [
-  'inputWavPath',
-  'referenceWavPath',
-  'dryWavPath',
-  'outputWavPath',
-  'outputPath'
-];
 
 /** True when the URL's hostname is a loopback address (localhost, 127.0.0.1, [::1]). */
 export function isLoopbackUrl(rawUrl: string): boolean {
@@ -191,7 +167,7 @@ export const MCP_PROMPTS = [
   {
     name: 'design-fx-from-description',
     description:
-      'Design, simulate, and acoustically verify an EP-2350 vocal effect chain from a natural language description.',
+      'Design an EP-2350 vocal effect preset from a natural language description, validate it and deliver it.',
     arguments: [
       {
         name: 'description',
@@ -199,38 +175,11 @@ export const MCP_PROMPTS = [
         required: true
       }
     ]
-  },
-  {
-    name: 'match-reference-audio',
-    description:
-      'Analyze a target reference WAV file and optimize an EP-2350 effect chain to match its spectral and temporal signature.',
-    arguments: [
-      {
-        name: 'referenceWavPath',
-        description: 'Path to the target reference .wav file',
-        required: true
-      },
-      {
-        name: 'dryWavPath',
-        description: 'Optional path to the dry unprocessed .wav file',
-        required: false
-      }
-    ]
   }
 ];
 
 /** Full tool list as advertised on the stdio transport (local file access available). */
 export const MCP_TOOLS = buildToolList({ localFiles: true, edgeMode: false });
-
-function decodeBase64Bytes(b64: string): Uint8Array {
-  const cleaned = b64.replace(/^data:audio\/[^;]+;base64,/, '').trim();
-  const bin = atob(cleaned);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return bytes;
-}
 
 export function normalizeSinglePreset(rawPreset: Record<string, any>, pos = 0): PresetConfig {
   const list: AnyEffect[] = Array.isArray(rawPreset?.list)
@@ -432,25 +381,7 @@ export async function handleMcpCoreRequest(
                 role: 'user',
                 content: {
                   type: 'text',
-                  text: `Design an EP-2350 vocal effect preset for: "${args.description || ''}". Call get_effects_reference first, then write the preset (effect chain plus handle/shake/lfo modulation) yourself. Check it with validate_preset and fix any errors or warnings, then run simulate_preset and confirm the telemetry matches the description across idle, handle_pushed and shake_burst (echo time, tail decay, spectrum, pitch); adjust and re-simulate if it does not. Finally deliver it with export_pack_config and give the user the shareUrl.`
-                }
-              }
-            ]
-          }
-        };
-      }
-      if (promptName === 'match-reference-audio') {
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            description: 'Match a reference WAV file with an EP-2350 effect chain',
-            messages: [
-              {
-                role: 'user',
-                content: {
-                  type: 'text',
-                  text: `Find the best EP-2350 effect chain to match the reference audio at "${args.referenceWavPath || ''}". Call analyze_reference_audio first to inspect its spectral and echo fingerprint, then call optimize_preset_parameters to tune the knob values and report the similarity score and shareUrl.`
+                  text: `Design an EP-2350 vocal effect preset for: "${args.description || ''}". Call get_effects_reference first, then write the preset (effect chain plus handle/shake/lfo modulation) yourself. Call validate_preset and fix every error and warning it reports; read its summary and check it matches the description. Finally deliver it with export_pack_config and give the user the shareUrl so they can listen to it.`
                 }
               }
             ]
@@ -466,7 +397,7 @@ export async function handleMcpCoreRequest(
         id,
         result: {
           tools: buildToolList({
-            localFiles: Boolean(options.readLocalFile && options.writeLocalFile),
+            localFiles: Boolean(options.writeLocalFile),
             edgeMode: Boolean(options.edgeMode)
           })
         }
@@ -528,34 +459,14 @@ async function executeMcpToolCall(
     ''
   );
   const isEdge = Boolean(options.edgeMode);
-  const defaultSampleRate = isEdge ? 24000 : 48000;
-  const defaultTotalSec = isEdge ? 0.35 : 1.6;
-  const defaultVoiceSec = isEdge ? 0.2 : 0.8;
-  // Echo/decay are measured on an impulse probe (a short burst then silence), long enough for a
-  // 1.1 s delay plus its first repeat locally; on the edge it is shorter to save CPU.
-  const probeSec = isEdge ? 1.3 : 2.4;
-  const analyzeScenario = (
-    preset: PresetConfig,
-    dryPcm: ReturnType<typeof generateSyntheticVocalPcm>,
-    scenario: ModulationScenario
-  ) => {
-    const rendered = renderPresetOffline(preset, dryPcm, { scenario });
-    const probe = generateImpulseProbePcm(dryPcm.sampleRate, probeSec);
-    const impulse = analyzeImpulseResponse(renderPresetOffline(preset, probe, { scenario }));
-    return { rendered, report: analyzePcmAudio(rendered, dryPcm, impulse) };
-  };
 
-  // Local filesystem access is only wired up for trusted transports (stdio). Over HTTP the
-  // callbacks are stripped, so reject path arguments explicitly instead of silently ignoring them.
-  if (!options.readLocalFile || !options.writeLocalFile) {
-    const pathArgs = LOCAL_PATH_ARGS.filter(
-      (key) => typeof args[key] === 'string' && args[key].trim() !== ''
-    );
-    if (pathArgs.length > 0) {
-      return {
-        error: `Local file paths are not available on this transport (${pathArgs.join(', ')}). Pass input audio as *Base64 arguments and use the returned configJson/shareUrl instead of output paths, or run the stdio server (npm run mcp) for file access.`
-      };
-    }
+  // Writing files is only wired up for the trusted stdio transport. Over HTTP the callback is
+  // stripped, so reject a path argument explicitly instead of silently ignoring it.
+  if (!options.writeLocalFile && typeof args.outputPath === 'string' && args.outputPath.trim() !== '') {
+    return {
+      error:
+        'outputPath is not available on this transport (files can only be written by the stdio server, npm run mcp). Use the returned configJson or shareUrl instead.'
+    };
   }
 
   switch (toolName) {
@@ -615,172 +526,6 @@ async function executeMcpToolCall(
       }
 
       return { error: 'Provide either `preset` object or `configJson` string.' };
-    }
-
-    case 'simulate_preset': {
-      if (!args.preset || typeof args.preset === 'object' === false) {
-        return { error: '`preset` object is required.' };
-      }
-      const { preset: normPreset, inputScale } = readPreset(args.preset, args.preset.pos ?? 0);
-      let dryPcm;
-      if (typeof args.inputWavBase64 === 'string' && args.inputWavBase64.trim()) {
-        dryPcm = decodeWavBuffer(decodeBase64Bytes(args.inputWavBase64));
-      } else if (args.inputWavPath && options.readLocalFile) {
-        dryPcm = decodeWavBuffer(options.readLocalFile(args.inputWavPath));
-      } else {
-        dryPcm = generateSyntheticVocalPcm(defaultSampleRate, defaultTotalSec, defaultVoiceSec);
-      }
-
-      const scenarios: ModulationScenario[] =
-        Array.isArray(args.scenarios) && args.scenarios.length > 0
-          ? args.scenarios
-          : ['idle', 'handle_pushed', 'shake_burst'];
-
-      // Analyse the dry input against itself so its own rhythm is not reported as an echo.
-      const dryReport = analyzePcmAudio(dryPcm, dryPcm);
-      const reports: Record<string, any> = {};
-      let lastRenderedPcm = null;
-
-      for (const sc of scenarios) {
-        const { rendered, report } = analyzeScenario(normPreset, dryPcm, sc);
-        lastRenderedPcm = rendered;
-        reports[sc] = report;
-      }
-
-      let savedWavPath: string | undefined = undefined;
-      if (args.outputWavPath && lastRenderedPcm && options.writeLocalFile) {
-        savedWavPath = options.writeLocalFile(args.outputWavPath, encodeWavBuffer(lastRenderedPcm));
-      }
-
-      const shareHash = encodePresetToHash(normPreset, normPreset.pos);
-      const shareUrl = buildPresetShareUrl(shareBaseUrl, normPreset, normPreset.pos);
-
-      return {
-        presetName: normPreset.name,
-        inputScale,
-        shareHash,
-        shareUrl,
-        presetWarnings: lintPresetAgainstRegistry(normPreset),
-        dryBaseline: dryReport,
-        scenarios: reports,
-        savedWavPath
-      };
-    }
-
-    case 'analyze_reference_audio': {
-      let refBytes: Uint8Array | null = null;
-      let resolvedPath = args.referenceWavPath;
-
-      if (typeof args.referenceWavBase64 === 'string' && args.referenceWavBase64.trim()) {
-        refBytes = decodeBase64Bytes(args.referenceWavBase64);
-      } else if (args.referenceWavPath && options.readLocalFile) {
-        try {
-          resolvedPath = options.resolveLocalPath
-            ? options.resolveLocalPath(args.referenceWavPath)
-            : args.referenceWavPath;
-          refBytes = options.readLocalFile(args.referenceWavPath);
-        } catch {
-          return { error: `Reference WAV not found at ${resolvedPath}` };
-        }
-      } else {
-        return {
-          error: isEdge
-            ? 'Provide `referenceWavBase64` when calling analyze_reference_audio over remote HTTP.'
-            : '`referenceWavPath` is required.'
-        };
-      }
-
-      const refPcm = decodeWavBuffer(refBytes);
-      let dryPcm = undefined;
-      if (typeof args.dryWavBase64 === 'string' && args.dryWavBase64.trim()) {
-        dryPcm = decodeWavBuffer(decodeBase64Bytes(args.dryWavBase64));
-      } else if (args.dryWavPath && options.readLocalFile) {
-        dryPcm = decodeWavBuffer(options.readLocalFile(args.dryWavPath));
-      }
-
-      const analysis = analyzePcmAudio(refPcm, dryPcm);
-      return {
-        referenceWavPath: resolvedPath,
-        analysis
-      };
-    }
-
-    case 'optimize_preset_parameters': {
-      let refBytes: Uint8Array | null = null;
-      let resolvedPath = args.referenceWavPath;
-
-      if (typeof args.referenceWavBase64 === 'string' && args.referenceWavBase64.trim()) {
-        refBytes = decodeBase64Bytes(args.referenceWavBase64);
-      } else if (args.referenceWavPath && options.readLocalFile) {
-        try {
-          resolvedPath = options.resolveLocalPath
-            ? options.resolveLocalPath(args.referenceWavPath)
-            : args.referenceWavPath;
-          refBytes = options.readLocalFile(args.referenceWavPath);
-        } catch {
-          return { error: `Reference WAV not found at ${resolvedPath}` };
-        }
-      } else {
-        return {
-          error: isEdge
-            ? 'Provide `referenceWavBase64` when calling optimize_preset_parameters over remote HTTP.'
-            : '`referenceWavPath` is required.'
-        };
-      }
-
-      const targetPcm = decodeWavBuffer(refBytes);
-      let dryPcm;
-      if (typeof args.dryWavBase64 === 'string' && args.dryWavBase64.trim()) {
-        dryPcm = decodeWavBuffer(decodeBase64Bytes(args.dryWavBase64));
-      } else if (args.dryWavPath && options.readLocalFile) {
-        dryPcm = decodeWavBuffer(options.readLocalFile(args.dryWavPath));
-      } else {
-        dryPcm = generateSyntheticVocalPcm(
-          targetPcm.sampleRate,
-          isEdge ? 0.35 : 1.6,
-          isEdge ? 0.2 : 0.8
-        );
-      }
-
-      const defaultIter = isEdge ? 12 : 48;
-      const iterCap = isEdge ? MAX_OPTIMIZER_ITERATIONS_EDGE : MAX_OPTIMIZER_ITERATIONS;
-      const maxIterations =
-        typeof args.maxIterations === 'number' && Number.isFinite(args.maxIterations)
-          ? Math.max(1, Math.min(iterCap, Math.floor(args.maxIterations)))
-          : defaultIter;
-
-      const optResult = args.candidatePreset
-        ? optimizePresetParameters(readPreset(args.candidatePreset, 0).preset, targetPcm, {
-            dryPcm,
-            maxIterations
-          })
-        : matchReferenceAudio(targetPcm, { dryPcm, maxIterations });
-
-      const pack = wrapPresetInPack(optResult.optimizedPreset, 'MATCHED PACK');
-      const hardwarePresetJson = JSON.parse(serializeToConfigJson(pack)).presets[0];
-      const shareHash = encodePresetToHash(hardwarePresetJson, 0);
-      const shareUrl = buildPresetShareUrl(shareBaseUrl, hardwarePresetJson, 0);
-
-      let savedWavPath: string | undefined = undefined;
-      if (args.outputWavPath && options.writeLocalFile) {
-        savedWavPath = options.writeLocalFile(
-          args.outputWavPath,
-          encodeWavBuffer(optResult.renderedPcm)
-        );
-      }
-
-      return {
-        optimizedPreset: optResult.optimizedPreset,
-        hardwarePresetJson,
-        shareHash,
-        shareUrl,
-        initialDistance: optResult.initialDistance,
-        finalDistance: optResult.finalDistance,
-        iterationsRun: optResult.iterationsRun,
-        targetReport: optResult.targetReport,
-        renderedReport: optResult.renderedReport,
-        savedWavPath
-      };
     }
 
     case 'export_pack_config': {
@@ -956,12 +701,7 @@ export async function handleMcpHttpFetch(
 ): Promise<Response> {
   const url = new URL(request.url);
   // Never expose local file access over HTTP, whatever the caller passed in.
-  const {
-    readLocalFile: _readLocalFile,
-    writeLocalFile: _writeLocalFile,
-    resolveLocalPath: _resolveLocalPath,
-    ...httpSafeOptions
-  } = options;
+  const { writeLocalFile: _writeLocalFile, ...httpSafeOptions } = options;
   const effectiveOptions: McpRuntimeOptions = {
     ...httpSafeOptions,
     uiUrl: options.uiUrl || `${url.protocol}//${url.host}`

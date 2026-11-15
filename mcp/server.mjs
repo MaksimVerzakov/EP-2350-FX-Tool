@@ -57,11 +57,6 @@ function createNodeRuntimeOptions(overrides = {}) {
   return {
     uiUrl: overrides.uiUrl || process.env.EP2350_UI_URL || undefined,
     edgeMode: Boolean(overrides.edgeMode),
-    resolveLocalPath: (p) => path.resolve(ROOT_DIR, p),
-    readLocalFile: (p) => {
-      const abs = path.resolve(ROOT_DIR, p);
-      return fs.readFileSync(abs);
-    },
     writeLocalFile: (p, data) => {
       const abs = path.resolve(ROOT_DIR, p);
       fs.mkdirSync(path.dirname(abs), { recursive: true });

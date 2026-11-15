@@ -134,7 +134,7 @@ export const PRESET_SCHEMA: JsonSchema = {
 };
 
 /**
- * Compact preset reference for tools other than validate_preset / simulate_preset, so the full
+ * Compact preset reference for tools other than validate_preset, so the full
  * schema is not repeated in every tool (it would add ~10 KB of tokens per copy to tools/list).
  */
 export const PRESET_REF_SCHEMA: JsonSchema = {
@@ -169,10 +169,6 @@ const localPath = (description: string): JsonSchema => ({
   type: 'string',
   description: `${description} (stdio transport only).`
 });
-const base64Wav = (description: string): JsonSchema => ({
-  type: 'string',
-  description: `${description} Base64-encoded .wav (a data: URL prefix is accepted).`
-});
 
 // ---------------------------------------------------------------------------
 // Output schemas (kept open with additionalProperties so the payload can grow)
@@ -189,15 +185,6 @@ const issueSchema: JsonSchema = {
 const shareFields: JsonSchema = {
   shareHash: { type: 'string', description: 'URL hash payload (#preset=… or #pack=…).' },
   shareUrl: { type: 'string', description: 'Opens the preset/pack in the EP-2350 web app.' }
-};
-const analysisSchema: JsonSchema = {
-  type: 'object',
-  description: 'Acoustic report: levels, 6-band spectrum, centroid, pitch, delay lag, tail decay, inferred cues.'
-};
-const scenarioReportsSchema: JsonSchema = {
-  type: 'object',
-  description: 'Acoustic report per modulation scenario.',
-  additionalProperties: analysisSchema
 };
 
 const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
@@ -237,45 +224,6 @@ const OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
       ...shareFields
     },
     required: ['isValid', 'errors', 'warnings', 'shareUrl']
-  },
-  simulate_preset: {
-    type: 'object',
-    properties: {
-      presetName: { type: 'string' },
-      inputScale: { enum: ['editor', 'config'], description: 'Scale the preset argument was given in.' },
-      ...shareFields,
-      presetWarnings: { type: 'array', items: issueSchema },
-      dryBaseline: analysisSchema,
-      scenarios: scenarioReportsSchema,
-      savedWavPath: { type: 'string' }
-    },
-    required: ['presetName', 'shareUrl', 'dryBaseline', 'scenarios']
-  },
-  analyze_reference_audio: {
-    type: 'object',
-    properties: {
-      referenceWavPath: { type: 'string' },
-      analysis: analysisSchema
-    },
-    required: ['analysis']
-  },
-  optimize_preset_parameters: {
-    type: 'object',
-    properties: {
-      optimizedPreset: PRESET_REF_SCHEMA,
-      hardwarePresetJson: { type: 'object' },
-      ...shareFields,
-      initialDistance: { type: 'object' },
-      finalDistance: {
-        type: 'object',
-        description: 'Includes totalLoss and similarityScore (%).'
-      },
-      iterationsRun: { type: 'integer' },
-      targetReport: analysisSchema,
-      renderedReport: analysisSchema,
-      savedWavPath: { type: 'string' }
-    },
-    required: ['optimizedPreset', 'hardwarePresetJson', 'shareUrl', 'finalDistance', 'iterationsRun']
   },
   export_pack_config: {
     type: 'object',
@@ -345,77 +293,6 @@ const TOOL_DEFS: ToolDef[] = [
       }
     },
     pathArgs: [],
-    pure: true
-  },
-  {
-    name: 'simulate_preset',
-    title: 'Simulate preset',
-    description:
-      'Render a preset offline through the DSP engine and return acoustic telemetry (RMS, peak, 6-band spectrum, centroid, pitch shift, inharmonicity, echo lag in ms, tail decay) for each modulation scenario.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        preset: PRESET_SCHEMA,
-        inputWavPath: localPath('Path to a dry input .wav (defaults to a built-in vocal phrase)'),
-        inputWavBase64: base64Wav('Optional dry input audio.'),
-        scenarios: {
-          type: 'array',
-          items: { enum: ['idle', 'handle_pushed', 'shake_burst', 'dynamic_performance'] },
-          uniqueItems: true,
-          description: 'Scenarios to simulate (default ["idle", "handle_pushed", "shake_burst"]).'
-        },
-        outputWavPath: localPath('Path to write the last rendered scenario as .wav')
-      },
-      required: ['preset']
-    },
-    pathArgs: ['inputWavPath', 'outputWavPath'],
-    pure: true
-  },
-  {
-    name: 'analyze_reference_audio',
-    title: 'Analyze reference audio',
-    description:
-      'Extract an acoustic fingerprint from a reference .wav (6-band spectrum, pitch ratio, SSB/RING inharmonicity, DELAY echo lag, REVERB tail, DIST crest factor) and infer candidate EP-2350 effects.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        referenceWavPath: localPath('Path to the reference .wav'),
-        referenceWavBase64: base64Wav('Reference audio.'),
-        dryWavPath: localPath('Path to the dry unprocessed .wav for relative pitch/echo comparison'),
-        dryWavBase64: base64Wav('Optional dry unprocessed audio.')
-      }
-    },
-    pathArgs: ['referenceWavPath', 'dryWavPath'],
-    pure: true
-  },
-  {
-    name: 'optimize_preset_parameters',
-    title: 'Match reference audio',
-    description:
-      'Discover and/or tune an EP-2350 effect chain to match a reference .wav using multi-resolution STFT spectral + temporal envelope loss.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        referenceWavPath: localPath('Path to the target reference .wav'),
-        referenceWavBase64: base64Wav('Target reference audio.'),
-        dryWavPath: localPath('Path to the dry input .wav (defaults to a built-in vocal phrase)'),
-        dryWavBase64: base64Wav('Optional dry input audio.'),
-        candidatePreset: {
-          ...PRESET_REF_SCHEMA,
-          description:
-            'Optional starting chain to tune. If omitted, candidate topologies are inferred and screened automatically.'
-        },
-        maxIterations: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 200,
-          description: 'Maximum render iterations (default 48 locally, 12 on the hosted edge; edge cap 24).'
-        },
-        outputWavPath: localPath('Path to save the best-matching render as .wav'),
-        uiUrl: uiUrlSchema
-      }
-    },
-    pathArgs: ['referenceWavPath', 'dryWavPath', 'outputWavPath'],
     pure: true
   },
   {

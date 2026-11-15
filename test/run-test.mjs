@@ -29,10 +29,7 @@ function buildSourceModulesForTest() {
     'src/utils/wavCodec.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
-    'src/dsp/AudioEngine.ts',
-    'src/dsp/offlineRenderer.ts',
-    'src/dsp/analyzer.ts',
-    'src/dsp/optimizer.ts'
+    'src/dsp/AudioEngine.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -117,13 +114,6 @@ const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/wavCodec.mjs')).href
 );
-const { BiquadFilterKernel, renderPresetOffline } = await import(
-  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/offlineRenderer.mjs')).href
-);
-const { analyzePcmAudio, computeAudioDistance, estimateFundamentalPitchHz, fftRadix2 } = await import(
-  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/analyzer.mjs')).href
-);
-const { optimizePresetParameters, matchReferenceAudio } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/optimizer.mjs')).href);
 const { handleMcpJsonRpcRequest } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
 );
@@ -977,43 +967,6 @@ assert.ok(
   'REVERB combSum.gain must apply 0.5 attenuation matching offlineRenderer to prevent comb buildup'
 );
 
-// Verify DELAY (echo: 80%) and REVERB (time: 0.8) decay rather than growing unboundedly across loops
-{
-  const sr = 48000;
-  const totalSamples = sr * 4;
-  const pulseInput = new Float32Array(totalSamples);
-  for (let i = 0; i < sr; i++) {
-    pulseInput[i] = 0.25 * Math.sin((2 * Math.PI * 330 * i) / sr);
-  }
-  const delayDecayPreset = {
-    id: 'delay-decay-test',
-    pos: 0,
-    name: 'DELAY DECAY',
-    comment: '',
-    list: [
-      { id: 'fx0', effect: 'DELAY', time: 0.25, echo: 80, 'wet-level': 100, 'dry-level': 0, balance: 0, BUS: 1 },
-      { id: 'fx1', effect: 'REVERB', time: 0.8, 'spring-mix': 50, 'highpass-cutoff': 10, 'wet-level': 60, 'dry-level': 0, BUS: 1 }
-    ]
-  };
-  const rendered = renderPresetOffline(
-    delayDecayPreset,
-    { left: pulseInput, right: pulseInput.slice(), sampleRate: sr },
-    { handlePos: 0, shakeAmount: 0 }
-  );
-  const rmsWindow = (buf, start, len) => {
-    let sum = 0;
-    for (let i = start; i < start + len; i++) sum += buf[i] * buf[i];
-    return Math.sqrt(sum / len);
-  };
-  const earlyRms = rmsWindow(rendered.left, sr * 1, sr / 2);
-  const lateRms = rmsWindow(rendered.left, Math.floor(sr * 3.5), sr / 2);
-  assert.ok(earlyRms > 1e-4, 'DELAY/REVERB tail must have audible energy after initial signal');
-  assert.ok(
-    lateRms < earlyRms * 0.5,
-    `DELAY (80% echo) + REVERB must decay monotonically instead of growing (early=${earlyRms.toFixed(5)}, late=${lateRms.toFixed(5)})`
-  );
-}
-
 // Verify Handle & Shake modulation on DIST.amount and RING.mix
 engine.updateModulation({ handlePos: 1.0, shakeAmount: 0.5 });
 assert.strictEqual(distNode.nodeRefs.lastAmount, 40, 'Handle modulation on DIST.amount must clamp at 40x');
@@ -1481,239 +1434,9 @@ assert.ok(decodedAlert.left.length > 1000, 'Bundled alert.wav must decode to non
 console.log('✓ Suite 10: Pure-TS WAV Codec round-trip & bundled hardware sample decoding verified');
 
 // ============================================================================
-// SUITE 11: Headless Offline DSP Renderer (src/dsp/offlineRenderer.ts)
+// SUITE 11: MCP Server JSON-RPC 2.0 Tools, Resources & Prompts (mcp/server.mjs)
 // ============================================================================
-const dryPhrase = generateSyntheticVocalPcm(48000, 1.0, 0.6);
-
-function computeBandDftEnergy(sig, sr, fStart, fEnd, stepHz = 80) {
-  const len = Math.min(8192, sig.length);
-  let energy = 0;
-  for (let f = fStart; f <= fEnd; f += stepHz) {
-    let re = 0;
-    let im = 0;
-    for (let n = 0; n < len; n += 2) {
-      const ang = (2 * Math.PI * f * n) / sr;
-      re += sig[n] * Math.cos(ang);
-      im -= sig[n] * Math.sin(ang);
-    }
-    energy += re * re + im * im;
-  }
-  return energy;
-}
-
-function computeTailRms(sig, startFraction = 0.72) {
-  const start = Math.floor(sig.length * startFraction);
-  let sumSq = 0;
-  for (let i = start; i < sig.length; i++) sumSq += sig[i] * sig[i];
-  return Math.sqrt(sumSq / Math.max(1, sig.length - start));
-}
-
-const dryHighBand = computeBandDftEnergy(dryPhrase.left, 48000, 1800, 6000);
-const dryLowBand = computeBandDftEnergy(dryPhrase.left, 48000, 100, 450, 25);
-const dryTailRms = computeTailRms(dryPhrase.left);
-
-// 11a. LOWPASS filter attenuates high-band energy
-const lpRendered = renderPresetOffline(
-  {
-    id: 'p-lp',
-    pos: 0,
-    name: 'LP TEST',
-    list: [
-      { id: '1', effect: 'LOWPASS', cutoff: 0.25 },
-      { id: '2', effect: 'SAMPLE' }
-    ]
-  },
-  dryPhrase
-);
-const lpHighBand = computeBandDftEnergy(lpRendered.left, 48000, 1800, 6000);
-assert.ok(lpHighBand < dryHighBand * 0.15, 'LOWPASS cutoff=0.25 must strongly attenuate 1.8kHz-6kHz band');
-
-// 11b. HIGHPASS filter attenuates low-band energy
-const hpRendered = renderPresetOffline(
-  {
-    id: 'p-hp',
-    pos: 0,
-    name: 'HP TEST',
-    list: [
-      { id: '1', effect: 'HIGHPASS', cutoff: 0.55 },
-      { id: '2', effect: 'SAMPLE' }
-    ]
-  },
-  dryPhrase
-);
-const hpLowBand = computeBandDftEnergy(hpRendered.left, 48000, 100, 450, 25);
-assert.ok(hpLowBand < dryLowBand * 0.1, 'HIGHPASS cutoff=0.55 must strongly attenuate 100Hz-450Hz band');
-
-// 11c. DELAY creates audible tail energy in the trailing silence window
-const delayRendered = renderPresetOffline(
-  {
-    id: 'p-del',
-    pos: 0,
-    name: 'DELAY TEST',
-    list: [
-      {
-        id: '1',
-        effect: 'DELAY',
-        time: 0.35,
-        echo: 65,
-        'wet-level': 75,
-        'dry-level': 90,
-        'lowpass-cutoff': 85,
-        'highpass-cutoff': 10,
-        balance: 0.5
-      },
-      { id: '2', effect: 'SAMPLE' }
-    ]
-  },
-  dryPhrase
-);
-const delayTailRms = computeTailRms(delayRendered.left);
-assert.ok(delayTailRms > dryTailRms + 0.015, 'DELAY must produce sustained echo energy in trailing window');
-
-// 11d. HARMONY shifts fundamental pitch while preserving duration
-const harmRendered = renderPresetOffline(
-  {
-    id: 'p-harm',
-    pos: 0,
-    name: 'HARMONY TEST',
-    list: [
-      { id: '1', effect: 'HARMONY', pitch: 1.5, 'dry-level': 0 },
-      { id: '2', effect: 'SAMPLE' }
-    ]
-  },
-  dryPhrase
-);
-const dryF0 = estimateFundamentalHz(dryPhrase.left.subarray(0, 48000), 48000);
-const harmF0 = estimateFundamentalHz(harmRendered.left.subarray(0, 48000), 48000);
-assert.ok(Math.abs(harmF0 / dryF0 - 1.5) < 0.2, `HARMONY 1.5x must shift f0 ratio to ~1.5x (got ${(harmF0 / dryF0).toFixed(2)}x)`);
-
-// 11e. Parallel Bus (BUS 1 + BUS 2), DIST, EQUALISER, REVERB, RING, SSB, BALANCE & Handle/Shake Modulation
-const multiBusPreset = {
-  id: 'p-multibus',
-  pos: 0,
-  name: 'MULTIBUS TEST',
-  list: [
-    { id: '0', effect: 'SAMPLE', speed: 1.0, pitch: 0, level: 50, balance: 0.5, BUS: 1 },
-    { id: '1', effect: 'DIST', amount: 15, mix: 70, 'lowpass-cutoff': 80, 'highpass-cutoff': 20, BUS: 1 },
-    { id: '2', effect: 'EQUALISER', CUTOFF: 0.6, Q: 0.7, GAIN: 0.5, BUS: 1 },
-    { id: '3', effect: 'LOWPASS', cutoff: 0.2, BUS: 1 },
-    { id: '4', effect: 'BALANCE', balance: 0.8, BUS: 1 },
-    { id: '5', effect: 'SSB', frequency: 180, BUS: 2 },
-    { id: '6', effect: 'RING', frequency: 300, mix: 25, BUS: 2 },
-    { id: '7', effect: 'REVERB', time: 0.7, 'spring-mix': 60, 'highpass-cutoff': 20, 'wet-level': 25, 'dry-level': 0, BUS: 2 }
-  ],
-  handle: { row: 3, param: 'cutoff', depth: 75 },
-  shake: { row: 7, param: 'spring-mix', depth: 40 },
-  lfo: { row: 4, param: 'balance', shape: 'square', speed: 4.0, depth: 50 }
-};
-const idleBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
-  scenario: 'idle',
-  triggerSamplePcm: decodedAlert
-});
-const pushedBusOut = renderPresetOffline(multiBusPreset, dryPhrase, {
-  scenario: 'handle_pushed',
-  triggerSamplePcm: decodedAlert
-});
-const idleHighEnergy = computeBandDftEnergy(idleBusOut.right, 48000, 1500, 5000);
-const pushedHighEnergy = computeBandDftEnergy(pushedBusOut.right, 48000, 1500, 5000);
-assert.ok(
-  pushedHighEnergy > idleHighEnergy * 2.0,
-  'Pushing handle mapped to LOWPASS.cutoff (+75%) must increase high-band energy >2x'
-);
-console.log('✓ Suite 11: Headless Offline DSP Renderer verified across all 11 effects, parallel buses & modulations');
-
-// ============================================================================
-// SUITE 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matching
-// ============================================================================
-const mysteryTargetPreset = {
-  id: 'target-dub',
-  pos: 0,
-  name: 'TARGET RADIO ECHO',
-  list: [
-    { id: 't1', effect: 'HIGHPASS', cutoff: 0.45 },
-    { id: 't2', effect: 'LOWPASS', cutoff: 0.45 },
-    {
-      id: 't3',
-      effect: 'DELAY',
-      time: 0.35,
-      echo: 60,
-      'wet-level': 65,
-      'dry-level': 90,
-      'lowpass-cutoff': 75,
-      'highpass-cutoff': 20,
-      balance: 0.5
-    },
-    { id: 't4', effect: 'SAMPLE' }
-  ]
-};
-const targetRefPcm = renderPresetOffline(mysteryTargetPreset, dryPhrase);
-const targetAnalysis = analyzePcmAudio(targetRefPcm, dryPhrase);
-assert.ok(
-  targetAnalysis.estimatedDelayMs !== null && Math.abs(targetAnalysis.estimatedDelayMs - 350) <= 25,
-  `Analyzer must detect ~350ms delay lag on mystery target (got ${targetAnalysis.estimatedDelayMs}ms)`
-);
-assert.ok(targetAnalysis.inferredCues.length > 0, 'Analyzer must emit diagnostic effect cues');
-
-// Perturbed initial candidate (wrong cutoffs and wrong delay time)
-const perturbedCandidate = {
-  id: 'cand-dub',
-  pos: 0,
-  name: 'PERTURBED CANDIDATE',
-  list: [
-    { id: 'c1', effect: 'HIGHPASS', cutoff: 0.05 },
-    { id: 'c2', effect: 'LOWPASS', cutoff: 0.95 },
-    {
-      id: 'c3',
-      effect: 'DELAY',
-      time: 0.75,
-      echo: 20,
-      'wet-level': 20,
-      'dry-level': 100,
-      'lowpass-cutoff': 100,
-      'highpass-cutoff': 0,
-      balance: 0.5
-    },
-    { id: 'c4', effect: 'SAMPLE' }
-  ]
-};
-
-const optResult = optimizePresetParameters(perturbedCandidate, targetRefPcm, {
-  dryPcm: dryPhrase,
-  maxIterations: 36
-});
-assert.ok(
-  optResult.finalDistance.totalLoss < optResult.initialDistance.totalLoss,
-  `Optimizer must reduce audio distance (${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss})`
-);
-assert.ok(
-  optResult.finalDistance.similarityScore > optResult.initialDistance.similarityScore,
-  `Optimizer must improve similarity score (${optResult.initialDistance.similarityScore}% -> ${optResult.finalDistance.similarityScore}%)`
-);
-const optimizedDelay = optResult.optimizedPreset.list.find((fx) => fx.effect === 'DELAY');
-assert.ok(
-  Math.abs(optimizedDelay.time - 0.35) <= 0.04,
-  `Analytical + coordinate optimizer must recover DELAY.time near 0.35s (got ${optimizedDelay.time}s)`
-);
-
-// Blind topology discovery + optimization via matchReferenceAudio
-const blindMatch = matchReferenceAudio(targetRefPcm, {
-  dryPcm: dryPhrase,
-  maxIterations: 28
-});
-assert.ok(blindMatch.candidatesEvaluated >= 2);
-assert.ok(
-  blindMatch.finalDistance.similarityScore > 65,
-  `Blind reference match must achieve >65% similarity (got ${blindMatch.finalDistance.similarityScore}%)`
-);
-
-console.log(
-  `✓ Suite 12: Acoustic Analyzer, Parameter Optimizer & Reference Audio Matcher verified (loss ${optResult.initialDistance.totalLoss} -> ${optResult.finalDistance.totalLoss}, similarity ${optResult.finalDistance.similarityScore}%)`
-);
-
-// ============================================================================
-// SUITE 13: MCP Server JSON-RPC 2.0 Tools, Resources & Prompts (mcp/server.mjs)
-// ============================================================================
-// 13a. initialize
+// 11a. initialize
 const initRes = await handleMcpJsonRpcRequest({
   jsonrpc: '2.0',
   id: 1,
@@ -1722,7 +1445,7 @@ const initRes = await handleMcpJsonRpcRequest({
 });
 assert.strictEqual(initRes.result.serverInfo.name, 'ep2350-fx-mcp-server');
 
-// 13b. resources/list & resources/read
+// 11b. resources/list & resources/read
 const resList = await handleMcpJsonRpcRequest({
   jsonrpc: '2.0',
   id: 2,
@@ -1740,20 +1463,24 @@ const schemaJson = JSON.parse(schemaRead.result.contents[0].text);
 assert.strictEqual(schemaJson.maxEffectsPerPreset, 16);
 assert.strictEqual(schemaJson.effects.length, 11);
 
-// 13c. tools/list
+// 11c. tools/list
 const toolsList = await handleMcpJsonRpcRequest({
   jsonrpc: '2.0',
   id: 4,
   method: 'tools/list'
 });
-assert.strictEqual(toolsList.result.tools.length, 7, 'MCP server must expose 7 sound-design tools');
+assert.deepStrictEqual(
+  toolsList.result.tools.map((t) => t.name),
+  ['get_effects_reference', 'validate_preset', 'export_pack_config', 'push_to_live_ui'],
+  'MCP server exposes exactly the four preset tools: reference, validate, export, review'
+);
 assert.ok(
   !toolsList.result.tools.some((t) => t.name === 'design_preset_from_description'),
   'The keyword designer was removed: models write presets themselves'
 );
 assert.ok(toolsList.result.tools.some((t) => t.name === 'get_effects_reference'));
 
-// 13d. A hand-written preset (what a model writes after get_effects_reference) validates and simulates
+// 11d. A hand-written preset (what a model writes after get_effects_reference) validates
 const cyberWalkiePreset = {
   name: 'CYBER WALKIE',
   pos: 0,
@@ -1777,56 +1504,13 @@ assert.strictEqual(validateCall.result.isError, false);
 const validatePayload = validateCall.result.structuredContent;
 assert.strictEqual(validatePayload.isValid, true, 'Hand-written preset must have 0 hardware validation errors');
 assert.deepStrictEqual(validatePayload.warnings, [], 'Hand-written preset must lint clean');
-const simulateCall = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 51,
-  method: 'tools/call',
-  params: { name: 'simulate_preset', arguments: { preset: cyberWalkiePreset } }
-});
-const designPayload = { preset: cyberWalkiePreset, ...simulateCall.result.structuredContent };
-assert.ok(designPayload.scenarios.idle && designPayload.scenarios.handle_pushed && designPayload.scenarios.shake_burst);
-assert.ok(
-  Math.abs(designPayload.scenarios.idle.estimatedDelayMs - 350) <= 10,
-  'Simulation must measure the 350 ms delay of the hand-written preset'
-);
+const designPayload = { preset: cyberWalkiePreset, ...validatePayload };
+assert.ok(designPayload.shareUrl.includes('#preset='), 'validate_preset returns a shareUrl to review the preset');
 
-// 13e. tools/call -> analyze_reference_audio & optimize_preset_parameters on a temporary WAV file
-const tmpRefWavPath = path.join(TMP_TEST_BUILD, 'target_ref.wav');
-fs.writeFileSync(tmpRefWavPath, encodeWavBuffer(targetRefPcm));
-
-const analyzeCall = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 6,
-  method: 'tools/call',
-  params: {
-    name: 'analyze_reference_audio',
-    arguments: { referenceWavPath: tmpRefWavPath }
-  }
-});
-const analyzePayload = JSON.parse(analyzeCall.result.content[0].text);
-assert.ok(analyzePayload.analysis.inferredCues.length > 0, 'Reference analysis must produce diagnostic cues');
-
-const optCall = await handleMcpJsonRpcRequest({
-  jsonrpc: '2.0',
-  id: 7,
-  method: 'tools/call',
-  params: {
-    name: 'optimize_preset_parameters',
-    arguments: {
-      referenceWavPath: tmpRefWavPath,
-      candidatePreset: perturbedCandidate,
-      maxIterations: 24
-    }
-  }
-});
-const optPayload = JSON.parse(optCall.result.content[0].text);
-assert.ok(optPayload.finalDistance.similarityScore > optPayload.initialDistance.similarityScore);
-assert.ok(optPayload.hardwarePresetJson.list.length > 0);
-
-console.log('✓ Suite 13: MCP Server JSON-RPC 2.0 resources, prompts & tools verified');
+console.log('✓ Suite 11: MCP Server JSON-RPC 2.0 resources, prompts & tools verified');
 
 // ============================================================================
-// SUITE 14: Live Web UI Sync Bridge & Agent Skill Verification (M4)
+// SUITE 12: Live Web UI Sync Bridge & Agent Skill Verification (M4)
 // ============================================================================
 const viteConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
 const appMcpSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
@@ -1848,12 +1532,12 @@ assert.ok(
     skillMdSrc.includes('get_effects_reference'),
   'Antigravity SKILL.md must document the ep2350-sound-designer workflow and MCP tools'
 );
-console.log('✓ Suite 14: Live Web UI Sync Bridge & Antigravity Skill verified');
+console.log('✓ Suite 12: Live Web UI Sync Bridge & Antigravity Skill verified');
 
 // ============================================================================
-// SUITE 15: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl
+// SUITE 13: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl
 // ============================================================================
-// 15a. Base64URL Unicode & ASCII round-trip
+// 13a. Base64URL Unicode & ASCII round-trip
 const unicodeSample = 'DAFT VOCODER · EP–2350 {"mix":0.75}';
 assert.strictEqual(
   decodeBase64Url(encodeBase64Url(unicodeSample)),
@@ -1861,7 +1545,7 @@ assert.strictEqual(
   'encodeBase64Url / decodeBase64Url must round-trip UTF-8 strings losslessly'
 );
 
-// 15b. Single preset round-trip (both UI-scale 0..100 and hardware-scale 0.0..1.0)
+// 13b. Single preset round-trip (both UI-scale 0..100 and hardware-scale 0.0..1.0)
 const sharePresetUrl = buildPresetShareUrl(
   'https://ep2350.example.com/',
   designPayload.preset,
@@ -1882,7 +1566,7 @@ assert.strictEqual(
   'Decoded preset from URL hash must preserve all effects in chain'
 );
 
-// 15c. Full pack round-trip (#pack=<b64url>&slot=1)
+// 13c. Full pack round-trip (#pack=<b64url>&slot=1)
 const dubPackParsed = parseConfigJson(OFFICIAL_TE_PACKS[1].rawJson).pack;
 const sharePackUrl = buildPackShareUrl('https://ep2350.example.com', dubPackParsed, 1);
 assert.ok(sharePackUrl.includes('#pack=') && sharePackUrl.endsWith('&slot=1'));
@@ -1892,32 +1576,28 @@ assert.strictEqual(decodedPackPayload.slot, 1);
 assert.strictEqual(decodedPackPayload.pack.name, dubPackParsed.name);
 assert.strictEqual(decodedPackPayload.pack.presets.length, 4);
 
-// 15d. Malformed hash resilience
+// 13d. Malformed hash resilience
 assert.strictEqual(decodeHashPayload(''), null);
 assert.strictEqual(decodeHashPayload('#preset=!!!not_base64!!!'), null);
 assert.strictEqual(decodeHashPayload('#unknown=123'), null);
 
-// 15e. MCP tools return shareUrl and shareHash
+// 13e. MCP tools return shareUrl and shareHash
 assert.ok(
   typeof designPayload.shareUrl === 'string' && designPayload.shareUrl.includes('#preset='),
-  'simulate_preset must return shareUrl with #preset= deep-link'
-);
-assert.ok(
-  typeof optPayload.shareUrl === 'string' && optPayload.shareUrl.includes('#preset='),
-  'optimize_preset_parameters must return shareUrl with #preset= deep-link'
+  'validate_preset must return shareUrl with #preset= deep-link'
 );
 const decodedFromMcpShareUrl = decodeHashPayload(designPayload.shareUrl);
 assert.strictEqual(decodedFromMcpShareUrl.preset.name, 'CYBER WALKIE');
 
-// 15f. App.tsx integrates decodeHashPayload and hashchange listener
+// 13f. App.tsx integrates decodeHashPayload and hashchange listener
 assert.ok(
   appMcpSrc.includes('decodeHashPayload') && appMcpSrc.includes("addEventListener('hashchange'"),
   'App.tsx must decode #preset= / #pack= hashes on mount and hashchange'
 );
-console.log('✓ Suite 15: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl verified');
+console.log('✓ Suite 13: Stateless #preset=... & #pack=... Deep-Link Codec & MCP shareUrl verified');
 
 // ============================================================================
-// SUITE 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint
+// SUITE 14: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint
 // ============================================================================
 const wranglerConfig = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'wrangler.jsonc'), 'utf8'));
 assert.strictEqual(
@@ -1948,14 +1628,14 @@ assert.deepStrictEqual(
 const cfWorkerMod = await import(pathToFileURL(workerPath).href);
 const cfWorker = cfWorkerMod.default;
 
-// 16a. OPTIONS /mcp preflight CORS
+// 14a. OPTIONS /mcp preflight CORS
 const optRes = await cfWorker.fetch(
   new Request('https://ep2350-fx.pages.dev/mcp', { method: 'OPTIONS' })
 );
 assert.strictEqual(optRes.status, 204);
 assert.strictEqual(optRes.headers.get('Access-Control-Allow-Origin'), '*');
 
-// 16b. GET /mcp status summary
+// 14b. GET /mcp status summary
 const getRes = await cfWorker.fetch(
   new Request('https://ep2350-fx.pages.dev/mcp', { method: 'GET' })
 );
@@ -1964,7 +1644,7 @@ const getStatus = await getRes.json();
 assert.strictEqual(getStatus.name, 'ep2350-fx-mcp-server');
 assert.strictEqual(getStatus.endpoint, 'https://ep2350-fx.pages.dev/mcp');
 
-// 16c. POST /mcp -> tools/call (validate_preset) with same-origin shareUrl
+// 14c. POST /mcp -> tools/call (validate_preset) with same-origin shareUrl
 const daftVocoderPreset = {
   name: 'DAFT VOCODER',
   pos: 1,
@@ -1999,7 +1679,7 @@ const cfDecoded = decodeHashPayload(cfDesignOut.shareUrl);
 assert.strictEqual(cfDecoded.preset.name, 'DAFT VOCODER');
 assert.strictEqual(cfDecoded.slot, 1);
 
-// 16d. POST /mcp -> push_to_live_ui on remote Cloudflare edge returns shareUrl deliveryMode
+// 14d. POST /mcp -> push_to_live_ui on remote Cloudflare edge returns shareUrl deliveryMode
 const postPushRes = await cfWorker.fetch(
   new Request('https://ep2350-fx.pages.dev/mcp', {
     method: 'POST',
@@ -2024,7 +1704,7 @@ assert.strictEqual(cfPushOut.pushed, true);
 assert.strictEqual(cfPushOut.deliveryMode, 'shareUrl');
 assert.strictEqual(cfPushOut.shareUrl, cfDesignOut.shareUrl);
 
-// 16e. Static asset fallback via env.ASSETS.fetch
+// 14e. Static asset fallback via env.ASSETS.fetch
 const assetRes = await cfWorker.fetch(new Request('https://ep2350-fx.pages.dev/index.html'), {
   ASSETS: {
     fetch: async () => new Response('<html>EP-2350</html>', { status: 200 })
@@ -2033,10 +1713,10 @@ const assetRes = await cfWorker.fetch(new Request('https://ep2350-fx.pages.dev/i
 assert.strictEqual(assetRes.status, 200);
 assert.strictEqual(await assetRes.text(), '<html>EP-2350</html>');
 
-console.log('✓ Suite 16: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
+console.log('✓ Suite 14: Cloudflare Worker + Static Assets Streamable HTTP /mcp Endpoint verified');
 
 // ============================================================================
-// SUITE 17: MCP HTTP Transport Security (file access, Origin, Content-Type, SSRF)
+// SUITE 15: MCP HTTP Transport Security (file access, Origin, Content-Type, SSRF)
 // ============================================================================
 const { handleMcpHttpFetch: handleLocalMcpHttpFetch } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'mcp/server.mjs')).href
@@ -2054,7 +1734,7 @@ const exportCall = (outputPath) =>
     }
   });
 
-// 17a. Cross-site "simple" POST (text/plain, no preflight) is rejected before any tool runs
+// 15a. Cross-site "simple" POST (text/plain, no preflight) is rejected before any tool runs
 const plainRes = await handleLocalMcpHttpFetch(
   new Request('http://localhost:3000/mcp', {
     method: 'POST',
@@ -2065,7 +1745,7 @@ const plainRes = await handleLocalMcpHttpFetch(
 assert.strictEqual(plainRes.status, 415, 'POST /mcp without application/json must return 415');
 assert.ok(!fs.existsSync(secOutAbs), 'Rejected text/plain POST must not write any file');
 
-// 17b. Local file paths are never honoured over HTTP, even with a valid JSON request
+// 15b. Local file paths are never honoured over HTTP, even with a valid JSON request
 const httpWriteRes = await handleLocalMcpHttpFetch(
   new Request('http://localhost:3000/mcp', {
     method: 'POST',
@@ -2081,12 +1761,12 @@ assert.ok(
 );
 assert.ok(!fs.existsSync(secOutAbs), 'HTTP /mcp must never write to the local filesystem');
 
-// 17c. stdio transport keeps local file access
+// 15c. stdio transport keeps local file access
 const stdioWrite = await handleMcpJsonRpcRequest(JSON.parse(exportCall(secOutRel)));
 assert.strictEqual(stdioWrite.result.isError, false);
 assert.ok(fs.existsSync(secOutAbs), 'stdio export_pack_config must still write outputPath');
 
-// 17d. Foreign browser Origins are rejected; loopback Origins are allowed and echoed
+// 15d. Foreign browser Origins are rejected; loopback Origins are allowed and echoed
 const evilRes = await handleLocalMcpHttpFetch(
   new Request('http://localhost:3000/mcp', {
     method: 'POST',
@@ -2117,7 +1797,7 @@ assert.strictEqual(
   'Loopback Origin must be echoed instead of a wildcard'
 );
 
-// 17e. Oversized request bodies are rejected
+// 15e. Oversized request bodies are rejected
 const bigRes = await handleLocalMcpHttpFetch(
   new Request('http://localhost:3000/mcp', {
     method: 'POST',
@@ -2128,7 +1808,7 @@ const bigRes = await handleLocalMcpHttpFetch(
 );
 assert.strictEqual(bigRes.status, 413, 'Body above maxRequestBytes must return 413');
 
-// 17f. push_to_live_ui never fetches a caller-supplied non-loopback uiUrl (no SSRF)
+// 15f. push_to_live_ui never fetches a caller-supplied non-loopback uiUrl (no SSRF)
 const realFetch = globalThis.fetch;
 let outboundFetches = 0;
 globalThis.fetch = async (...fetchArgs) => {
@@ -2164,7 +1844,7 @@ try {
   globalThis.fetch = realFetch;
 }
 
-// 17g. Worker stays publicly callable from browser-based MCP clients
+// 15g. Worker stays publicly callable from browser-based MCP clients
 const cfCrossOrigin = await cfWorker.fetch(
   new Request('https://ep2350-fx.pages.dev/mcp', {
     method: 'POST',
@@ -2174,17 +1854,17 @@ const cfCrossOrigin = await cfWorker.fetch(
 );
 assert.strictEqual(cfCrossOrigin.status, 200);
 assert.strictEqual(cfCrossOrigin.headers.get('Access-Control-Allow-Origin'), '*');
-console.log('✓ Suite 17: MCP HTTP transport security (file access, Origin, Content-Type, SSRF) verified');
+console.log('✓ Suite 15: MCP HTTP transport security (file access, Origin, Content-Type, SSRF) verified');
 
 // ============================================================================
-// SUITE 18: MCP Protocol Compliance (version negotiation, errors, HTTP + stdio transport)
+// SUITE 16: MCP Protocol Compliance (version negotiation, errors, HTTP + stdio transport)
 // ============================================================================
 const { resolveAppVersion } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'scripts/app-version.mjs')).href
 );
 const rpc = (method, params, id = 300) => handleMcpJsonRpcRequest({ jsonrpc: '2.0', id, method, params });
 
-// 18a. Version negotiation + serverInfo
+// 16a. Version negotiation + serverInfo
 const initKnown = await rpc('initialize', { protocolVersion: '2025-06-18' });
 assert.strictEqual(initKnown.result.protocolVersion, '2025-06-18', 'Supported version must be echoed');
 const initUnknown = await rpc('initialize', { protocolVersion: '1999-01-01' });
@@ -2201,7 +1881,7 @@ assert.strictEqual(
 assert.strictEqual(initKnown.result.serverInfo.title, 'EP-2350 FX Tool');
 assert.ok(initKnown.result.instructions.includes('get_effects_reference'));
 
-// 18b. Notifications, client responses and malformed messages
+// 16b. Notifications, client responses and malformed messages
 assert.strictEqual(
   await handleMcpJsonRpcRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }),
   null,
@@ -2218,7 +1898,7 @@ assert.strictEqual(noJsonrpc.id, 301);
 const nullId = await handleMcpJsonRpcRequest({ jsonrpc: '2.0', id: null, method: 'ping' });
 assert.strictEqual(nullId.error.code, -32600, 'Null id must be rejected with -32600');
 
-// 18c. Spec error codes
+// 16c. Spec error codes
 assert.strictEqual((await rpc('tools/call', { name: 'no_such_tool' })).error.code, -32602);
 assert.strictEqual((await rpc('resources/read', { uri: 'ep2350://nope' })).error.code, -32002);
 assert.strictEqual(
@@ -2228,16 +1908,15 @@ assert.strictEqual(
 );
 assert.strictEqual((await rpc('no/such/method')).error.code, -32601);
 
-// 18d. A tool that throws returns isError (model-visible), not a protocol error
-const badWav = await rpc('tools/call', {
-  name: 'simulate_preset',
-  arguments: { preset: { list: [{ effect: 'SAMPLE' }] }, inputWavBase64: 'bm90IGEgd2F2' }
+// 16d. A tool that throws returns isError (model-visible), not a protocol error
+const badRow = await rpc('tools/call', {
+  name: 'validate_preset',
+  arguments: { preset: { list: [null] } }
 });
-assert.ok(badWav.result, 'Tool failure must be a result, not a JSON-RPC error');
-assert.strictEqual(badWav.result.isError, true);
-assert.ok(JSON.parse(badWav.result.content[0].text).error.startsWith('simulate_preset failed:'));
+assert.ok(badRow.result, 'Tool failure must be a result, not a JSON-RPC error');
+assert.strictEqual(badRow.result.isError, true);
 
-// 18e. Streamable HTTP transport rules
+// 16e. Streamable HTTP transport rules
 const mcpUrl = 'http://localhost:3000/mcp';
 const jsonHeaders = { 'Content-Type': 'application/json' };
 const sseGet = await handleLocalMcpHttpFetch(
@@ -2274,7 +1953,7 @@ const legacyBatch = await handleLocalMcpHttpFetch(
 assert.strictEqual(legacyBatch.status, 200, 'Batches stay allowed for 2025-03-26 (no header)');
 assert.strictEqual((await legacyBatch.json()).length, 2);
 
-// 18f. stdio transport: parse errors, batches and normal requests
+// 16f. stdio transport: parse errors, batches and normal requests
 const { spawn } = await import('node:child_process');
 const stdioLines = await new Promise((resolve, reject) => {
   const child = spawn(process.execPath, ['--no-warnings', path.join(ROOT_DIR, 'mcp/server.mjs')], {
@@ -2302,10 +1981,10 @@ const stdioLines = await new Promise((resolve, reject) => {
 assert.strictEqual(stdioLines[0].error.code, -32700, 'stdio invalid JSON must be -32700');
 assert.strictEqual(stdioLines[1].error.code, -32600, 'stdio batch must be -32600');
 assert.deepStrictEqual(stdioLines[2], { jsonrpc: '2.0', id: 2, result: {} });
-console.log('✓ Suite 18: MCP protocol compliance (version negotiation, error codes, HTTP + stdio) verified');
+console.log('✓ Suite 16: MCP protocol compliance (version negotiation, error codes, HTTP + stdio) verified');
 
 // ============================================================================
-// SUITE 19: Typed MCP Tool Schemas, Annotations & structuredContent
+// SUITE 17: Typed MCP Tool Schemas, Annotations & structuredContent
 // ============================================================================
 /** Minimal JSON Schema checker for the keywords our tool schemas use. Returns error paths. */
 function checkSchema(schema, value, at = '$') {
@@ -2352,21 +2031,21 @@ function checkSchema(schema, value, at = '$') {
 const PATH_ARG = /Path$/;
 const allPropNames = (tool) => Object.keys(tool.inputSchema.properties || {});
 
-// 19a. stdio tool list: titles, annotations, output schemas, path args present
+// 17a. stdio tool list: titles, annotations, output schemas, path args present
 const stdioTools = (await rpc('tools/list')).result.tools;
 const stdioByName = Object.fromEntries(stdioTools.map((t) => [t.name, t]));
-assert.strictEqual(stdioTools.length, 7);
+assert.strictEqual(stdioTools.length, 4);
 for (const t of stdioTools) {
   assert.ok(t.title && t.annotations && t.outputSchema, `${t.name} must have title, annotations, outputSchema`);
   assert.strictEqual(t.outputSchema.type, 'object', `${t.name} outputSchema must be an object schema`);
 }
-assert.ok(allPropNames(stdioByName.simulate_preset).includes('outputWavPath'));
+assert.ok(allPropNames(stdioByName.export_pack_config).includes('outputPath'));
 assert.strictEqual(stdioByName.validate_preset.annotations.readOnlyHint, true);
 assert.strictEqual(stdioByName.export_pack_config.annotations.destructiveHint, true);
 assert.strictEqual(stdioByName.push_to_live_ui.inputSchema.properties.slot.type, 'integer');
 assert.strictEqual(stdioByName.get_effects_reference.annotations.readOnlyHint, true);
 
-// 19b. HTTP tool lists hide path args; annotations reflect the transport
+// 17b. HTTP tool lists hide path args; annotations reflect the transport
 const httpToolsRes = await handleLocalMcpHttpFetch(
   new Request('http://localhost:3000/mcp', {
     method: 'POST',
@@ -2393,7 +2072,7 @@ const cfByName = Object.fromEntries(
 );
 assert.strictEqual(cfByName.push_to_live_ui.annotations.readOnlyHint, true, 'Edge push only returns a URL');
 
-// 19c. The preset schema accepts every official TE preset (editor scale) and they lint clean
+// 17c. The preset schema accepts every official TE preset (editor scale) and they lint clean
 const presetSchema = stdioByName.validate_preset.inputSchema.properties.preset;
 // Sanity: the checker itself must reject bad presets
 assert.ok(checkSchema(presetSchema, { list: [{ effect: 'LOWPASS', cutof: 50 }] }).length > 0);
@@ -2421,7 +2100,7 @@ for (const officialPack of OFFICIAL_TE_PACKS) {
 
 assert.strictEqual(officialPresetsChecked, 12, 'All 12 official presets must be schema-checked');
 
-// 19d. structuredContent matches the text block and the declared outputSchema
+// 17d. structuredContent matches the text block and the declared outputSchema
 const checkStructured = (toolName, res) => {
   assert.strictEqual(res.result.isError, false, `${toolName} should succeed`);
   assert.deepStrictEqual(res.result.structuredContent, JSON.parse(res.result.content[0].text));
@@ -2441,25 +2120,9 @@ checkStructured(
   await rpc('tools/call', { name: 'validate_preset', arguments: { configJson: OFFICIAL_TE_PACKS[0].rawJson } })
 );
 checkStructured(
-  'simulate_preset',
-  await rpc('tools/call', { name: 'simulate_preset', arguments: { preset: sDesign.preset, scenarios: ['idle'] } })
-);
-checkStructured(
   'export_pack_config',
   await rpc('tools/call', { name: 'export_pack_config', arguments: { presets: [sDesign.preset] } })
 );
-const sOpt = checkStructured(
-  'optimize_preset_parameters',
-  await rpc('tools/call', {
-    name: 'optimize_preset_parameters',
-    arguments: {
-      referenceWavBase64: Buffer.from(encodeWavBuffer(targetRefPcm)).toString('base64'),
-      candidatePreset: perturbedCandidate,
-      maxIterations: 4
-    }
-  })
-);
-assert.deepStrictEqual(checkSchema(presetSchema, JSON.parse(JSON.stringify(sOpt.optimizedPreset))), []);
 const edgePush = await (
   await cfWorker.fetch(
     new Request('https://ep2350-fx.pages.dev/mcp', {
@@ -2476,12 +2139,12 @@ const edgePush = await (
 ).json();
 checkStructured('push_to_live_ui', edgePush);
 
-// 19e. Error results carry no structuredContent
+// 17e. Error results carry no structuredContent
 const errResult = await rpc('tools/call', { name: 'validate_preset', arguments: {} });
 assert.strictEqual(errResult.result.isError, true);
 assert.ok(!('structuredContent' in errResult.result), 'isError results must omit structuredContent');
 
-// 19f. Registry lint catches common model mistakes
+// 17f. Registry lint catches common model mistakes
 const lintOf = async (preset) =>
   JSON.parse(
     (await rpc('tools/call', { name: 'validate_preset', arguments: { preset } })).result.content[0].text
@@ -2503,7 +2166,7 @@ const badMod = await lintOf({
   handle: { row: 0, param: 'cutoff', depth: 50 }
 });
 assert.ok(badMod.some((m) => m.includes('has no parameter "cutoff"')), 'Mod param mismatch must warn');
-// 19g. get_effects_reference: full list, single effect, unknown effect
+// 17g. get_effects_reference: full list, single effect, unknown effect
 const fullRef = (await rpc('tools/call', { name: 'get_effects_reference', arguments: {} })).result.structuredContent;
 assert.strictEqual(fullRef.effects.length, 11);
 assert.ok(fullRef.rules.some((r) => r.includes('editor scale')), 'Reference must explain the editor scale');
@@ -2513,7 +2176,7 @@ assert.deepStrictEqual(ringRef.effects[0].params.find((p) => p.name === 'frequen
 const badRef = await rpc('tools/call', { name: 'get_effects_reference', arguments: { effect: 'FLANGER' } });
 assert.strictEqual(badRef.result.isError, true);
 
-// 19h. push_to_live_ui without a reachable dev server delivers the shareUrl and is not an error
+// 17h. push_to_live_ui without a reachable dev server delivers the shareUrl and is not an error
 const pushNoServer = await rpc('tools/call', {
   name: 'push_to_live_ui',
   arguments: { preset: cyberWalkiePreset, uiUrl: 'http://127.0.0.1:9' }
@@ -2523,10 +2186,10 @@ assert.strictEqual(pushNoServer.result.structuredContent.pushed, false);
 assert.strictEqual(pushNoServer.result.structuredContent.deliveryMode, 'shareUrl');
 assert.ok(pushNoServer.result.structuredContent.shareUrl.includes('#preset='));
 assert.deepStrictEqual(checkSchema(stdioByName.push_to_live_ui.outputSchema, pushNoServer.result.structuredContent), []);
-console.log('✓ Suite 19: Typed MCP tool schemas, annotations & structuredContent verified');
+console.log('✓ Suite 17: Typed MCP tool schemas, annotations & structuredContent verified');
 
 // ============================================================================
-// SUITE 20: Shared rolldown MCP bundle (stdio server + Cloudflare Worker)
+// SUITE 18: Shared rolldown MCP bundle (stdio server + Cloudflare Worker)
 // ============================================================================
 const { bundleMcp, MCP_CORE_ENTRY } = await import(
   pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-mcp.mjs')).href
@@ -2546,7 +2209,7 @@ const bundledCore = await import(pathToFileURL(bundleOut).href);
 assert.strictEqual(bundledCore.MCP_SERVER_VERSION, '9.9.9-test', 'Injected version must reach serverInfo');
 assert.strictEqual(
   bundledCore.MCP_TOOLS.length,
-  7,
+  4,
   'Bundled core must expose all tools (toolSchemas.ts followed via imports, no file list)'
 );
 const officialRead = await bundledCore.handleMcpCoreRequest({
@@ -2583,12 +2246,12 @@ for (const rel of ['mcp/server.mjs', 'scripts/build-cloudflare-worker.mjs']) {
     `${rel} must use scripts/bundle-mcp.mjs instead of a per-file compile list`
   );
 }
-console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare Worker) verified');
+console.log('✓ Suite 18: Shared rolldown MCP bundle (stdio server + Cloudflare Worker) verified');
 
 // ============================================================================
-// SUITE 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting
+// SUITE 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting
 // ============================================================================
-// 21a. Web Locks mode: primary acquires lock, duplicate blocks, closing primary unlocks duplicate
+// 19a. Web Locks mode: primary acquires lock, duplicate blocks, closing primary unlocks duplicate
 {
   const createMockLockManager = () => {
     const held = new Map();
@@ -2677,7 +2340,7 @@ console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare
   s2.cleanup();
 }
 
-// 21b. BroadcastChannel fallback mode when navigator.locks is unavailable
+// 19b. BroadcastChannel fallback mode when navigator.locks is unavailable
 {
   const channels = new Map();
   const createMockChannel = (name) => {
@@ -2733,7 +2396,7 @@ console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare
   g2.cleanup();
 }
 
-// 21c. Web Serial InvalidStateError ("already open") produces actionable multi-tab/browser error
+// 19c. Web Serial InvalidStateError ("already open") produces actionable multi-tab/browser error
 {
   const prevNav = globalThis.navigator;
   const fakePort = {
@@ -2767,7 +2430,7 @@ console.log('✓ Suite 20: Shared rolldown MCP bundle (stdio server + Cloudflare
   }
 }
 
-// 21d. Centered MultiTabBanner & App UI multi-tab guard wiring check
+// 19d. Centered MultiTabBanner & App UI multi-tab guard wiring check
 const multiTabBannerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/MultiTabBanner.tsx'), 'utf8');
 assert.ok(
   multiTabBannerSrc.includes('EP-2350 FX TOOL IS OPEN IN ANOTHER TAB OR BROWSER') &&
@@ -2783,86 +2446,10 @@ assert.ok(
     appSrc.includes('isMultiTabBlocked'),
   'App must wire createMultiTabGuard, dim/disable the app under MultiTabBanner, and gate serial/storage side effects'
 );
-console.log('✓ Suite 21: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
+console.log('✓ Suite 19: Multi-Tab Lock Guard & Web Serial Port-In-Use Reporting verified');
 
 // ============================================================================
-// SUITE 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder)
-// ============================================================================
-{
-  const simIdle = async (list) => {
-    const res = await handleMcpJsonRpcRequest({
-      jsonrpc: '2.0',
-      id: 600,
-      method: 'tools/call',
-      params: { name: 'simulate_preset', arguments: { preset: { list: [...list, { effect: 'SAMPLE' }] }, scenarios: ['idle'] } }
-    });
-    return res.result.structuredContent;
-  };
-  const rt60 = (t, fb) => (t * 60) / (-20 * Math.log10(fb / 100));
-
-  // No echo and no tail for effects without time-domain memory (the old analyzer reported a
-  // ~400 ms "DELAY" on all of these: the test phrase's syllable rhythm)
-  for (const [label, fx] of [
-    ['dry', []],
-    ['RING', [{ effect: 'RING', frequency: 400, mix: 100 }]],
-    ['LOWPASS', [{ effect: 'LOWPASS', cutoff: 30 }]],
-    ['DIST (DC offset after signal)', [{ effect: 'DIST', amount: 20, mix: 80 }]],
-    ['HARMONY', [{ effect: 'HARMONY', pitch: 0.6, 'dry-level': 30 }]],
-    ['SSB', [{ effect: 'SSB', frequency: 300 }]]
-  ]) {
-    const sim = await simIdle(fx);
-    const a = sim.scenarios.idle;
-    assert.strictEqual(a.estimatedDelayMs, null, `${label}: must not report an echo (got ${a.estimatedDelayMs} ms)`);
-    assert.strictEqual(a.estimatedTailDecaySec, 0, `${label}: must not report a tail (got ${a.estimatedTailDecaySec} s)`);
-    assert.ok(!a.inferredCues.some((c) => /DELAY|REVERB/.test(c)), `${label}: no DELAY/REVERB cue`);
-    assert.strictEqual(sim.dryBaseline.estimatedDelayMs, null, 'Dry baseline must not report an echo');
-  }
-
-  // Delay times are measured exactly and feedback decay matches theory (RT60 = t·60 / −20·log10(fb))
-  for (const [t, fb] of [[0.15, 20], [0.3, 60], [0.5, 40], [0.6, 10], [1.1, 20]]) {
-    const a = (await simIdle([{ effect: 'DELAY', time: t, echo: fb, 'wet-level': 50 }])).scenarios.idle;
-    assert.ok(Math.abs(a.estimatedDelayMs - t * 1000) <= 10, `DELAY ${t}s: echo at ${a.estimatedDelayMs} ms`);
-    const expected = rt60(t, fb);
-    assert.ok(
-      Math.abs(a.estimatedTailDecaySec - expected) <= Math.max(0.2, expected * 0.15),
-      `DELAY ${t}s fb${fb}: RT60 ${a.estimatedTailDecaySec}s vs theory ${expected.toFixed(2)}s`
-    );
-    assert.ok(a.inferredCues.some((c) => c.includes('indicates DELAY')), `DELAY ${t}s: DELAY cue`);
-  }
-  const noFeedback = (await simIdle([{ effect: 'DELAY', time: 0.25, echo: 0, 'wet-level': 60 }])).scenarios.idle;
-  assert.strictEqual(noFeedback.estimatedDelayMs, 250);
-  assert.strictEqual(noFeedback.estimatedTailDecaySec, 0, 'A single echo without feedback has no tail');
-  const longFeedback = (await simIdle([{ effect: 'DELAY', time: 0.9, echo: 60, 'wet-level': 50 }])).scenarios.idle;
-  assert.ok(longFeedback.tailDecayIsLowerBound && longFeedback.estimatedTailDecaySec === 10, 'RT60 beyond 10 s is a lower bound');
-
-  // Reverb: a tail but no discrete echo; combined delay + reverb finds both
-  const reverb = (await simIdle([{ effect: 'REVERB', time: 90, 'wet-level': 80 }])).scenarios.idle;
-  assert.strictEqual(reverb.estimatedDelayMs, null, 'REVERB must not be reported as a DELAY');
-  assert.ok(reverb.estimatedTailDecaySec >= 0.5 && reverb.estimatedTailDecaySec <= 3, `REVERB RT60 ${reverb.estimatedTailDecaySec}s`);
-  assert.ok(reverb.inferredCues.some((c) => c.includes('indicates REVERB')), 'REVERB cue');
-  const both = (
-    await simIdle([
-      { effect: 'DELAY', time: 0.5, echo: 50, 'wet-level': 50 },
-      { effect: 'REVERB', time: 60, 'wet-level': 50 }
-    ])
-  ).scenarios.idle;
-  assert.strictEqual(both.estimatedDelayMs, 500, 'DELAY+REVERB: echo at 500 ms');
-  assert.ok(both.estimatedTailDecaySec > 3, 'DELAY+REVERB: long tail');
-
-  // Phrase-based analysis (references): no echo or tail on an unprocessed phrase, even blind
-  const phrase = generateSyntheticVocalPcm(48000, 1.6, 0.8);
-  const dryRef = analyzePcmAudio(phrase, phrase);
-  assert.strictEqual(dryRef.estimatedDelayMs, null);
-  assert.strictEqual(dryRef.estimatedTailDecaySec, 0);
-  assert.strictEqual(dryRef.isBlindEstimate, false);
-  const blind = analyzePcmAudio(phrase);
-  assert.strictEqual(blind.isBlindEstimate, true);
-  assert.strictEqual(blind.estimatedTailDecaySec, 0, 'Blind analysis of a dry phrase has no tail');
-}
-console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + post-phrase Schroeder) verified');
-
-// ============================================================================
-// SUITE 23: Presets accepted in either scale (editor 0..100 or config.json 0..1)
+// SUITE 20: Presets accepted in either scale (editor 0..100 or config.json 0..1)
 // ============================================================================
 {
   const callTool = async (name, args) =>
@@ -2895,12 +2482,8 @@ console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + pos
   }
   assert.strictEqual(checked, 12);
 
-  // Simulation and export use the converted values (SPACE ECHO: 0.9 s delay, 60% feedback)
+  // Export uses the converted values (SPACE ECHO)
   const spaceEcho = packsDoc[1].config.presets[0];
-  const simSpace = await callTool('simulate_preset', { preset: spaceEcho, scenarios: ['idle'] });
-  assert.strictEqual(simSpace.inputScale, 'config');
-  assert.strictEqual(simSpace.scenarios.idle.estimatedDelayMs, 900);
-  assert.deepStrictEqual(simSpace.presetWarnings, []);
   const exported = await callTool('export_pack_config', { presets: [spaceEcho] });
   assert.deepStrictEqual(sortKeys(exported.configJson.presets[0].list), sortKeys(spaceEcho.list), 'Export keeps config values');
 
@@ -2913,6 +2496,6 @@ console.log('✓ Suite 22: Echo & tail measurement accuracy (impulse probe + pos
   assert.strictEqual(roundTrip.inputScale, 'config');
   assert.deepStrictEqual(roundTrip.normalizedPresetJson.list, fromEditor.normalizedPresetJson.list);
 }
-console.log('✓ Suite 23: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
+console.log('✓ Suite 20: Presets accepted in either scale (editor 0..100 or config.json 0..1) verified');
 
-console.log('\n=== ALL 23 PRODUCTION TEST SUITES PASSED (100%) ===');
+console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');
