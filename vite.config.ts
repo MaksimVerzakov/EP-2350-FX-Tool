@@ -14,31 +14,33 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 /**
- * Serves `./skill/*` dynamically in `vite dev` / Playwright tests so SKILL.md
- * and the downloadable skill zip behave identically to the production build.
+ * Serves the skill in `vite dev` / Playwright tests exactly as the production build publishes it:
+ * `./skill/*` (SKILL.md, zip), `./skill.md` (short link) and `./.well-known/agent-skills/*`
+ * (discovery index for `npx skills add`).
  */
 function serveDevSkillPlugin(appVersion: string): Plugin {
-  const skillCacheDir = path.resolve(process.cwd(), 'node_modules/.cache/ep2350-skill');
+  const siteCacheDir = path.resolve(process.cwd(), 'node_modules/.cache/ep2350-skill-site');
+  const isSkillPath = (p: string) => p === 'skill.md' || p.startsWith('skill/') || p.startsWith('.well-known/agent-skills/');
   return {
     name: 'ep2350-dev-skill',
     configureServer(server) {
-      server.middlewares.use('/skill', async (req, res, next) => {
+      server.middlewares.use(async (req, res, next) => {
         if (req.method !== 'GET' && req.method !== 'HEAD') {
           next();
           return;
         }
         try {
           const reqPath = (req.url || '/').split('?')[0];
-          const relPath = reqPath.replace(/^\/+/, '');
-          if (!relPath || relPath.includes('..')) {
+          const relPath = decodeURIComponent(reqPath).replace(/^\/+/, '');
+          if (!isSkillPath(relPath) || relPath.includes('..')) {
             next();
             return;
           }
           const host = req.headers.host || 'localhost:3000';
           const appUrl = `http://${host}`;
-          await buildSkill({ outDir: skillCacheDir, appUrl, version: appVersion });
-          const targetPath = path.resolve(skillCacheDir, relPath);
-          if (!targetPath.startsWith(skillCacheDir + path.sep) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
+          await buildSkill({ outDir: path.join(siteCacheDir, 'skill'), siteDir: siteCacheDir, appUrl, version: appVersion });
+          const targetPath = path.resolve(siteCacheDir, relPath);
+          if (!targetPath.startsWith(siteCacheDir + path.sep) || !fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
             next();
             return;
           }
