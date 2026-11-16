@@ -147,6 +147,19 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     const zipRes = await request.get('/skill/ep2350-sound-designer.zip');
     expect(zipRes.status()).toBe(200);
 
+    // One-link entry points: skill.md short link and the `npx skills add` discovery index
+    await expect(skillPanel.getByTestId('skill-short-url')).toContainText('/skill.md');
+    await expect(skillPanel.getByTestId('skill-install-cmd')).toContainText('npx skills add http');
+    const shortRes = await request.get('/skill.md');
+    expect(shortRes.status()).toBe(200);
+    expect(await shortRes.text()).toContain('name: ep2350-sound-designer');
+    const indexRes = await request.get('/.well-known/agent-skills/index.json');
+    expect(indexRes.status()).toBe(200);
+    const index = await indexRes.json();
+    expect(index.skills[0].name).toBe('ep2350-sound-designer');
+    const archiveRes = await request.get(`/.well-known/agent-skills/${index.skills[0].url}`);
+    expect(archiveRes.status()).toBe(200);
+
     // Switch back to FX CHAIN
     await fxChainBtn.click();
     await expect(skillPanel).toHaveCount(0);

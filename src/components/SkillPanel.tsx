@@ -30,8 +30,10 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
   const skillFolderRel = `./skill/${SKILL_NAME}`;
   const skillZipHref = `${skillFolderRel}.zip`;
   const skillMdHref = `${skillFolderRel}/SKILL.md`;
-  const skillZipUrl = `${appUrl}/skill/${SKILL_NAME}.zip`;
-  const skillMdUrl = `${appUrl}/skill/${SKILL_NAME}/SKILL.md`;
+  // One-link entry points published next to the app: skill.md to paste into any chat, and the
+  // .well-known/agent-skills/ discovery index that `npx skills add <app URL>` installs from.
+  const shortSkillUrl = `${appUrl}/skill.md`;
+  const installCmd = `npx skills add ${appUrl}`;
 
   const skillMarkdown = useMemo(
     () =>
@@ -66,9 +68,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
   const headingText = isTing ? 'text-[#00503a]' : 'text-[#141617]';
   const mutedText = isTing ? 'text-[#425c4e]' : 'text-[#5a6063]';
 
-  const claudeCliCmd = `mkdir -p ~/.claude/skills && curl -fsSL "${skillZipUrl}" -o /tmp/${SKILL_NAME}.zip && unzip -oq /tmp/${SKILL_NAME}.zip -d ~/.claude/skills/`;
-  const geminiCliCmd = `mkdir -p ~/.gemini/skills && curl -fsSL "${skillZipUrl}" -o /tmp/${SKILL_NAME}.zip && unzip -oq /tmp/${SKILL_NAME}.zip -d ~/.gemini/skills/`;
-  const chatGptPrompt = `Follow the attached EP-2350 Sound Designer SKILL.md (${skillMdUrl}) to write a valid config.json preset for: [describe desired vocal effect]. If Node.js is available, run "node scripts/ep2350.mjs validate config.json" and return the share link; otherwise follow the hand-check list and output config.json.`;
+  const chatPrompt = `Read ${shortSkillUrl} and follow it to design an EP-2350 preset: [describe the sound you want].`;
 
   const renderCopyBtn = (id: string, text: string, label = 'COPY') => {
     const isDone = copiedId === id;
@@ -194,9 +194,9 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
                 01 // LOAD SKILL
               </div>
               <p className={`font-mono text-[8.5px] leading-snug mt-0.5 ${mutedText}`}>
-                Give your AI <span className={`font-bold ${headingText}`}>SKILL.md</span> or the{' '}
-                <span className={`font-bold ${headingText}`}>.zip</span> bundle (contains effect
-                tables, official examples &amp; validator script).
+                Paste the <span className={`font-bold ${headingText}`}>skill.md</span> link into any chat, or
+                install it in agent tools with one{' '}
+                <span className={`font-bold ${headingText}`}>npx skills add</span> command.
               </p>
             </div>
 
@@ -224,22 +224,36 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
 
         {/* 3. SCROLLABLE SETUP BODY: CLAUDE · CHATGPT · GEMINI */}
         <div className={`flex-1 min-h-0 overflow-y-auto p-3.5 ${bodyBg} flex flex-col gap-2.5`}>
-          {/* Hosted SKILL.md URL strip */}
-          <div
-            className={`${cardBg} border ${borderInk} px-2.5 py-1.5 flex items-center justify-between gap-2`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider text-[#f15a22] shrink-0">
-                SKILL URL
-              </span>
-              <code
-                className={`font-mono text-[9px] px-1.5 py-0.5 truncate select-text ${codeBg}`}
-                title={skillMdUrl}
-              >
-                {skillMdUrl}
-              </code>
+          {/* One-link entry points: paste into any chat, or install into agent tools */}
+          <div className={`${cardBg} border ${borderInk} px-2.5 py-1.5 flex flex-col gap-1`}>
+            <div className="flex items-center justify-between gap-2" data-testid="skill-short-url">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[104px] font-mono text-[8.5px] font-bold uppercase tracking-wider text-[#f15a22] shrink-0">
+                  PASTE IN CHAT
+                </span>
+                <code
+                  className={`font-mono text-[9px] px-1.5 py-0.5 truncate select-text ${codeBg}`}
+                  title={shortSkillUrl}
+                >
+                  {shortSkillUrl}
+                </code>
+              </div>
+              {renderCopyBtn('short-url', shortSkillUrl, 'COPY LINK')}
             </div>
-            {renderCopyBtn('skill-url', skillMdUrl, 'COPY URL')}
+            <div className="flex items-center justify-between gap-2" data-testid="skill-install-cmd">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[104px] font-mono text-[8.5px] font-bold uppercase tracking-wider text-[#f15a22] shrink-0">
+                  INSTALL IN AGENTS
+                </span>
+                <code
+                  className={`font-mono text-[9px] px-1.5 py-0.5 truncate select-text ${codeBg}`}
+                  title={installCmd}
+                >
+                  {installCmd}
+                </code>
+              </div>
+              {renderCopyBtn('install-cmd', installCmd, 'COPY CMD')}
+            </div>
           </div>
 
           {/* 01 · CLAUDE */}
@@ -264,21 +278,19 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
                 and upload <code className={`px-1 ${codeBg}`}>ep2350-sound-designer.zip</code> as a custom skill.
               </p>
               <p>
-                <span className={`font-bold ${headingText}`}>CLAUDE CODE CLI:</span>{' '}
-                Unzip into <code className={`px-1 ${codeBg}`}>~/.claude/skills/</code> (global) or{' '}
-                <code className={`px-1 ${codeBg}`}>.claude/skills/</code> (repo) so{' '}
-                <code className={`px-1 ${codeBg}`}>ep2350-sound-designer/SKILL.md</code> is present.
+                <span className={`font-bold ${headingText}`}>CLAUDE CODE:</span>{' '}
+                Run the command below, or unzip into <code className={`px-1 ${codeBg}`}>~/.claude/skills/</code>.
               </p>
             </div>
 
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <code
                 className={`flex-1 min-w-0 font-mono text-[8.5px] px-2 py-1 truncate select-text border ${subtleBorder} ${codeBg}`}
-                title={claudeCliCmd}
+                title={installCmd}
               >
-                {claudeCliCmd}
+                {installCmd}
               </code>
-              {renderCopyBtn('claude-cmd', claudeCliCmd, 'COPY CMD')}
+              {renderCopyBtn('claude-cmd', installCmd, 'COPY CMD')}
             </div>
           </div>
 
@@ -298,28 +310,25 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
 
             <div className={`font-mono text-[9px] leading-relaxed ${mutedText} space-y-1`}>
               <p>
-                <span className={`font-bold ${headingText}`}>CHATGPT / PROJECTS / CUSTOM GPT:</span>{' '}
-                Upload <code className={`px-1 ${codeBg}`}>ep2350-sound-designer.zip</code> (or attach{' '}
-                <code className={`px-1 ${codeBg}`}>SKILL.md</code>) to a chat, Project, or Custom GPT{' '}
-                <span className={`font-bold ${headingText}`}>Knowledge</span> (enable{' '}
-                <span className={`font-bold ${headingText}`}>Code Interpreter</span> so it can run{' '}
-                <code className={`px-1 ${codeBg}`}>ep2350.mjs validate</code>).
+                <span className={`font-bold ${headingText}`}>CHATGPT:</span>{' '}
+                Paste the prompt below into a chat. For a reusable setup, upload{' '}
+                <code className={`px-1 ${codeBg}`}>ep2350-sound-designer.zip</code> under{' '}
+                <span className={`font-bold ${headingText}`}>Skills</span> or to a Project.
               </p>
               <p>
                 <span className={`font-bold ${headingText}`}>CODEX CLI:</span>{' '}
-                Unzip into <code className={`px-1 ${codeBg}`}>~/.codex/skills/</code> or{' '}
-                <code className={`px-1 ${codeBg}`}>.agents/skills/</code> in your workspace.
+                Run <code className={`px-1 ${codeBg}`}>{installCmd}</code>.
               </p>
             </div>
 
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <code
                 className={`flex-1 min-w-0 font-mono text-[8.5px] px-2 py-1 truncate select-text border ${subtleBorder} ${codeBg}`}
-                title={chatGptPrompt}
+                title={chatPrompt}
               >
-                {chatGptPrompt}
+                {chatPrompt}
               </code>
-              {renderCopyBtn('chatgpt-prompt', chatGptPrompt, 'COPY PROMPT')}
+              {renderCopyBtn('chatgpt-prompt', chatPrompt, 'COPY PROMPT')}
             </div>
           </div>
 
@@ -340,27 +349,23 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
             <div className={`font-mono text-[9px] leading-relaxed ${mutedText} space-y-1`}>
               <p>
                 <span className={`font-bold ${headingText}`}>GEMINI WEB / CUSTOM GEM:</span>{' '}
-                Open <span className={`font-bold ${headingText}`}>Gem Manager → New Gem</span> (or any chat),
-                click <span className={`font-bold ${headingText}`}>+ Add files</span>, attach{' '}
-                <code className={`px-1 ${codeBg}`}>SKILL.md</code> (from <span className={`font-bold ${headingText}`}>OPEN</span> or{' '}
-                <span className={`font-bold ${headingText}`}>.ZIP</span>), and ask Gemini to output validated{' '}
-                <code className={`px-1 ${codeBg}`}>config.json</code> presets.
+                Paste the <span className={`font-bold ${headingText}`}>skill.md</span> link into a chat, or
+                attach <code className={`px-1 ${codeBg}`}>SKILL.md</code> to a Gem for a reusable setup.
               </p>
               <p>
                 <span className={`font-bold ${headingText}`}>GEMINI CLI / ANTIGRAVITY:</span>{' '}
-                Unzip into <code className={`px-1 ${codeBg}`}>~/.gemini/skills/</code> or{' '}
-                <code className={`px-1 ${codeBg}`}>.agents/skills/</code> to enable automatically.
+                Run the command below, or unzip into <code className={`px-1 ${codeBg}`}>~/.gemini/skills/</code>.
               </p>
             </div>
 
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <code
                 className={`flex-1 min-w-0 font-mono text-[8.5px] px-2 py-1 truncate select-text border ${subtleBorder} ${codeBg}`}
-                title={geminiCliCmd}
+                title={installCmd}
               >
-                {geminiCliCmd}
+                {installCmd}
               </code>
-              {renderCopyBtn('gemini-cmd', geminiCliCmd, 'COPY CMD')}
+              {renderCopyBtn('gemini-cmd', installCmd, 'COPY CMD')}
             </div>
           </div>
         </div>
