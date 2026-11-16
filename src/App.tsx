@@ -477,7 +477,6 @@ export const App: React.FC = () => {
                 { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', isEdge: true, title: 'Connect the EP-2350 tool to your AI' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
-                const isTing = theme === 'ting';
                 return (
                   <button
                     key={tab.id}
@@ -486,9 +485,7 @@ export const App: React.FC = () => {
                     aria-pressed={isActive}
                     title={tab.title}
                     className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-te-xs font-bold tracking-normal uppercase cursor-pointer ${
-                      isTing
-                        ? 'bg-[#ece6d9] text-[#00503a]'
-                        : 'bg-[#e4e5e4] text-[#141617]'
+                      'bg-te-control text-te-ink'
                     } ${
                       isActive
                         ? 'te-dock-btn--pressed z-0'
@@ -498,10 +495,8 @@ export const App: React.FC = () => {
                     <span
                       className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
                         isActive
-                          ? 'bg-[#f15a22] border-[#141617]'
-                          : isTing
-                          ? 'bg-transparent border-[#5b695e]'
-                          : 'bg-transparent border-[#73787a]'
+                          ? 'bg-te-accent border-te-edge'
+                          : 'bg-transparent border-te-muted'
                       }`}
                     />
                     <span>{tab.label}</span>

@@ -2167,4 +2167,47 @@ console.log('✓ Suite 17: Remote MCP server (Streamable HTTP) and Cloudflare Wo
 }
 console.log('✓ Suite 18: Design system (type scale and font roles) verified');
 
-console.log('\n=== ALL 18 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 19: Design system: colour tokens
+// ============================================================================
+{
+  const tokensSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/theme/tokens.ts'), 'utf8');
+  const tokens = [...tokensSrc.matchAll(/^\s*'?([a-z-]+)'?: \{ ting: '(#[0-9a-f]{6})', fx: '(#[0-9a-f]{6})' \}/gm)].map((m) => ({ name: m[1], ting: m[2], fx: m[3] }));
+  assert.ok(tokens.length >= 20, `expected the colour token table in tokens.ts, found ${tokens.length}`);
+
+  // 19a. Teenage Engineering orange is the accent in both themes
+  const accent = tokens.find((t) => t.name === 'accent');
+  assert.ok(accent && accent.ting === '#f15a22' && accent.fx === '#f15a22', 'accent must be #f15a22 in both themes');
+
+  // 19b. CSS variables (both themes) and Tailwind colours match tokens.ts
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'src/styles/te-theme.css'), 'utf8');
+  const block = (selector) => {
+    // the theme selector appears more than once; the token block is the one that defines --te-*
+    for (let i = css.indexOf(selector + ' {'); i >= 0; i = css.indexOf(selector + ' {', i + 1)) {
+      const body = css.slice(i, css.indexOf('}', i));
+      if (body.includes('--te-')) return body;
+    }
+    assert.fail(`te-theme.css must have a ${selector} block with the --te-* tokens`);
+  };
+  const fxBlock = block(":root,\nhtml[data-theme='fx']");
+  const tingBlock = block("html[data-theme='ting']");
+  const channels = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(' ');
+  const twConfig = fs.readFileSync(path.join(ROOT_DIR, 'tailwind.config.js'), 'utf8');
+  for (const t of tokens) {
+    assert.ok(fxBlock.includes(`--te-${t.name}: ${channels(t.fx)};`), `FX theme must define --te-${t.name} as ${t.fx}`);
+    assert.ok(tingBlock.includes(`--te-${t.name}: ${channels(t.ting)};`), `TING theme must define --te-${t.name} as ${t.ting}`);
+    assert.ok(twConfig.includes(`'${t.name}': 'rgb(var(--te-${t.name}) / <alpha-value>)'`), `tailwind.config.js must map te-${t.name}`);
+  }
+
+  // 19c. UI components pick colours with tokens, not TING/FX ternaries over raw colours
+  // (MicDevice is a drawing of the hardware and keeps its own illustration colours)
+  const ternary = /isTing\s*\?\s*(['`])((?:(?!\1).)*?)\1\s*:\s*\1((?:(?!\1).)*?)\1/gs;
+  for (const name of ['App.tsx', 'components/PresetLedger.tsx', 'components/TopBanner.tsx', 'components/McpPanel.tsx', 'components/DeviceConnector.tsx', 'components/AudioPlayerCompact.tsx', 'components/MultiTabBanner.tsx']) {
+    const src = fs.readFileSync(path.join(ROOT_DIR, 'src', name), 'utf8');
+    const colourTernaries = [...src.matchAll(ternary)].filter((m) => /#[0-9a-fA-F]{6}/.test(m[2] + m[3])).map((m) => m[0].replace(/\s+/g, ' ').slice(0, 80));
+    assert.deepStrictEqual(colourTernaries, [], `${name} must use colour tokens instead of TING/FX ternaries`);
+  }
+}
+console.log('✓ Suite 19: Design system (colour tokens) verified');
+
+console.log('\n=== ALL 19 PRODUCTION TEST SUITES PASSED (100%) ===');

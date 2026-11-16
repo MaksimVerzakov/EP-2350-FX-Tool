@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import type { ThemeMode } from '../types/config';
 import { DEFAULT_MCP_URL } from '../utils/presetUrl';
+import { themeColor } from '../theme/tokens';
 
 interface McpPanelProps {
   theme?: ThemeMode;
@@ -51,22 +52,22 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
     }
   };
 
-  const headingText = isTing ? 'text-[#00503a]' : 'text-[#141617]';
-  const mutedText = isTing ? 'text-[#5b695e]' : 'text-[#73787a]';
+  const headingText = 'text-te-ink';
+  const mutedText = 'text-te-muted';
   const cardClass = `te-card-3d w-full border ${
-    isTing ? 'border-[#00503a] bg-[#f7f5ef]' : 'border-[#141617] bg-white'
+    'border-te-ink bg-te-surface'
   } p-3 flex flex-col gap-2 relative rounded-none`;
-  const cardHeaderBorder = isTing ? 'border-[#d8ceba]' : 'border-[#eceeed]';
+  const cardHeaderBorder = 'border-te-rule';
   const codeClass = `flex-1 min-w-0 h-[26px] px-2 flex items-center font-mono text-te-xs truncate select-text border ${
-    isTing ? 'bg-[#ece6d9] text-[#003828] border-[#00503a]/30' : 'bg-[#f8f9f8] text-[#141617] border-[#141617]/20'
+    'bg-te-field text-te-ink border-te-ink/25'
   }`;
   const actionClass = `te-btn-3d te-btn-3d--pressable te-btn-3d--dark shrink-0 h-[26px] w-[96px] flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer text-white ${
-    isTing ? 'bg-[#00503a] hover:bg-[#00664a]' : 'bg-[#141617] hover:bg-[#232628]'
+    'bg-te-ink hover:bg-te-ink-hover'
   }`;
 
   const cardHeader = (num: string, title: string) => (
     <div className={`flex items-center gap-2 border-b ${cardHeaderBorder} pb-1.5`}>
-      <span className="font-mono text-te-sm font-bold text-[#f15a22]">{num}.</span>
+      <span className="font-mono text-te-sm font-bold text-te-accent">{num}.</span>
       <span className={`font-te-bold text-te-md uppercase tracking-tight ${headingText}`}>{title}</span>
     </div>
   );
@@ -80,7 +81,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
         {/* 1. TOP HEADER TAB: same structure and size as the PresetLedger header */}
         <div
           className={`relative ${
-            isTing ? 'bg-[#00503a] border-b border-[#00281c]' : 'bg-[#f15a22] border-b border-[#141617]'
+            'bg-te-header border-b'
           } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0`}
           data-testid="mcp-header"
         >
@@ -88,8 +89,8 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
             <svg className="w-full h-full" viewBox="0 0 12 40" preserveAspectRatio="none">
               <polygon
                 points="0,0 12,12 12,40 0,40"
-                fill={isTing ? '#003828' : '#d14612'}
-                stroke={isTing ? '#00281c' : '#141617'}
+                fill={themeColor('header-deep', isTing)}
+                stroke={themeColor('ink-deep', isTing)}
                 strokeWidth="1"
               />
             </svg>
@@ -102,7 +103,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
         </div>
 
         {/* 2. BODY: same canvas as the FX chain */}
-        <div className={`flex-1 min-h-0 sm:overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
+        <div className={`flex-1 min-h-0 sm:overflow-y-auto p-3 ${'bg-te-canvas'} flex flex-col gap-3`}>
           <section className={cardClass} data-testid="mcp-how-it-works">
             {cardHeader('01', 'HOW IT WORKS')}
             <ol className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
@@ -110,7 +111,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
                 <li key={title} className="flex items-start gap-2">
                   <span
                     className={`te-btn-3d shrink-0 w-[22px] h-[22px] flex items-center justify-center font-mono text-te-xs font-bold ${
-                      isTing ? 'bg-[#ece6d9] text-[#00503a]' : 'bg-[#e4e5e4] text-[#141617]'
+                      'bg-te-control text-te-ink'
                     }`}
                   >
                     {i + 1}

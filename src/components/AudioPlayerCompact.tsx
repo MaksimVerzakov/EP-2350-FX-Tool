@@ -8,8 +8,7 @@ interface AudioPlayerCompactProps {
   className?: string;
 }
 
-export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 'fx', className = '' }) => {
-  const isTing = theme === 'ting';
+export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ className = '' }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>(() => audioEngine.getInputMode());
 
@@ -57,9 +56,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           aria-pressed={inputMode === 'sample'}
           title="Use built-in vocal speech loop"
           className={`te-btn-3d h-[26px] w-[51px] px-[5px] flex items-center gap-[3px] font-mono text-te-xs font-bold tracking-normal uppercase cursor-pointer ${
-            isTing
-              ? 'bg-[#ece6d9] text-[#00503a]'
-              : 'bg-[#e4e5e4] text-[#141617]'
+            'bg-te-control text-te-ink'
           } ${
             inputMode === 'sample'
               ? 'te-btn-3d--pressed z-0'
@@ -69,10 +66,8 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           <span
             className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
               inputMode === 'sample'
-                ? 'bg-[#f15a22] border-[#141617]'
-                : isTing
-                ? 'bg-transparent border-[#5b695e]'
-                : 'bg-transparent border-[#73787a]'
+                ? 'bg-te-accent border-te-edge'
+                : 'bg-transparent border-te-muted'
             }`}
           />
           <span>SAMPLE</span>
@@ -83,9 +78,7 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           aria-pressed={inputMode === 'mic'}
           title="Use live microphone input"
           className={`te-btn-3d h-[26px] w-[50px] px-[5px] flex items-center justify-center gap-[3px] font-mono text-te-xs font-bold tracking-normal uppercase cursor-pointer ${
-            isTing
-              ? 'bg-[#ece6d9] text-[#00503a]'
-              : 'bg-[#e4e5e4] text-[#141617]'
+            'bg-te-control text-te-ink'
           } ${
             inputMode === 'mic'
               ? 'te-btn-3d--pressed z-0'
@@ -95,10 +88,8 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
           <span
             className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
               inputMode === 'mic'
-                ? 'bg-[#f15a22] border-[#141617]'
-                : isTing
-                ? 'bg-transparent border-[#5b695e]'
-                : 'bg-transparent border-[#73787a]'
+                ? 'bg-te-accent border-te-edge'
+                : 'bg-transparent border-te-muted'
             }`}
           />
           <span>MIC</span>
@@ -119,11 +110,9 @@ export const AudioPlayerCompact: React.FC<AudioPlayerCompactProps> = ({ theme = 
         }
         className={`te-btn-3d te-btn-3d--pressable h-[26px] w-[76px] flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer ${
           isPlaying
-            ? 'te-btn-3d--orange te-btn-3d--pressed bg-[#f15a22] text-white'
+            ? 'te-btn-3d--orange te-btn-3d--pressed bg-te-accent text-white'
             : `te-btn-3d--dark ${
-                isTing
-                  ? 'bg-[#00503a] hover:bg-[#00664a]'
-                  : 'bg-[#141617] hover:bg-[#232628]'
+                'bg-te-ink hover:bg-te-ink-hover'
               } text-white`
         }`}
       >

@@ -20,6 +20,34 @@ export default {
        *   te-md 12px    card titles, empty-state titles
        *   te-lg 14px    page-level messages
        */
+      /** Colour tokens: classes like bg-te-ink, text-te-muted, border-te-rule (see src/theme/tokens.ts). */
+      colors: {
+        te: {
+          'accent': 'rgb(var(--te-accent) / <alpha-value>)',
+          'accent-hover': 'rgb(var(--te-accent-hover) / <alpha-value>)',
+          'accent-deep': 'rgb(var(--te-accent-deep) / <alpha-value>)',
+          'edge': 'rgb(var(--te-edge) / <alpha-value>)',
+          'ink': 'rgb(var(--te-ink) / <alpha-value>)',
+          'ink-deep': 'rgb(var(--te-ink-deep) / <alpha-value>)',
+          'ink-hover': 'rgb(var(--te-ink-hover) / <alpha-value>)',
+          'ink-raised': 'rgb(var(--te-ink-raised) / <alpha-value>)',
+          'muted': 'rgb(var(--te-muted) / <alpha-value>)',
+          'header': 'rgb(var(--te-header) / <alpha-value>)',
+          'header-deep': 'rgb(var(--te-header-deep) / <alpha-value>)',
+          'surface': 'rgb(var(--te-surface) / <alpha-value>)',
+          'canvas': 'rgb(var(--te-canvas) / <alpha-value>)',
+          'strip': 'rgb(var(--te-strip) / <alpha-value>)',
+          'face': 'rgb(var(--te-face) / <alpha-value>)',
+          'face-hover': 'rgb(var(--te-face-hover) / <alpha-value>)',
+          'control': 'rgb(var(--te-control) / <alpha-value>)',
+          'bevel': 'rgb(var(--te-bevel) / <alpha-value>)',
+          'field': 'rgb(var(--te-field) / <alpha-value>)',
+          'rule': 'rgb(var(--te-rule) / <alpha-value>)',
+          'line': 'rgb(var(--te-line) / <alpha-value>)',
+          'line-strong': 'rgb(var(--te-line-strong) / <alpha-value>)',
+          'page': 'rgb(var(--te-page) / <alpha-value>)'
+        },
+      },
       fontSize: {
         'te-xs': '9px',
         'te-sm': '10.5px',
