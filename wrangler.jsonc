@@ -4,7 +4,7 @@
   // Built by `npm run build` (scripts/build-worker.mjs from src/mcp/worker.ts).
   "main": "dist/_worker.js",
   "compatibility_date": "2025-03-01",
-  // The web app and skill are static assets; only /mcp runs the Worker.
+  // The web app is static assets; only /mcp runs the Worker.
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

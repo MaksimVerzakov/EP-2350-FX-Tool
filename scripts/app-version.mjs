@@ -1,5 +1,5 @@
 /**
- * Resolves the app version shared by the web UI and the sound designer skill:
+ * Resolves the app version shared by the web UI and the MCP server:
  * `APP_VERSION` env (set by CI) → latest `vX.Y.Z` git tag → package.json version.
  */
 import fs from 'node:fs';

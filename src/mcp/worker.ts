@@ -1,7 +1,7 @@
 import { MCP_PATH, handleMcpRequest } from './mcpServer';
 
 /**
- * Cloudflare Worker: serves the built web app and skill (dist/) as static assets and answers the
+ * Cloudflare Worker: serves the built web app (dist/) as static assets and answers the
  * MCP endpoint at /mcp on the same domain. Share links point back at this domain unless
  * EP2350_UI_URL is set.
  */

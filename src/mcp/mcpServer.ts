@@ -1,16 +1,16 @@
 import brokenRadioRaw from '../../packs/ep-2350_preset_pack-broken_radio/config.json?raw';
 import dubPackRaw from '../../packs/ep-2350_preset_pack-dub/config.json?raw';
 import mysteriousPackRaw from '../../packs/ep-2350_preset_pack-mysterious/config.json?raw';
-import { SKILL_NAME, renderSkillMarkdown } from '../skill/skillDoc';
-import { TOOLS_VERSION } from '../skill/presetTools';
-import { formatResult, validateText } from '../skill/validateText';
+import { renderFormatGuide } from './formatGuide';
+import { TOOLS_VERSION } from '../validation/presetTools';
+import { formatResult, validateText } from '../validation/validateText';
 
 /**
  * Remote MCP server for the EP-2350 sound designer (Streamable HTTP, stateless, JSON responses).
  *
- * It gives any MCP client (Claude, ChatGPT, Gemini CLI, Cursor, ...) the same three things the
- * skill does, with nothing to install and no code execution needed on the client side:
- *   get_format_guide  the config.json format and every effect's parameters (SKILL.md)
+ * It gives any MCP client (Claude, ChatGPT, Gemini CLI, Cursor, ...) three tools, with nothing to
+ * install and no code execution needed on the client side:
+ *   get_format_guide  the config.json format and every effect's parameters (src/mcp/formatGuide.ts)
  *   validate_pack     checks a pack and returns errors with fixes, a summary and the share link
  *   get_example_pack  the official Teenage Engineering packs as starting points
  *
@@ -103,16 +103,8 @@ const text = (t: string) => ({ type: 'text', text: t });
 
 function callTool(name: string, args: Record<string, any>, opts: McpOptions): Record<string, any> {
   switch (name) {
-    case 'get_format_guide': {
-      const guide = renderSkillMarkdown({
-        appUrl: opts.appUrl,
-        skillUrl: `${opts.appUrl}/skill/${SKILL_NAME}`,
-        version: TOOLS_VERSION
-      }).replace(/^---\n[\s\S]*?\n---\n+/, '');
-      const note =
-        'You are connected to the EP-2350 MCP server: use the validate_pack tool wherever this guide says to run the validator script, and get_example_pack for the examples.\n\n';
-      return { content: [text(note + guide)] };
-    }
+    case 'get_format_guide':
+      return { content: [text(renderFormatGuide({ appUrl: opts.appUrl, version: TOOLS_VERSION }))] };
     case 'validate_pack': {
       const config = args.config;
       if (config === undefined || config === null || (typeof config !== 'string' && typeof config !== 'object')) {
