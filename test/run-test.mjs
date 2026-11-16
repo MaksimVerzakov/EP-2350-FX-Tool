@@ -2088,12 +2088,12 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
   assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx has no MCP live-push bridge');
 
-  // 16f. UI exposes the FX CHAIN / SKILL.MD switch and setup guide for Claude, ChatGPT, and Gemini
-  assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes('SKILL.MD'), 'App.tsx must provide the FX CHAIN | SKILL.MD switch');
-  assert.ok(appSrc.includes('SkillPanel'), 'App.tsx must render SkillPanel when switched to SKILL.MD');
-  const skillPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/SkillPanel.tsx'), 'utf8');
-  for (const needle of ['h-[626px]', 'HOW IT WORKS', 'HOW TO INSTALL', '/skill.md', 'npx skills add', '.zip']) {
-    assert.ok(skillPanelSrc.includes(needle), `SkillPanel.tsx must contain ${needle}`);
+  // 16f. UI exposes the FX CHAIN / MCP switch and the connect guide
+  assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes("label: 'MCP'"), 'App.tsx must provide the FX CHAIN | MCP switch');
+  assert.ok(appSrc.includes('McpPanel'), 'App.tsx must render McpPanel when switched to MCP');
+  const mcpPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/McpPanel.tsx'), 'utf8');
+  for (const needle of ['h-[626px]', 'HOW IT WORKS', 'HOW TO CONNECT', 'DEFAULT_MCP_URL', '/mcp']) {
+    assert.ok(mcpPanelSrc.includes(needle), `McpPanel.tsx must contain ${needle}`);
   }
 }
 console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) verified');

@@ -1,25 +1,25 @@
 import React, { useMemo, useState } from 'react';
-import { Check, Copy, Download } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import type { ThemeMode } from '../types/config';
-import { SKILL_NAME } from '../skill/skillDoc';
-import { DEFAULT_PUBLIC_APP_URL } from '../utils/presetUrl';
+import { DEFAULT_MCP_URL } from '../utils/presetUrl';
 
-interface SkillPanelProps {
+interface McpPanelProps {
   theme?: ThemeMode;
 }
 
-function resolveAppBaseUrl(): string {
+/**
+ * The MCP endpoint for this deployment: the same origin when the app is served by the Cloudflare
+ * Worker (or `vite dev`), which answer /mcp next to the app; the public Worker otherwise
+ * (GitHub Pages is static and has no /mcp).
+ */
+function resolveMcpUrl(): string {
   if (typeof window !== 'undefined' && window.location) {
-    try {
-      const resolved = new URL('./', window.location.href).href.replace(/\/+$/, '');
-      if (resolved.startsWith('http://') || resolved.startsWith('https://')) {
-        return resolved;
-      }
-    } catch {
-      // Fallback to default public app URL
+    const { protocol, hostname, origin } = window.location;
+    if ((protocol === 'http:' || protocol === 'https:') && !hostname.endsWith('github.io')) {
+      return `${origin}/mcp`;
     }
   }
-  return DEFAULT_PUBLIC_APP_URL;
+  return DEFAULT_MCP_URL;
 }
 
 const STEPS = [
@@ -28,25 +28,23 @@ const STEPS = [
   ['SAVE TO DEVICE', 'Upload it to your EP-2350 mic over USB-C.']
 ] as const;
 
-export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
+const APPS = [
+  ['CLAUDE', 'Settings › Connectors › Add custom connector'],
+  ['CHATGPT', 'Settings › Apps & Connectors › Developer mode › Create'],
+  ['AGENTS', 'Claude Code, Cursor, Gemini CLI and others: add it as a remote MCP server']
+] as const;
+
+export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
   const isTing = theme === 'ting';
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const mcpUrl = useMemo(() => resolveMcpUrl(), []);
 
-  const appUrl = useMemo(() => resolveAppBaseUrl(), []);
-  // One-link entry points published next to the app: skill.md to paste into any chat, and the
-  // .well-known/agent-skills/ discovery index that `npx skills add <app URL>` installs from.
-  const shortSkillUrl = `${appUrl}/skill.md`;
-  const installCmd = `npx skills add ${appUrl}`;
-  const zipHref = `./skill/${SKILL_NAME}.zip`;
-
-  const handleCopy = async (id: string, text: string) => {
+  const handleCopy = async () => {
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        setCopiedId(id);
-        window.setTimeout(() => {
-          setCopiedId((prev) => (prev === id ? null : prev));
-        }, 1800);
+        await navigator.clipboard.writeText(mcpUrl);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1800);
       }
     } catch {
       // Ignore clipboard permission errors in restricted contexts
@@ -73,47 +71,18 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
     </div>
   );
 
-  const installRow = (
-    id: string,
-    label: string,
-    value: string,
-    action: React.ReactNode
-  ) => (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2" data-testid={id}>
-      <span className={`sm:w-[112px] shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${headingText}`}>
-        {label}
-      </span>
-      <div className="flex items-center gap-2 flex-1 min-w-0">
-        <code className={codeClass} title={value}>
-          {value}
-        </code>
-        {action}
-      </div>
-    </div>
-  );
-
-  const copyButton = (id: string, text: string) => {
-    const isDone = copiedId === id;
-    return (
-      <button type="button" onClick={() => void handleCopy(id, text)} className={actionClass}>
-        {isDone ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-        <span>{isDone ? 'COPIED' : 'COPY'}</span>
-      </button>
-    );
-  };
-
   return (
     <div className="te-bevel-frame w-full">
       <div
         className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10"
-        data-testid="skill-md-panel"
+        data-testid="mcp-panel"
       >
         {/* 1. TOP HEADER TAB: same structure and size as the PresetLedger header */}
         <div
           className={`relative ${
             isTing ? 'bg-[#00503a] border-b border-[#00281c]' : 'bg-[#f15a22] border-b border-[#141617]'
           } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0`}
-          data-testid="skill-md-header"
+          data-testid="mcp-header"
         >
           <div className="absolute -right-[12px] top-0 bottom-0 w-[12px] overflow-hidden pointer-events-none hidden sm:block">
             <svg className="w-full h-full" viewBox="0 0 12 40" preserveAspectRatio="none">
@@ -134,7 +103,7 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
 
         {/* 2. BODY: same canvas as the FX chain */}
         <div className={`flex-1 min-h-0 overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
-          <section className={cardClass} data-testid="skill-how-it-works">
+          <section className={cardClass} data-testid="mcp-how-it-works">
             {cardHeader('01', 'HOW IT WORKS')}
             <ol className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
               {STEPS.map(([title, text], i) => (
@@ -157,24 +126,30 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
             </ol>
           </section>
 
-          <section className={cardClass} data-testid="skill-how-to-install">
-            {cardHeader('02', 'HOW TO INSTALL')}
+          <section className={cardClass} data-testid="mcp-how-to-connect">
+            {cardHeader('02', 'HOW TO CONNECT')}
             <p className={`font-mono text-[9.5px] leading-snug ${mutedText}`}>
-              Pick one. Works with Claude, ChatGPT, Gemini, Codex, Cursor and other AI tools.
+              Add this link to your AI as a connector (remote MCP server).
             </p>
-            <div className="flex flex-col gap-2.5 pt-0.5">
-              {installRow('skill-short-url', 'PASTE IN CHAT', shortSkillUrl, copyButton('short-url', shortSkillUrl))}
-              {installRow('skill-install-cmd', 'INSTALL IN AGENT', installCmd, copyButton('install-cmd', installCmd))}
-              {installRow(
-                'skill-zip',
-                'UPLOAD ZIP',
-                `${SKILL_NAME}.zip`,
-                <a href={zipHref} download={`${SKILL_NAME}.zip`} className={actionClass}>
-                  <Download className="w-3 h-3" />
-                  <span>DOWNLOAD</span>
-                </a>
-              )}
+            <div className="flex items-center gap-2" data-testid="mcp-url">
+              <code className={codeClass} title={mcpUrl}>
+                {mcpUrl}
+              </code>
+              <button type="button" onClick={() => void handleCopy()} className={actionClass}>
+                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                <span>{copied ? 'COPIED' : 'COPY'}</span>
+              </button>
             </div>
+            <ul className="flex flex-col gap-1.5 pt-1" data-testid="mcp-apps">
+              {APPS.map(([app, where]) => (
+                <li key={app} className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2">
+                  <span className={`sm:w-[112px] shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${headingText}`}>
+                    {app}
+                  </span>
+                  <span className={`font-mono text-[9.5px] leading-snug ${mutedText}`}>{where}</span>
+                </li>
+              ))}
+            </ul>
           </section>
         </div>
       </div>
