@@ -64,7 +64,7 @@ export function resolveAppVersion(rootDir = process.cwd()) {
       // Ignore local tag errors
     }
 
-    // 2. Fallback to origin tags for shallow clones (e.g. Cloudflare Workers Builds)
+    // 2. Fallback to origin tags for shallow clones (e.g. CI checkouts without tags)
     if (!bestVer) {
       const remoteLines = execSync('git ls-remote --tags origin "refs/tags/v[0-9]*"', {
         cwd: rootDir,
