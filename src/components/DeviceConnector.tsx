@@ -19,11 +19,12 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const EDGE = '#141617';
 /**
- * Block face size: 8 x 3 grid cells of 25px (+1px so both borders sit on grid lines).
+ * Block face size: 10 x 3 grid cells of 25px (+1px so both borders sit on grid lines), the same as the
+ * logo and Export/Import blocks.
  * Bevels add 5px on the right and bottom; the block is lifted by that depth so its back face,
  * not its front, sits on the grid.
  */
-const BLOCK_W = 201;
+const BLOCK_W = 251;
 const BLOCK_H = 76;
 /** Header row height, identical to the Export/Import block. */
 const HEADER_H = 25;

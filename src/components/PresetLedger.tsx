@@ -890,8 +890,8 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     onNext: () => void;
     nextTitle: string;
   }) => (
-    <div className="flex items-start shrink-0 pb-[3px]">
-      <div className="flex items-start" role="group" aria-label="Preset selector">
+    <div className="flex items-start shrink-0 pb-[3px] w-full sm:w-auto">
+      <div className="flex items-start w-full sm:w-auto" role="group" aria-label="Preset selector">
         <button
           type="button"
           onClick={opts.onPrev}
@@ -906,7 +906,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </svg>
         </button>
         <div
-          className={`h-[22px] w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
+          className={`h-[22px] min-w-0 flex-1 sm:flex-none sm:w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
             isTing
               ? 'bg-[#dbd0b9] text-[#00503a] border-[#00503a]'
               : 'bg-[#dbdddb] text-[#141617] border-[#141617]'
@@ -934,14 +934,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   if (isEffectsOff) {
     return (
       <div className="te-bevel-frame w-full">
-      <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10">
+      <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-auto sm:h-[626px] relative z-10">
         {/* 1. TOP HEADER TAB: same colour and selector width as when a preset is selected */}
         <div
           className={`relative ${
             isTing
               ? 'bg-[#00503a] border-b border-[#00281c]'
               : 'bg-[#f15a22] border-b border-[#141617]'
-          } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0`}
+          } text-white px-4 py-2 border-t border-white/25 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3 shrink-0`}
         >
           {/* 45° Extruded Binder Tab Edge on the Right */}
           <div className="absolute -right-[12px] top-0 bottom-0 w-[12px] overflow-hidden pointer-events-none hidden sm:block">
@@ -955,7 +955,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             </svg>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 w-full sm:w-auto">
             {renderPresetSelectorBar({
               label: 'FX OFF',
               onPrev: () => onSelectPreset?.(totalPresets - 1),
@@ -968,7 +968,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
         {/* 2. EFFECTS SWITCHED OFF EMPTY STATE BODY */}
         <div
-          className={`flex-1 min-h-0 p-6 ${
+          className={`flex-1 min-h-[300px] sm:min-h-0 p-6 ${
             isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'
           } flex flex-col items-center justify-center`}
         >
@@ -1031,14 +1031,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
   return (
     <div className="te-bevel-frame w-full">
-    <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10">
+    <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-auto sm:h-[626px] relative z-10">
       {/* 1. TOP HEADER TAB (With 45° Extruded Right Binder Facet) */}
       <div
         className={`relative ${
           isTing
             ? 'bg-[#00503a] border-b border-[#00281c]'
             : 'bg-[#f15a22] border-b border-[#141617]'
-        } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0`}
+        } text-white px-4 py-2 border-t border-white/25 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3 shrink-0`}
       >
         {/* 45° Extruded Binder Tab Edge on the Right */}
         <div className="absolute -right-[12px] top-0 bottom-0 w-[12px] overflow-hidden pointer-events-none hidden sm:block">
@@ -1052,7 +1052,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </svg>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
           {/* Merged Preset Selector + Editable Name (EP Sample Tool PROJECT 07 style) */}
           {renderPresetSelectorBar({
             label: (
@@ -1084,7 +1084,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         </div>
 
         {/* Preset Comment / Performance Notes (from TE config.json); same 22px box and 3px offset as the name plate */}
-        <div className="flex items-start flex-1 min-w-[140px] pb-[3px]">
+        <div className="flex items-start w-full sm:w-auto sm:flex-1 sm:min-w-[140px] pb-[3px]">
           <input
             type="text"
             value={preset.comment || ''}
@@ -1198,7 +1198,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       {/* 3. FOCUSED EFFECT CHAIN CANVAS (INTERNAL SCROLL & FULL HEIGHT) */}
       <div
         ref={canvasRef}
-        className={`flex-1 min-h-0 overflow-y-auto p-3 ${
+        className={`flex-1 min-h-[300px] sm:min-h-0 sm:overflow-y-auto p-3 ${
           isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'
         } flex flex-col items-center relative`}
       >

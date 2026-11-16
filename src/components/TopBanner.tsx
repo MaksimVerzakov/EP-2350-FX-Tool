@@ -66,7 +66,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col md:flex-row items-center md:items-start justify-between gap-4 pb-3 md:pb-0 md:h-[100px] select-none transition-colors">
+    <div className="w-full flex flex-col md:flex-row items-center md:items-start justify-between gap-[24px] md:gap-4 pb-3 md:pb-0 md:h-[100px] select-none transition-colors">
       {/* 1. Iconic TE Modular Badge with Integrated [TING] [FX] Theme Switcher */}
       <div className="flex flex-col items-start">
         <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
@@ -222,22 +222,14 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           </div>
         </div>
 
-        {/* Version Number Below [EP] Block */}
-        <span
-          className={`w-[101px] text-center mt-1 text-[10px] font-mono leading-none uppercase tracking-wider ${
-            isTing ? 'text-[#00503a]' : 'text-[#141617]'
-          }`}
-        >
-          V {typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.0'}
-        </span>
       </div>
 
-      {/* 2. Right group: Device Connector block + Export/Import block */}
-      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-[19px]">
-      {deviceConnector}
+      {/* 2. Right group: Device Connector block + Export/Import block (the connector goes last on phones) */}
+      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-[24px] sm:gap-[19px]">
+      <div className="order-2 sm:order-1">{deviceConnector}</div>
 
       {/* Right Modular Block (Same 10 x 3 cell size & 3D format as Left Block: Row 1 = [EXPORT][IMPORT], Row 2 = Pack Dropdown) */}
-      <div ref={dropdownRef} className="flex flex-col items-start relative">
+      <div ref={dropdownRef} className="order-1 sm:order-2 flex flex-col items-start relative">
         <input
           ref={fileInputRef}
           type="file"

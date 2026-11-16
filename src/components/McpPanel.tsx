@@ -74,7 +74,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
   return (
     <div className="te-bevel-frame w-full">
       <div
-        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10"
+        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-auto sm:h-[626px] relative z-10"
         data-testid="mcp-panel"
       >
         {/* 1. TOP HEADER TAB: same structure and size as the PresetLedger header */}
@@ -102,7 +102,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
         </div>
 
         {/* 2. BODY: same canvas as the FX chain */}
-        <div className={`flex-1 min-h-0 overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
+        <div className={`flex-1 min-h-0 sm:overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
           <section className={cardClass} data-testid="mcp-how-it-works">
             {cardHeader('01', 'HOW IT WORKS')}
             <ol className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">

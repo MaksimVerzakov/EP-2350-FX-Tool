@@ -173,4 +173,36 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(bus1Btn).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
   });
+
+  test('phone layout: equal top blocks, connector last, stacked header, tall FX board, tabs clear of the card', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+
+    // No version number in the banner
+    await expect(page.getByText(/^V \d+\.\d+/)).toHaveCount(0);
+
+    // Logo, Export/Import and connector blocks share one width and stack in that order
+    const logo = await page.getByText('TOOL', { exact: true }).locator('xpath=ancestor::div[contains(@class,"w-[251px]")][1]').boundingBox();
+    const exportBlock = await page.getByPlaceholder('PACK NAME').locator('xpath=ancestor::div[contains(@class,"w-[251px]")][1]').boundingBox();
+    const connector = await page.getByTestId('device-connector').boundingBox();
+    expect(Math.round(exportBlock!.width)).toBe(Math.round(logo!.width));
+    expect(Math.round(connector!.width - 5)).toBe(Math.round(logo!.width));
+    expect(Math.round(exportBlock!.x)).toBe(Math.round(logo!.x));
+    expect(exportBlock!.y).toBeGreaterThan(logo!.y);
+    expect(connector!.y).toBeGreaterThan(exportBlock!.y);
+
+    // Header: full-width preset selector with the notes field on its own row below
+    const selector = await page.getByRole('group', { name: 'Preset selector' }).boundingBox();
+    const notes = await page.getByPlaceholder('PRESET NOTES / COMMENT...').boundingBox();
+    const card = await page.locator('.te-ledger-card').first().boundingBox();
+    expect(selector!.width).toBeGreaterThan(card!.width - 40);
+    expect(notes!.y).toBeGreaterThan(selector!.y + selector!.height);
+
+    // The FX board grows with its effects instead of the fixed 626px desktop height
+    expect(card!.height).toBeGreaterThan(900);
+
+    // FX CHAIN / MCP buttons sit above the card, not over its header
+    const fxTab = await page.getByRole('button', { name: 'FX CHAIN', exact: true }).boundingBox();
+    expect(fxTab!.y + fxTab!.height).toBeLessThan(card!.y);
+  });
 });
