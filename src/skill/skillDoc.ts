@@ -157,6 +157,10 @@ Tell the user the file was not machine-checked.
 
 ## Examples
 
-\`examples/\` holds the three official Teenage Engineering packs (12 presets). Read one when you want a starting point for a style: \`broken_radio.json\`, \`dub.json\`, \`mysterious.json\`.
+\`examples/\` holds the three official Teenage Engineering packs (12 presets). Read one when you want a starting point for a style. If you only have this file, fetch them from the web:
+
+- ${skillUrl}/examples/broken_radio.json
+- ${skillUrl}/examples/dub.json
+- ${skillUrl}/examples/mysterious.json
 `;
 }
