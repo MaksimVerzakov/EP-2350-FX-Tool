@@ -7,6 +7,13 @@
  *   <outDir>/ep2350-sound-designer/examples/*.json     official Teenage Engineering packs
  *   <outDir>/ep2350-sound-designer.zip                 the same folder, ready to install
  *
+ * and, next to the web app (<siteDir>, the parent of <outDir>), the one-link entry points:
+ *
+ *   <siteDir>/skill.md                                  SKILL.md at a short URL to paste into any chat
+ *   <siteDir>/.well-known/agent-skills/index.json       Agent Skills discovery index (schema 0.2.0), so
+ *                                                       `npx skills add <app URL>` finds and installs it
+ *   <siteDir>/.well-known/agent-skills/<name>.zip       the skill with SKILL.md at the archive root
+ *
  * SKILL.md is rendered from EFFECTS_REGISTRY (src/skill/skillDoc.ts) and the validator is the
  * same code the web app's checks are built on, so neither can drift from the editor.
  * `npm run build` writes it to dist/skill/, which is published with the web app.
@@ -14,6 +21,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { bundleTs } from './bundle-ts.mjs';
@@ -24,6 +32,8 @@ const ROOT_DIR = path.resolve(path.dirname(__filename), '..');
 
 export const SKILL_DIR_NAME = 'ep2350-sound-designer';
 export const DEFAULT_APP_URL = 'https://maksimverzakov.github.io/EP-2350-FX-Tool';
+export const WELL_KNOWN_DIR = '.well-known/agent-skills';
+export const DISCOVERY_SCHEMA = 'https://schemas.agentskills.io/discovery/0.2.0/schema.json';
 
 const EXAMPLE_PACKS = {
   'broken_radio.json': 'packs/ep-2350_preset_pack-broken_radio/config.json',
@@ -99,6 +109,7 @@ export function createZip(entries) {
 
 export async function buildSkill({
   outDir = path.join(ROOT_DIR, 'dist', 'skill'),
+  siteDir = path.dirname(outDir),
   appUrl = process.env.EP2350_UI_URL || DEFAULT_APP_URL,
   version = resolveAppVersion(ROOT_DIR)
 } = {}) {
@@ -158,7 +169,36 @@ export async function buildSkill({
     )
   );
 
-  return { skillDir, zipPath, files, version };
+  // One-link entry points next to the web app.
+  const skillMd = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+  fs.writeFileSync(path.join(siteDir, 'skill.md'), skillMd, 'utf8');
+
+  // Discovery: installers fetch index.json, download the archive, check its digest and expect
+  // SKILL.md at the archive root (no top-level folder).
+  const wellKnownDir = path.join(siteDir, WELL_KNOWN_DIR);
+  fs.rmSync(wellKnownDir, { recursive: true, force: true });
+  fs.mkdirSync(wellKnownDir, { recursive: true });
+  const flatZip = createZip(files.map((rel) => ({ name: rel, data: fs.readFileSync(path.join(skillDir, rel)) })));
+  const flatZipName = `${SKILL_DIR_NAME}.zip`;
+  fs.writeFileSync(path.join(wellKnownDir, flatZipName), flatZip);
+  const description = /^description: (.+)$/m.exec(skillMd)?.[1];
+  if (!description) throw new Error('SKILL.md frontmatter has no description');
+  const indexPath = path.join(wellKnownDir, 'index.json');
+  const index = {
+    $schema: DISCOVERY_SCHEMA,
+    skills: [
+      {
+        name: SKILL_DIR_NAME,
+        type: 'archive',
+        description,
+        url: flatZipName,
+        digest: `sha256:${crypto.createHash('sha256').update(flatZip).digest('hex')}`
+      }
+    ]
+  };
+  fs.writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`, 'utf8');
+
+  return { skillDir, zipPath, files, version, shortSkillPath: path.join(siteDir, 'skill.md'), indexPath };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)) {
