@@ -174,22 +174,32 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
   });
 
-  test('phone layout: equal top blocks, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
+  test('phone layout: top blocks joined at FX card width, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
 
     // No version number in the banner
     await expect(page.getByText(/^V \d+\.\d+/)).toHaveCount(0);
 
-    // Logo, Export/Import and connector blocks share one width and stack in that order
-    const logo = await page.getByText('TOOL', { exact: true }).locator('xpath=ancestor::div[contains(@class,"w-[251px]")][1]').boundingBox();
-    const exportBlock = await page.getByPlaceholder('PACK NAME').locator('xpath=ancestor::div[contains(@class,"w-[251px]")][1]').boundingBox();
-    const connector = await page.getByTestId('device-connector').boundingBox();
-    expect(Math.round(exportBlock!.width)).toBe(Math.round(logo!.width));
-    expect(Math.round(connector!.width - 5)).toBe(Math.round(logo!.width));
-    expect(Math.round(exportBlock!.x)).toBe(Math.round(logo!.x));
-    expect(exportBlock!.y).toBeGreaterThan(logo!.y);
-    expect(connector!.y).toBeGreaterThan(exportBlock!.y);
+    // Logo, Export/Import and connector blocks stretch to the FX card's width and stack joined in that
+    // order: each face starts on the bottom border of the one above (1px shared border, no gap)
+    const faces = await page.evaluate(() =>
+      [
+        document.querySelector('[aria-label="Theme selector"]')!.closest('.h-\\[76px\\]')!,
+        document.querySelector('[aria-label="Export and Import actions"]')!.closest('.h-\\[76px\\]')!,
+        document.querySelector('[data-testid="device-connector"] > div.border')!
+      ].map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      })
+    );
+    const cardBox = await page.locator('.te-ledger-card').first().boundingBox();
+    for (const f of faces) {
+      expect(f.x).toBe(Math.round(cardBox!.x));
+      expect(f.w).toBe(Math.round(cardBox!.width));
+    }
+    expect(faces[1].y).toBe(faces[0].y + faces[0].h - 1);
+    expect(faces[2].y).toBe(faces[1].y + faces[1].h - 1);
 
     // Header: full-width preset selector with the notes field on its own row below
     const selector = await page.getByRole('group', { name: 'Preset selector' }).boundingBox();

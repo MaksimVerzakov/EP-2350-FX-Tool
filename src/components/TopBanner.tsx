@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Download, Upload, ChevronDown, Check, Plus, Usb } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
+import { bottomBevelPoints, rightBevelPoints, useBlockWidth } from './useBlockWidth';
 
 interface TopBannerProps {
   packName: string;
@@ -39,6 +40,8 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const isTing = theme === 'ting';
+  const [logoRef, logoW] = useBlockWidth<HTMLDivElement>();
+  const [packRef, packW] = useBlockWidth<HTMLDivElement>();
 
   // Close pack dropdown when clicking outside
   useEffect(() => {
@@ -66,19 +69,20 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col md:flex-row items-center md:items-start justify-between gap-[24px] md:gap-4 pb-3 md:pb-0 md:h-[100px] select-none transition-colors">
+    <div className="w-full flex flex-col md:flex-row items-stretch sm:items-center md:items-start justify-between gap-0 sm:gap-4 pb-3 md:pb-0 md:h-[100px] select-none transition-colors">
       {/* 1. Iconic TE Modular Badge with Integrated [TING] [FX] Theme Switcher */}
-      <div className="flex flex-col items-start">
-        <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
+      <div className="w-full sm:w-auto flex flex-col items-start">
+        <div ref={logoRef} className="w-full sm:w-auto relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
           {/* 45° Axonometric Extruded 3D Bevels (Bottom & Right) */}
           <svg
-            className="absolute inset-0 w-[256px] h-[81px] pointer-events-none"
-            viewBox="0 0 256 81"
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: logoW + 5, height: 81 }}
+            viewBox={`0 0 ${logoW + 5} 81`}
             fill="none"
           >
             {/* Bottom bevel under [EP] */}
             <polygon
-              points="0.5,75.5 100.5,75.5 105.5,80.5 5.5,80.5"
+              points={bottomBevelPoints(0, 100)}
               fill="#f15a22"
               stroke="#141617"
               strokeWidth="0.9"
@@ -86,7 +90,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
             {/* Bottom bevel under [TOOL] */}
             <polygon
-              points="100.5,75.5 250.5,75.5 255.5,80.5 105.5,80.5"
+              points={bottomBevelPoints(100, logoW - 1)}
               fill={isTing ? '#dbd0b9' : '#d8dad9'}
               stroke="#141617"
               strokeWidth="0.9"
@@ -94,7 +98,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
             {/* Right bevel beside [FX] */}
             <polygon
-              points="250.5,0.5 255.5,5.5 255.5,30.5 250.5,25.5"
+              points={rightBevelPoints(logoW, 0, 25)}
               fill="#000000"
               stroke="#141617"
               strokeWidth="0.9"
@@ -102,7 +106,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
             {/* Right bevel beside [TOOL] */}
             <polygon
-              points="250.5,25.5 255.5,30.5 255.5,80.5 250.5,75.5"
+              points={rightBevelPoints(logoW, 25, 75)}
               fill={isTing ? '#dbd0b9' : '#d8dad9'}
               stroke="#141617"
               strokeWidth="0.9"
@@ -111,7 +115,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           </svg>
 
           {/* Front Modular Blocks: 10 x 3 grid cells of 25px (251px x 76px, borders on the grid lines) */}
-          <div className="relative z-10 flex w-[251px] h-[76px] border border-[#141617]">
+          <div className="relative z-10 flex w-full sm:w-[251px] h-[76px] border border-[#141617]">
             {/* Left [EP] Block (4 cells wide, 2 rows tall) */}
             <div className="w-[100px] h-full flex items-center justify-center relative border-r border-[#141617] bg-[#f15a22]">
               {/* 4 Corner Modular Circles */}
@@ -129,7 +133,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             <div className="flex-1 min-w-0 h-full flex flex-col">
               {/* Row 1: [TING] and [FX] Theme Picker Blocks */}
               <div
-                className="h-[25px] grid grid-cols-[75px_1fr] border-b border-[#141617]"
+                className="h-[25px] grid grid-cols-2 sm:grid-cols-[75px_1fr] border-b border-[#141617]"
                 role="group"
                 aria-label="Theme selector"
               >
@@ -224,12 +228,13 @@ export const TopBanner: React.FC<TopBannerProps> = ({
 
       </div>
 
-      {/* 2. Right group: Device Connector block + Export/Import block (the connector goes last on phones) */}
-      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-[24px] sm:gap-[19px]">
-      <div className="order-2 sm:order-1">{deviceConnector}</div>
+      {/* 2. Right group: Device Connector block + Export/Import block. On phones Export/Import comes first and the
+          connector last, joined to the blocks above; DOM order is phone order so each lower block paints over the
+          bottom bevel of the one above it. From sm up the connector sits on the left. */}
+      <div className="w-full sm:w-auto -mt-[6px] sm:mt-0 flex flex-col sm:flex-row items-stretch sm:items-start gap-0 sm:gap-[19px]">
 
       {/* Right Modular Block (Same 10 x 3 cell size & 3D format as Left Block: Row 1 = [EXPORT][IMPORT], Row 2 = Pack Dropdown) */}
-      <div ref={dropdownRef} className="order-1 sm:order-2 flex flex-col items-start relative">
+      <div ref={dropdownRef} className="w-full sm:w-auto sm:order-2 flex flex-col items-start relative">
         <input
           ref={fileInputRef}
           type="file"
@@ -238,16 +243,17 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           className="hidden"
         />
 
-        <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
+        <div ref={packRef} className="w-full sm:w-auto relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]">
           {/* 45° Axonometric Extruded 3D Bevels (Bottom & Right) matching Left Block */}
           <svg
-            className="absolute inset-0 w-[256px] h-[81px] pointer-events-none"
-            viewBox="0 0 256 81"
+            className="absolute inset-0 pointer-events-none"
+            style={{ width: packW + 5, height: 81 }}
+            viewBox={`0 0 ${packW + 5} 81`}
             fill="none"
           >
             {/* Bottom bevel under Pack Dropdown Row */}
             <polygon
-              points="0.5,75.5 250.5,75.5 255.5,80.5 5.5,80.5"
+              points={bottomBevelPoints(0, packW - 1)}
               fill={isTing ? '#dbd0b9' : '#d8dad9'}
               stroke="#141617"
               strokeWidth="0.9"
@@ -255,7 +261,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
             {/* Right bevel beside [IMPORT] */}
             <polygon
-              points="250.5,0.5 255.5,5.5 255.5,30.5 250.5,25.5"
+              points={rightBevelPoints(packW, 0, 25)}
               fill={isTing ? '#003828' : '#000000'}
               stroke="#141617"
               strokeWidth="0.9"
@@ -263,7 +269,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             />
             {/* Right bevel beside Pack Dropdown Row */}
             <polygon
-              points="250.5,25.5 255.5,30.5 255.5,80.5 250.5,75.5"
+              points={rightBevelPoints(packW, 25, 75)}
               fill={isTing ? '#dbd0b9' : '#d8dad9'}
               stroke="#141617"
               strokeWidth="0.9"
@@ -272,10 +278,10 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           </svg>
 
           {/* Front Modular Blocks (251px x 76px — identical dimensions to Left Block) */}
-          <div className="relative z-10 flex flex-col w-[251px] h-[76px] border border-[#141617]">
+          <div className="relative z-10 flex flex-col w-full sm:w-[251px] h-[76px] border border-[#141617]">
             {/* Row 1: Two Buttons on Top — [EXPORT] and [IMPORT] */}
             <div
-              className="h-[25px] grid grid-cols-[125px_1fr] border-b border-[#141617]"
+              className="h-[25px] grid grid-cols-2 sm:grid-cols-[125px_1fr] border-b border-[#141617]"
               role="group"
               aria-label="Export and Import actions"
             >
@@ -542,6 +548,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           </div>
         )}
       </div>
+      <div className="w-full sm:w-auto -mt-[6px] sm:mt-0 sm:order-1">{deviceConnector}</div>
       </div>
     </div>
   );
