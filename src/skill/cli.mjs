@@ -8,6 +8,7 @@
  */
 import fs from 'node:fs';
 import { SHARE_APP_URL, TOOLS_VERSION as VERSION, validatePresetInput } from './presetTools';
+import { formatResult, validateText } from './validateText';
 
 const USAGE = `EP-2350 preset validator ${VERSION}
 
@@ -41,41 +42,6 @@ function parseArgs(argv) {
     else opts.positional.push(arg);
   }
   return opts;
-}
-
-/** Validate the text of a config.json pack or of a single preset. */
-export function validateText(text, appUrl = SHARE_APP_URL) {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // Let the pack validator report the JSON syntax error with its fix hint.
-    return validatePresetInput({ configJson: text }, appUrl);
-  }
-  const isSinglePreset =
-    parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.list) && !('presets' in parsed);
-  return isSinglePreset
-    ? validatePresetInput({ preset: parsed }, appUrl)
-    : validatePresetInput({ configJson: text }, appUrl);
-}
-
-function formatIssue(issue) {
-  return `  ${issue.path}: ${issue.message}\n    fix: ${issue.fix}`;
-}
-
-export function formatResult(result) {
-  const lines = [];
-  const { errors = [], warnings = [], summary = [] } = result;
-  lines.push(
-    result.isValid
-      ? `VALID (${warnings.length} warning${warnings.length === 1 ? '' : 's'})`
-      : `INVALID: ${errors.length} error${errors.length === 1 ? '' : 's'}, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`
-  );
-  if (errors.length) lines.push('', 'Errors:', ...errors.map(formatIssue));
-  if (warnings.length) lines.push('', 'Warnings:', ...warnings.map(formatIssue));
-  if (summary.length) lines.push('', 'What it does:', ...summary.map((l) => `  ${l}`));
-  if (result.isValid && result.shareUrl) lines.push('', 'Open in the web app:', `  ${result.shareUrl}`);
-  return lines.join('\n');
 }
 
 function main(argv) {

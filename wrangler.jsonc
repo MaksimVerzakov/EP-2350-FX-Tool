@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ep-2350-fx-tool",
+  // Built by `npm run build` (scripts/build-worker.mjs from src/mcp/worker.ts).
+  "main": "dist/_worker.js",
+  "compatibility_date": "2025-03-01",
+  // The web app and skill are static assets; only /mcp runs the Worker.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/mcp", "/mcp/*"]
+  },
+  // Cloudflare Workers Builds: preview deployments for pull requests.
+  "previews": {}
+}
