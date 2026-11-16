@@ -1,7 +1,7 @@
 /**
  * Bundles TypeScript sources into one ESM file with rolldown (it follows imports and strips
  * types itself, so there is no hand-maintained list of files to compile). Used by
- * scripts/build-skill.mjs for the skill's SKILL.md renderer and validator CLI.
+ * scripts/build-worker.mjs for the Cloudflare Worker (MCP server).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,7 @@ const RAW_SUFFIX = '?raw';
  * Handles the two Vite-only features the shared sources use:
  *   - `import x from './file.json?raw'` → the file's text as a default-exported string
  *   - the `__APP_VERSION__` build-time token → the resolved app version string
- *   - any extra `define` tokens (e.g. `__EP2350_APP_URL__`) → their JSON-encoded values
+ *   - any extra `define` tokens → their JSON-encoded values
  */
 function ep2350SourcePlugin(version, define = {}) {
   return {

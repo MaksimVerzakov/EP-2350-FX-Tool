@@ -13,13 +13,8 @@ import {
 import { type PresetIssue, checkPreset, describePreset, hasStructuralErrors } from './presetCheck';
 
 /**
- * Pure preset validation behind the EP-2350 sound designer skill. No I/O; the skill's validator
- * CLI (`src/skill/cli.mjs`) calls this.
+ * Pure preset validation behind the MCP server's validate_pack tool (src/mcp/mcpServer.ts). No I/O.
  */
-
-/** Web app that share links open in: the build's app URL when bundled into the skill. */
-export const SHARE_APP_URL: string =
-  typeof __EP2350_APP_URL__ !== 'undefined' ? __EP2350_APP_URL__ : DEFAULT_PUBLIC_APP_URL;
 
 /** App version injected at build time (`__APP_VERSION__`), shared with the web UI. */
 export const TOOLS_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0-dev';

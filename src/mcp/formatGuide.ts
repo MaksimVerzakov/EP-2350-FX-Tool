@@ -2,19 +2,15 @@ import { EFFECTS_REGISTRY, MAX_EFFECTS_PER_PRESET, getModDepthConfig } from '../
 import type { EffectMeta } from '../types/config';
 
 /**
- * Renders SKILL.md for the EP-2350 sound designer skill. Every effect, parameter, range and
- * modulation depth comes from EFFECTS_REGISTRY, so the skill cannot drift from the editor and
- * the validator. All values are shown in the hardware config.json scale (percent knobs 0.0..1.0),
- * because config.json is what the skill produces.
+ * Renders the EP-2350 format guide returned by the MCP get_format_guide tool. Every effect,
+ * parameter, range and modulation depth comes from EFFECTS_REGISTRY, so the guide cannot drift
+ * from the editor and the validator. All values are shown in the hardware config.json scale
+ * (percent knobs 0.0..1.0), because config.json is what the assistant writes.
  */
 
-export const SKILL_NAME = 'ep2350-sound-designer';
-
-export interface SkillDocOptions {
+export interface FormatGuideOptions {
   /** Public web app URL (opens share links, imports config.json). */
   appUrl: string;
-  /** Public URL of the hosted skill folder (where SKILL.md and scripts/ are served). */
-  skillUrl: string;
   version: string;
 }
 
@@ -54,40 +50,23 @@ function effectSection(meta: EffectMeta): string {
   ].join('\n');
 }
 
-export function renderSkillMarkdown({ appUrl, skillUrl, version }: SkillDocOptions): string {
+export function renderFormatGuide({ appUrl, version }: FormatGuideOptions): string {
   const effects = Object.values(EFFECTS_REGISTRY);
   const single = effects.filter((e) => e.singleInstance).map((e) => e.type);
-  const cli = 'scripts/ep2350.mjs';
 
-  return `---
-name: ${SKILL_NAME}
-description: Design effect presets for the Teenage Engineering EP-2350 fx mic. Use when the user wants a vocal effect, preset or pack for the EP-2350 (robot voice, dub echo, radio, monster, etc.), or wants an existing EP-2350 config.json checked, fixed or explained. Produces a valid config.json and a link that opens it in the EP-2350 FX Tool web app.
----
+  return `# EP-2350 format guide
 
-# EP-2350 sound designer
+The EP-2350 fx mic loads one file, \`config.json\`, holding 4 presets. Each preset is a chain of effects plus what the squeeze handle, a shake and an LFO do to it. This guide tells you how to write that file.
 
-The EP-2350 fx mic loads one file, \`config.json\`, holding 4 presets. Each preset is a chain of effects plus what the squeeze handle, a shake and an LFO do to it. This skill tells you how to write that file, check it, and hand it to the user.
-
-Skill version ${version}. Web app: ${appUrl}/
+Version ${version}. Web app: ${appUrl}/
 
 ## Workflow
 
-1. Write \`config.json\` following the format and effect tables below. If the user asked for one sound, put it in slot 0 and leave the other slots out.
-2. Check it. If you can run Node.js (18 or newer):
+1. Write \`config.json\` following the format and effect tables below. If the user asked for one sound, put it in slot 0 and leave the other slots out. For a starting point in a style, call \`get_example_pack\` (broken_radio, dub, mysterious).
+2. Call \`validate_pack\` with it. It returns every error with the exact field, what is wrong and how to fix it, then a plain-language summary of what each preset does. Fix every error and call it again until it says VALID. Read the summary and confirm it matches what the user asked for (filter frequencies, echo time, what the handle and shake change).
+3. Give the user the share link from \`validate_pack\`. It opens the pack in the web app, where they can listen to it, tweak it and send it to the mic over USB-C.
 
-   \`\`\`bash
-   node ${cli} validate config.json
-   \`\`\`
-
-   The script is in this skill's folder. If you only have this file, get it from ${skillUrl}/${cli}. It prints every error with the exact field, what is wrong and how to fix it, then a plain-language summary of what each preset does, then a share link. Fix every error and run it again. Read the summary and confirm it matches what the user asked for (filter frequencies, echo time, what the handle and shake change).
-3. If you cannot run code, go through the checklist under "Checking by hand" instead.
-4. Give the user:
-   - the share link from the validator (it opens the pack in the web app, where they can listen to it and send it to the mic), or, without the validator, the \`config.json\` text and a note to load it with **Import** at ${appUrl}/
-   - \`config.json\` itself. To put it on the mic: connect the EP-2350 by USB-C, copy \`config.json\` to the root of the "fx-mic disk", eject.
-
-\`node ${cli} validate config.json --out config.json\` also rewrites the file in normalized form (missing slots filled, SAMPLE rows added). Add \`--json\` for machine-readable output.
-
-Do not build a share link by hand; base64 done without code is unreliable.
+Do not build a share link by hand; only \`validate_pack\` makes a working one.
 
 ## config.json format
 
@@ -122,7 +101,7 @@ Do not build a share link by hand; base64 done without code is unreliable.
 
 - At most ${MAX_EFFECTS_PER_PRESET} rows in \`list\`.
 - ${single.join(', ')} may each appear at most once per preset.
-- \`SAMPLE\` marks where the trigger-button sample enters the chain. Every preset needs one (the validator adds it at the end if missing), and \`trigger.row\` must point at it.
+- \`SAMPLE\` marks where the trigger-button sample enters the chain. Every preset needs one (validate_pack adds it at the end if missing), and \`trigger.row\` must point at it.
 - Rows can carry \`"BUS": 1\` or \`"BUS": 2\`. Bus 1 rows and bus 2 rows run in parallel and are summed. Rows without \`BUS\` run in series.
 - Cutoff values map to frequency as Hz = 20 × 1000^value: 0.0 = 20 Hz, 0.25 ≈ 110 Hz, 0.5 ≈ 630 Hz, 0.75 ≈ 3.6 kHz, 1.0 = 20 kHz.
 
@@ -140,23 +119,5 @@ Each of the four is optional and there is one of each per preset.
 ## Effects
 
 ${effects.map(effectSection).join('\n')}
-## Checking by hand
-
-Use this only when you cannot run the validator.
-
-- Every \`effect\` is one of: ${effects.map((e) => e.type).join(', ')}.
-- Every parameter name appears in that effect's table, spelled exactly as shown (EQUALISER's are uppercase).
-- Every value is inside its range. A value such as 50 for a 0..1 knob is the most common mistake.
-- No more than ${MAX_EFFECTS_PER_PRESET} rows; ${single.join(', ')} at most once each.
-- There is a \`SAMPLE\` row and \`trigger.row\` is its index.
-- \`handle\`, \`shake\` and \`lfo\` rows exist in \`list\`, their \`param\` belongs to the effect on that row, and \`depth\` is inside the modulation depth range.
-- At most 4 presets, each with a different \`pos\` from 0 to 3.
-- The file is strict JSON: double quotes, no comments, no trailing commas.
-
-Tell the user the file was not machine-checked.
-
-## Examples
-
-\`examples/\` holds the three official Teenage Engineering packs (12 presets). Read one when you want a starting point for a style: \`broken_radio.json\`, \`dub.json\`, \`mysterious.json\`.
 `;
 }

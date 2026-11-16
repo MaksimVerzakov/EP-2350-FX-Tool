@@ -1,8 +1,7 @@
 import { validatePresetInput } from './presetTools';
 
 /**
- * Text-in, text-out validation shared by the skill's validator CLI (src/skill/cli.mjs) and the
- * MCP server (src/mcp/mcpServer.ts), so both report problems the same way.
+ * Text-in, text-out validation for the MCP server's validate_pack tool (src/mcp/mcpServer.ts).
  */
 
 interface Issue {

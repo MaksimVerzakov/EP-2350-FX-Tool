@@ -1,16 +1,15 @@
 {
   "name": "ep2350-fx-tool",
   "version": "1.0.0",
-  "description": "Companion web workbench, DSP audio engine, hardware validator, and AI sound designer skill for the Teenage Engineering EP-2350 fx mic.",
+  "description": "Companion web workbench, DSP audio engine, hardware validator, and MCP server for AI assistants for the Teenage Engineering EP-2350 fx mic.",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node --no-warnings scripts/build-skill.mjs && node --no-warnings scripts/build-worker.mjs",
+    "build": "tsc && vite build && node --no-warnings scripts/build-worker.mjs",
     "preview": "vite preview",
     "test": "node test/run-test.mjs",
     "test:e2e": "playwright test",
-    "skill": "node --no-warnings scripts/build-skill.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
     "version:major": "npm version major --no-git-tag-version",

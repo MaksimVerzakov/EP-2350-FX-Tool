@@ -31,8 +31,8 @@ function buildSourceModulesForTest() {
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
-    'src/skill/presetCheck.ts',
-    'src/skill/presetTools.ts'
+    'src/validation/presetCheck.ts',
+    'src/validation/presetTools.ts'
   ];
 
   for (const relPath of filesToCompile) {
@@ -118,7 +118,7 @@ const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await im
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/wavCodec.mjs')).href
 );
 const { validatePresetInput } = await import(
-  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/skill/presetTools.mjs')).href
+  pathToFileURL(path.join(TMP_TEST_BUILD, 'src/validation/presetTools.mjs')).href
 );
 
 // Clean up on exit
@@ -1437,7 +1437,7 @@ assert.ok(decodedAlert.left.length > 1000, 'Bundled alert.wav must decode to non
 console.log('✓ Suite 10: Pure-TS WAV Codec round-trip & bundled hardware sample decoding verified');
 
 // ============================================================================
-// SUITE 11: Preset validation entry point (src/skill/presetTools.ts)
+// SUITE 11: Preset validation entry point (src/validation/presetTools.ts)
 // ============================================================================
 // 11a. A hand-written editor-scale preset validates and yields a share link
 const cyberWalkiePreset = {
@@ -1906,173 +1906,45 @@ console.log('✓ Suite 14: Presets accepted in either scale (editor 0..100 or co
 console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and plain-language summary verified');
 
 // ============================================================================
-// SUITE 16: Sound designer skill (generated SKILL.md, bundled validator CLI, zip)
+// SUITE 16: Format guide (generated from EFFECTS_REGISTRY), build and MCP panel
 // ============================================================================
 {
-  const { spawnSync } = await import('node:child_process');
-  const { buildSkill, SKILL_DIR_NAME } = await import(
-    pathToFileURL(path.join(ROOT_DIR, 'scripts/build-skill.mjs')).href
-  );
-  const skillOut = path.join(TMP_TEST_BUILD, 'skill');
-  const { skillDir, zipPath, files } = await buildSkill({
-    outDir: skillOut,
-    appUrl: 'https://example.test/app/',
+  const { bundleTs } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-ts.mjs')).href);
+  const { outFile: guideFile } = await bundleTs({
+    rootDir: ROOT_DIR,
+    entry: 'src/mcp/formatGuide.ts',
+    outFile: path.join(TMP_TEST_BUILD, 'format-guide.mjs'),
     version: '9.9.9-test'
   });
+  const { renderFormatGuide } = await import(pathToFileURL(guideFile).href);
 
-  // 16a. SKILL.md: frontmatter and a reference generated from EFFECTS_REGISTRY
-  const skillMd = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
-  assert.ok(skillMd.startsWith(`---\nname: ${SKILL_DIR_NAME}\ndescription: `), 'SKILL.md must start with name/description frontmatter');
-  assert.ok(skillMd.includes('9.9.9-test'), 'SKILL.md must carry the build version');
-  assert.ok(
-    skillMd.includes('https://example.test/app/skill/ep2350-sound-designer/scripts/ep2350.mjs'),
-    'SKILL.md must say where the hosted validator script is'
-  );
-  assert.ok(!/\bMCP\b/.test(skillMd), 'The skill must stand alone, without the MCP server');
+  // 16a. The guide documents every effect and parameter, in config.json scale, and points at the MCP tools
+  const guide = renderFormatGuide({ appUrl: 'https://example.test/app', version: '9.9.9-test' });
+  assert.ok(guide.startsWith('# EP-2350 format guide\n'), 'No skill frontmatter');
+  assert.ok(guide.includes('9.9.9-test') && guide.includes('https://example.test/app/'));
+  for (const tool of ['validate_pack', 'get_example_pack']) assert.ok(guide.includes(`\`${tool}\``), `Guide must point at ${tool}`);
+  assert.ok(!/skill|scripts\/ep2350|node .*validate|Checking by hand/i.test(guide), 'No skill, CLI or by-hand instructions left');
   for (const meta of Object.values(EFFECTS_REGISTRY)) {
-    assert.ok(skillMd.includes(`### ${meta.type}\n`), `SKILL.md must document ${meta.type}`);
-    const section = skillMd.split(`### ${meta.type}\n`)[1].split('\n### ')[0];
+    assert.ok(guide.includes(`### ${meta.type}\n`), `Guide must document ${meta.type}`);
+    const section = guide.split(`### ${meta.type}\n`)[1].split('\n### ')[0];
     for (const p of meta.params) {
-      assert.ok(section.includes(`| \`${p.name}\` |`), `SKILL.md must list ${meta.type}.${p.name}`);
+      assert.ok(section.includes(`| \`${p.name}\` |`), `Guide must list ${meta.type}.${p.name}`);
     }
   }
   // Percent knobs are documented in config.json scale (0..1), never as 0..100
-  assert.ok(/\| `echo` \| [^|]+ \| 0 \.\. 1 \| 0\.4 \| -1 \.\. 1 \|/.test(skillMd), 'Percent parameters must be shown as 0..1');
-  assert.ok(skillMd.includes('| `frequency` | carrier freq | 0 .. 20000 Hz | 440 | -5000 .. 5000 Hz |'));
+  assert.ok(/\| `echo` \| [^|]+ \| 0 \.\. 1 \| 0\.4 \| -1 \.\. 1 \|/.test(guide), 'Percent parameters must be shown as 0..1');
+  assert.ok(guide.includes('| `frequency` | carrier freq | 0 .. 20000 Hz | 440 | -5000 .. 5000 Hz |'));
 
-  // 16b. Bundled validator: one dependency-free file that runs outside the repo
-  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'ep2350-skill-test-'));
-  try {
-    fs.cpSync(skillDir, path.join(isolated, SKILL_DIR_NAME), { recursive: true });
-    const cli = path.join(isolated, SKILL_DIR_NAME, 'scripts', 'ep2350.mjs');
-    const cliSrc = fs.readFileSync(cli, 'utf8');
-    assert.ok(cliSrc.startsWith('#!/usr/bin/env node\n'));
-    assert.ok(
-      [...cliSrc.matchAll(/^import .* from ["']([^"']+)["'];?$/gm)].every((m) => m[1].startsWith('node:')),
-      'Validator bundle may only import Node built-ins'
-    );
-    const run = (args, input) =>
-      spawnSync(process.execPath, [cli, ...args], { cwd: isolated, input, encoding: 'utf8' });
-
-    assert.strictEqual(run(['--version']).stdout.trim(), '9.9.9-test');
-
-    // Every bundled example (official pack) is valid and yields a share link the app can open
-    for (const example of ['broken_radio.json', 'dub.json', 'mysterious.json']) {
-      const res = run(['validate', path.join(SKILL_DIR_NAME, 'examples', example), '--json']);
-      assert.strictEqual(res.status, 0, `${example} must validate: ${res.stdout}${res.stderr}`);
-      const out = JSON.parse(res.stdout);
-      assert.strictEqual(out.isValid, true);
-      assert.ok(out.shareUrl.startsWith('https://example.test/app/#pack='), 'Share link must use the build app URL');
-      const decoded = decodeHashPayload(out.shareUrl);
-      assert.strictEqual(decoded?.type, 'pack');
-      assert.strictEqual(decoded.pack.presets.length, 4);
-    }
-
-    // Text report: errors name the exact field and the fix; exit code 1; nothing written
-    const broken = JSON.stringify({
-      name: 'T',
-      presets: [
-        {
-          pos: 0,
-          name: 'X',
-          list: [{ effect: 'ECHO' }, { effect: 'LOWPASS', cutof: 50 }, { effect: 'REVERB' }, { effect: 'REVERB' }],
-          handle: { row: 7, param: 'cutoff', depth: 0.5 }
-        }
-      ]
-    });
-    const bad = run(['validate', '-', '--out', 'bad.json'], broken);
-    assert.strictEqual(bad.status, 1, 'Invalid config must exit with 1');
-    assert.ok(bad.stdout.startsWith('INVALID: 4 errors'), bad.stdout);
-    assert.ok(bad.stdout.includes('presets[0].list[1].cutof:') && bad.stdout.includes('Did you mean "cutoff"?'));
-    assert.ok(bad.stdout.includes('presets[0].handle.row:'));
-    assert.ok(!bad.stdout.includes('Open in the web app'), 'No share link for an invalid config');
-    assert.ok(!fs.existsSync(path.join(isolated, 'bad.json')), '--out must not write an invalid config');
-
-    // A value on the 0..100 scale is rejected in a config.json
-    const percent = run(['validate', '-', '--json'], JSON.stringify({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] }));
-    assert.strictEqual(percent.status, 1);
-    assert.strictEqual(JSON.parse(percent.stdout).errors[0].path, 'presets[0].list[0].echo');
-
-    // A single preset is accepted, and --out writes a complete 4-slot config.json
-    const single = run(
-      ['validate', '-', '--out', 'config.json'],
-      JSON.stringify({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } })
-    );
-    assert.strictEqual(single.status, 0, single.stdout + single.stderr);
-    assert.ok(single.stdout.includes('https://example.test/app/#preset='));
-    const written = JSON.parse(fs.readFileSync(path.join(isolated, 'config.json'), 'utf8'));
-    assert.strictEqual(written.presets.length, 4);
-    assert.deepStrictEqual(written.presets[0].list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
-    assert.strictEqual(validatePackConfig(parseConfigJson(JSON.stringify(written)).pack).filter((i) => i.type === 'error').length, 0);
-
-    // Usage errors
-    assert.strictEqual(run(['validate', 'nope.json']).status, 2);
-    assert.strictEqual(run(['frobnicate']).status, 2);
-    assert.strictEqual(run(['validate', '-'], '{ not json').status, 1);
-  } finally {
-    fs.rmSync(isolated, { recursive: true, force: true });
+  // 16b. The skill is retired: no build script, CLI, dev route or published files
+  for (const gone of ['scripts/build-skill.mjs', 'src/skill']) {
+    assert.ok(!fs.existsSync(path.join(ROOT_DIR, gone)), `${gone} was removed with the skill`);
   }
-
-  // 16c. Zip: installable archive with the skill folder at its root, reproducible
-  const zip = fs.readFileSync(zipPath);
-  assert.strictEqual(zip.readUInt32LE(0), 0x04034b50, 'Zip must start with a local file header');
-  const eocd = zip.length - 22;
-  assert.strictEqual(zip.readUInt32LE(eocd), 0x06054b50, 'Zip must end with the end-of-central-directory record');
-  assert.strictEqual(zip.readUInt16LE(eocd + 10), files.length);
-  const zlib = await import('node:zlib');
-  let offset = zip.readUInt32LE(eocd + 16);
-  const zipped = {};
-  for (let i = 0; i < files.length; i++) {
-    assert.strictEqual(zip.readUInt32LE(offset), 0x02014b50);
-    const compSize = zip.readUInt32LE(offset + 20);
-    const nameLen = zip.readUInt16LE(offset + 28);
-    const localOffset = zip.readUInt32LE(offset + 42);
-    const name = zip.toString('utf8', offset + 46, offset + 46 + nameLen);
-    const dataStart = localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
-    zipped[name] = zlib.inflateRawSync(zip.subarray(dataStart, dataStart + compSize));
-    offset += 46 + nameLen;
-  }
-  assert.deepStrictEqual(Object.keys(zipped).sort(), files.map((f) => `${SKILL_DIR_NAME}/${f}`).sort());
-  for (const f of files) {
-    assert.ok(zipped[`${SKILL_DIR_NAME}/${f}`].equals(fs.readFileSync(path.join(skillDir, f))), `${f} must round-trip through the zip`);
-  }
-  const rebuilt = await buildSkill({ outDir: path.join(TMP_TEST_BUILD, 'skill-again'), appUrl: 'https://example.test/app/', version: '9.9.9-test' });
-  assert.ok(fs.readFileSync(rebuilt.zipPath).equals(zip), 'The same sources must produce the same zip');
-
-  // 16c2. One-link entry points: short skill.md and the Agent Skills discovery index (schema 0.2.0,
-  // as read by `npx skills add <url>`: archive entry, sha256 digest, SKILL.md at the archive root)
-  const { WELL_KNOWN_DIR, DISCOVERY_SCHEMA } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/build-skill.mjs')).href);
-  const siteOut = path.dirname(skillOut);
-  assert.strictEqual(fs.readFileSync(path.join(siteOut, 'skill.md'), 'utf8'), skillMd, 'skill.md is SKILL.md at a short URL');
-  const index = JSON.parse(fs.readFileSync(path.join(siteOut, WELL_KNOWN_DIR, 'index.json'), 'utf8'));
-  assert.strictEqual(index.$schema, DISCOVERY_SCHEMA);
-  assert.strictEqual(DISCOVERY_SCHEMA, 'https://schemas.agentskills.io/discovery/0.2.0/schema.json');
-  assert.strictEqual(index.skills.length, 1);
-  const entry = index.skills[0];
-  assert.strictEqual(entry.name, SKILL_DIR_NAME);
-  assert.match(entry.name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
-  assert.strictEqual(entry.type, 'archive');
-  assert.ok(entry.description.length > 0 && entry.description.length <= 1024);
-  assert.ok(skillMd.includes(`\ndescription: ${entry.description}\n`), 'Index description matches the SKILL.md frontmatter');
-  const flat = fs.readFileSync(path.join(siteOut, WELL_KNOWN_DIR, entry.url));
-  const crypto = await import('node:crypto');
-  assert.strictEqual(entry.digest, `sha256:${crypto.createHash('sha256').update(flat).digest('hex')}`, 'Digest must match the archive');
-  {
-    const end = flat.length - 22;
-    let off = flat.readUInt32LE(end + 16);
-    const names = [];
-    for (let i = 0; i < flat.readUInt16LE(end + 10); i++) {
-      const nameLen = flat.readUInt16LE(off + 28);
-      names.push(flat.toString('utf8', off + 46, off + 46 + nameLen));
-      off += 46 + nameLen + flat.readUInt16LE(off + 30) + flat.readUInt16LE(off + 32);
-    }
-    assert.deepStrictEqual(names.sort(), [...files].sort(), 'Discovery archive holds the skill files with SKILL.md at its root');
-  }
+  const viteSrc = fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8');
+  assert.ok(!viteSrc.includes('skill'), 'vite dev no longer serves skill files');
   const deployYml = fs.readFileSync(path.join(ROOT_DIR, '.github/workflows/deploy.yml'), 'utf8');
-  assert.ok(/include-hidden-files: true/.test(deployYml), 'Pages upload must include dist/.well-known/');
+  assert.ok(!deployYml.includes('include-hidden-files'), 'No .well-known/agent-skills to publish');
 
-  // 16d. Unresolved imports fail the bundle instead of producing a broken validator
-  const { bundleTs } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-ts.mjs')).href);
+  // 16c. Unresolved imports fail the bundle instead of producing a broken Worker
   const brokenEntryDir = path.join(TMP_TEST_BUILD, 'bundle-broken');
   fs.mkdirSync(brokenEntryDir, { recursive: true });
   fs.writeFileSync(path.join(brokenEntryDir, 'entry.ts'), "import { nope } from './missing';\nexport const x: number = nope;\n");
@@ -2081,14 +1953,14 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
     'bundleTs must reject when an import cannot be resolved'
   );
 
-  // 16e. The production build publishes the skill next to the web app and builds the Worker
+  // 16d. The production build builds the web app and the Worker, nothing else
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
-  assert.ok(pkg.scripts.build.includes('scripts/build-skill.mjs'), 'npm run build must build the skill into dist/skill');
+  assert.ok(!('skill' in pkg.scripts) && !pkg.scripts.build.includes('skill'), 'No skill build step');
   assert.ok(pkg.scripts.build.includes('scripts/build-worker.mjs'), 'npm run build must build the Cloudflare Worker');
   assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
   assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx has no MCP live-push bridge');
 
-  // 16f. UI exposes the FX CHAIN / MCP switch and the connect guide
+  // 16e. UI exposes the FX CHAIN / MCP switch and the connect guide
   assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes("label: 'MCP'"), 'App.tsx must provide the FX CHAIN | MCP switch');
   assert.ok(appSrc.includes('McpPanel'), 'App.tsx must render McpPanel when switched to MCP');
   const mcpPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/McpPanel.tsx'), 'utf8');
@@ -2096,7 +1968,7 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
     assert.ok(mcpPanelSrc.includes(needle), `McpPanel.tsx must contain ${needle}`);
   }
 }
-console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) verified');
+console.log('✓ Suite 16: Format guide, build and MCP panel verified');
 
 // ============================================================================
 // SUITE 17: Remote MCP server (Streamable HTTP) and its Cloudflare Worker
@@ -2149,10 +2021,9 @@ console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) v
   assert.deepStrictEqual(tools.map((t) => t.name), ['get_format_guide', 'validate_pack', 'get_example_pack']);
   for (const t of tools) assert.strictEqual(t.inputSchema.type, 'object', `${t.name} needs an object input schema`);
 
-  // 17d. get_format_guide returns SKILL.md (no frontmatter) and points at the MCP tools
+  // 17d. get_format_guide returns the format guide with this deployment's app URL
   const guide = (await rpc('tools/call', { name: 'get_format_guide', arguments: {} })).body.result.content[0].text;
-  assert.ok(guide.startsWith('You are connected to the EP-2350 MCP server'));
-  assert.ok(!guide.includes('\nname: ep2350-sound-designer'), 'Frontmatter is stripped');
+  assert.ok(guide.startsWith('# EP-2350 format guide') && guide.includes(`Web app: ${ORIGIN}/`));
   for (const fx of Object.keys(EFFECTS_REGISTRY)) assert.ok(guide.includes(`### ${fx}`), `Guide documents ${fx}`);
 
   // 17e. validate_pack: a valid official pack gets a share link on the Worker's own domain
@@ -2178,6 +2049,35 @@ console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) v
   assert.ok(badResult.structuredContent.errors.length > 0);
   assert.ok(badResult.content[0].text.startsWith('INVALID') && badResult.content[0].text.includes('fix:'));
   assert.ok(!('shareUrl' in badResult.structuredContent));
+  const validate = async (config) => (await rpc('tools/call', { name: 'validate_pack', arguments: { config } })).body.result;
+  const multi = await validate({
+    name: 'T',
+    presets: [
+      {
+        pos: 0,
+        name: 'X',
+        list: [{ effect: 'ECHO' }, { effect: 'LOWPASS', cutof: 50 }, { effect: 'REVERB' }, { effect: 'REVERB' }],
+        handle: { row: 7, param: 'cutoff', depth: 0.5 }
+      }
+    ]
+  });
+  const multiText = multi.content[0].text;
+  assert.ok(multiText.startsWith('INVALID: 4 errors'), multiText);
+  assert.ok(multiText.includes('presets[0].list[1].cutof:') && multiText.includes('Did you mean "cutoff"?'));
+  assert.ok(multiText.includes('presets[0].handle.row:') && !multiText.includes('Open in the web app'));
+  // A value on the 0..100 scale is rejected in a config.json
+  const percent = await validate({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] });
+  assert.strictEqual(percent.structuredContent.errors[0].path, 'presets[0].list[0].echo');
+  // A single preset is accepted and gets a #preset= link
+  const single = await validate({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } });
+  assert.strictEqual(single.structuredContent.isValid, true, single.content[0].text);
+  assert.ok(single.structuredContent.shareUrl.startsWith(`${ORIGIN}/#preset=`));
+  assert.deepStrictEqual(single.structuredContent.config.list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
+  // Every official pack is valid
+  for (const name of ['broken_radio', 'mysterious']) {
+    const packText = fs.readFileSync(path.join(ROOT_DIR, `packs/ep-2350_preset_pack-${name}/config.json`), 'utf8');
+    assert.strictEqual((await validate(packText)).structuredContent.isValid, true, `${name} must validate`);
+  }
   const broken = (await rpc('tools/call', { name: 'validate_pack', arguments: { config: '{"name": ' } })).body.result;
   assert.ok(broken.content[0].text.startsWith('INVALID'), 'Broken JSON text is reported, not thrown');
   assert.strictEqual((await rpc('tools/call', { name: 'validate_pack', arguments: {} })).body.result.isError, true);
@@ -2203,8 +2103,8 @@ console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) v
   assert.strictEqual((await parseRes.json()).error.code, -32700);
   assert.strictEqual((await worker.fetch(new Request(`${ORIGIN}/mcp`), env)).status, 405);
   assert.strictEqual((await worker.fetch(new Request(`${ORIGIN}/mcp`, { method: 'OPTIONS' }), env)).status, 204);
-  assert.strictEqual(await (await worker.fetch(new Request(`${ORIGIN}/skill.md`), env)).text(), 'asset');
-  assert.deepStrictEqual(assetsHits, ['/skill.md'], 'Only non-/mcp paths reach the static assets');
+  assert.strictEqual(await (await worker.fetch(new Request(`${ORIGIN}/assets/app.js`), env)).text(), 'asset');
+  assert.deepStrictEqual(assetsHits, ['/assets/app.js'], 'Only non-/mcp paths reach the static assets');
 
   // 17i. EP2350_UI_URL overrides where share links point
   const pinned = await worker.fetch(
