@@ -174,7 +174,7 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
   });
 
-  test('phone layout: equal top blocks, connector last, stacked header, tall FX board, tabs clear of the card', async ({ page }) => {
+  test('phone layout: equal top blocks, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
 
@@ -201,8 +201,11 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     // The FX board grows with its effects instead of the fixed 626px desktop height
     expect(card!.height).toBeGreaterThan(900);
 
-    // FX CHAIN / MCP buttons sit above the card, not over its header
+    // FX CHAIN / MCP switch is docked on the card: the pressed tab shares the card's top border
+    // (1px overlap) and the card is stacked above it, so the tabs never draw over the header
     const fxTab = await page.getByRole('button', { name: 'FX CHAIN', exact: true }).boundingBox();
-    expect(fxTab!.y + fxTab!.height).toBeLessThan(card!.y);
+    expect(Math.round(fxTab!.y + fxTab!.height - card!.y)).toBe(1);
+    const topAtTabFoot = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.te-ledger-card') !== null, [fxTab!.x + 10, card!.y + 2]);
+    expect(topAtTabFoot).toBe(true);
   });
 });

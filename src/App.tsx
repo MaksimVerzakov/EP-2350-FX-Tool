@@ -463,16 +463,18 @@ export const App: React.FC = () => {
             <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
-          {/* RIGHT COLUMN: FX CHAIN | MCP switch (a free-standing button pair just above the card, clear of its header) + Ledger Sheet / MCP Panel */}
+          {/* RIGHT COLUMN: FX CHAIN | MCP switch docked on the card + Ledger Sheet / MCP Panel.
+              The switch sits under the card (z-0 vs the card's z-10) and overlaps it by 1px, so the pressed tab
+              shares the card's top border and nothing draws over the header. */}
           <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center relative">
             <div
-              className="flex items-start self-end mr-[13px] mb-[14px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[40px] lg:right-[13px] z-20"
+              className="flex items-start self-end mr-[13px] mb-[7px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[33px] lg:right-[13px] z-0"
               role="group"
               aria-label="Right panel view"
             >
               {([
-                { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', title: 'Show preset FX chain editor' },
-                { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', title: 'Connect the EP-2350 tool to your AI' }
+                { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
+                { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', isEdge: true, title: 'Connect the EP-2350 tool to your AI' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
                 const isTing = theme === 'ting';
@@ -483,7 +485,7 @@ export const App: React.FC = () => {
                     onClick={() => setRightPanelMode(tab.id)}
                     aria-pressed={isActive}
                     title={tab.title}
-                    className={`te-dock-btn h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
+                    className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
                       isTing
                         ? 'bg-[#ece6d9] text-[#00503a]'
                         : 'bg-[#e4e5e4] text-[#141617]'
