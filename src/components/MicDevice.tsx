@@ -334,7 +334,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                 y="120"
                 textAnchor="end"
                 fill="#F15A22"
-                className="font-te-regular text-[13px] font-bold tracking-wide"
+                className="font-te-medium text-te-md tracking-wide"
               >
                 Push
               </text>
@@ -368,7 +368,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
                 y="263"
                 textAnchor="end"
                 fill="#F15A22"
-                className="font-te-regular text-[13px] font-bold tracking-wide"
+                className="font-te-medium text-te-md tracking-wide"
               >
                 Shake
               </text>

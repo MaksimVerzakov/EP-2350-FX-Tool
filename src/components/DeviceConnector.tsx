@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { ThemeMode } from '../types/config';
+import { bottomBevelPoints, rightBevelPoints, useBlockWidth } from './useBlockWidth';
 
 interface DeviceConnectorProps {
   theme: ThemeMode;
@@ -19,16 +20,15 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const EDGE = '#141617';
 /**
- * Block face size: 8 x 3 grid cells of 25px (+1px so both borders sit on grid lines).
+ * Block face size: 10 x 3 grid cells of 25px (+1px so both borders sit on grid lines), the same as the
+ * logo and Export/Import blocks. On phones it stretches to the FX card's width (measured, see useBlockWidth).
  * Bevels add 5px on the right and bottom; the block is lifted by that depth so its back face,
  * not its front, sits on the grid.
  */
-const BLOCK_W = 201;
 const BLOCK_H = 76;
 /** Header row height, identical to the Export/Import block. */
 const HEADER_H = 25;
 /** Inner body size (inside the 1px border, below the header row). */
-const BODY_W = BLOCK_W - 2;
 const BODY_H = BLOCK_H - 2 - HEADER_H;
 
 /** Flat floppy glyph in the style of the EP-133 "FLOPPY!" screen icon (cut-outs are transparent). */
@@ -172,14 +172,14 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
     savedTimer.current = setTimeout(() => setSaveState('idle'), 1600);
   };
 
-  const W = BLOCK_W;
+  const [wrapRef, W] = useBlockWidth<HTMLDivElement>();
   const H = BLOCK_H;
   const bevel = (points: string, fill: string, key: string) => (
     <polygon key={key} points={points} fill={fill} stroke={EDGE} strokeWidth="0.9" strokeLinejoin="round" />
   );
 
   return (
-    <div className="relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]" data-testid="device-connector">
+    <div ref={wrapRef} className="w-full sm:w-auto relative -left-[5px] -top-[5px] pr-[5px] pb-[5px]" data-testid="device-connector">
       {/* 45° axonometric bevels (bottom & right), colour-matched to the faces beside them */}
       <svg
         className="absolute inset-0 pointer-events-none"
@@ -187,16 +187,16 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
         viewBox={`0 0 ${W + 5} ${H + 5}`}
         fill="none"
       >
-        {bevel(`0.5,${H - 0.5} ${W - 0.5},${H - 0.5} ${W + 4.5},${H + 4.5} 5.5,${H + 4.5}`, lightBevel, 'bottom')}
+        {bevel(bottomBevelPoints(0, W - 1, H), lightBevel, 'bottom')}
         {bevel(
-          `${W - 0.5},0.5 ${W + 4.5},5.5 ${W + 4.5},${HEADER_H + 5} ${W - 0.5},${HEADER_H}`,
+          rightBevelPoints(W, 0, HEADER_H),
           isConnected ? darkBevel : '#c94a1b',
           'right-top'
         )}
-        {bevel(`${W - 0.5},${HEADER_H} ${W + 4.5},${HEADER_H + 5} ${W + 4.5},${H + 4.5} ${W - 0.5},${H - 0.5}`, lightBevel, 'right-bottom')}
+        {bevel(rightBevelPoints(W, HEADER_H, H - 1), lightBevel, 'right-bottom')}
       </svg>
 
-      <div className="relative z-10 border border-[#141617] flex" style={{ width: W, height: H }}>
+      <div className="relative z-10 border border-[#141617] flex w-full sm:w-[251px]" style={{ height: H }}>
         {!isConnected ? (
           <button
             type="button"
@@ -222,7 +222,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               style={{ height: HEADER_H }}
             >
               <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
-              <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold whitespace-nowrap">
+              <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white whitespace-nowrap">
                 {!isSupported ? 'chrome / edge only' : isConnecting ? 'connecting…' : 'connect the mic'}
               </span>
               <Ring pos="right-[7px] top-[6px]" tone="border-[#141617]/55" />
@@ -234,7 +234,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               <Ring pos="bottom-[7px] left-[7px]" tone={lightRing} />
               <Ring pos="bottom-[7px] right-[7px]" tone={lightRing} />
               <UsbCable
-                width={BODY_W}
+                width={W - 2}
                 height={BODY_H}
                 mode={!isSupported ? 'out' : isConnecting ? 'in' : hovered ? 'loop' : 'out'}
                 dim={!isSupported}
@@ -265,7 +265,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 style={{ height: HEADER_H }}
               >
                 <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   save
                 </span>
               </span>
@@ -297,7 +297,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 }`}
                 style={{ height: HEADER_H }}
               >
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   eject
                 </span>
                 <Ring pos="right-[7px] top-[6px]" tone="border-white/40" />

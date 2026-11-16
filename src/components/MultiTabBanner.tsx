@@ -44,7 +44,7 @@ export const MultiTabBanner: React.FC<MultiTabBannerProps> = ({ theme }) => {
           {/* Header Bar */}
           <div className="h-[24px] bg-[#f15a22] border-b border-[#141617] flex items-center justify-center relative px-6">
             <span className="w-[11px] h-[11px] rounded-full border border-[#141617]/55 absolute left-[7px] top-[6px] pointer-events-none" />
-            <span className="font-te-regular text-[10px] tracking-wider uppercase text-white font-bold leading-none">
+            <span className="font-te-medium text-te-sm tracking-wider uppercase text-white leading-none">
               MULTIPLE TABS DETECTED
             </span>
             <span className="w-[11px] h-[11px] rounded-full border border-[#141617]/55 absolute right-[7px] top-[6px] pointer-events-none" />
@@ -79,7 +79,7 @@ export const MultiTabBanner: React.FC<MultiTabBannerProps> = ({ theme }) => {
 
             <h2
               id="multi-tab-banner-title"
-              className="font-te-regular text-[14px] tracking-wider uppercase leading-snug"
+              className="font-te-regular text-te-lg tracking-wider uppercase leading-snug"
             >
               EP-2350 FX TOOL IS OPEN IN ANOTHER TAB OR BROWSER
             </h2>

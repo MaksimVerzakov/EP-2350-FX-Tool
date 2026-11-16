@@ -57,24 +57,24 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
     isTing ? 'border-[#00503a] bg-[#f7f5ef]' : 'border-[#141617] bg-white'
   } p-3 flex flex-col gap-2 relative rounded-none`;
   const cardHeaderBorder = isTing ? 'border-[#d8ceba]' : 'border-[#eceeed]';
-  const codeClass = `flex-1 min-w-0 h-[26px] px-2 flex items-center font-mono text-[9.5px] truncate select-text border ${
+  const codeClass = `flex-1 min-w-0 h-[26px] px-2 flex items-center font-mono text-te-xs truncate select-text border ${
     isTing ? 'bg-[#ece6d9] text-[#003828] border-[#00503a]/30' : 'bg-[#f8f9f8] text-[#141617] border-[#141617]/20'
   }`;
-  const actionClass = `te-btn-3d te-btn-3d--pressable te-btn-3d--dark shrink-0 h-[26px] w-[96px] flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer text-white ${
+  const actionClass = `te-btn-3d te-btn-3d--pressable te-btn-3d--dark shrink-0 h-[26px] w-[96px] flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer text-white ${
     isTing ? 'bg-[#00503a] hover:bg-[#00664a]' : 'bg-[#141617] hover:bg-[#232628]'
   }`;
 
   const cardHeader = (num: string, title: string) => (
     <div className={`flex items-center gap-2 border-b ${cardHeaderBorder} pb-1.5`}>
-      <span className="font-mono text-[10px] font-bold text-[#f15a22]">{num}.</span>
-      <span className={`font-bold text-[12px] uppercase tracking-tight ${headingText}`}>{title}</span>
+      <span className="font-mono text-te-sm font-bold text-[#f15a22]">{num}.</span>
+      <span className={`font-te-bold text-te-md uppercase tracking-tight ${headingText}`}>{title}</span>
     </div>
   );
 
   return (
     <div className="te-bevel-frame w-full">
       <div
-        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10"
+        className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-auto sm:h-[626px] relative z-10"
         data-testid="mcp-panel"
       >
         {/* 1. TOP HEADER TAB: same structure and size as the PresetLedger header */}
@@ -96,30 +96,30 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
           </div>
 
           {/* Title; 25px content height keeps the header the same size as the FX board's */}
-          <h2 className="h-[25px] flex items-center font-mono font-bold text-[10.5px] tracking-wider uppercase">
+          <h2 className="h-[25px] flex items-center font-mono font-bold text-te-sm tracking-wider uppercase">
             ADD EP MIC TOOL TO YOUR AI
           </h2>
         </div>
 
         {/* 2. BODY: same canvas as the FX chain */}
-        <div className={`flex-1 min-h-0 overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
+        <div className={`flex-1 min-h-0 sm:overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
           <section className={cardClass} data-testid="mcp-how-it-works">
             {cardHeader('01', 'HOW IT WORKS')}
             <ol className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
               {STEPS.map(([title, text], i) => (
                 <li key={title} className="flex items-start gap-2">
                   <span
-                    className={`te-btn-3d shrink-0 w-[22px] h-[22px] flex items-center justify-center font-mono text-[9px] font-bold ${
+                    className={`te-btn-3d shrink-0 w-[22px] h-[22px] flex items-center justify-center font-mono text-te-xs font-bold ${
                       isTing ? 'bg-[#ece6d9] text-[#00503a]' : 'bg-[#e4e5e4] text-[#141617]'
                     }`}
                   >
                     {i + 1}
                   </span>
                   <span className="flex flex-col">
-                    <span className={`font-mono text-[9.5px] font-bold uppercase tracking-wider ${headingText}`}>
+                    <span className={`font-mono text-te-xs font-bold uppercase tracking-wider ${headingText}`}>
                       {title}
                     </span>
-                    <span className={`font-mono text-[9.5px] leading-snug ${mutedText}`}>{text}</span>
+                    <span className={`font-mono text-te-xs leading-snug ${mutedText}`}>{text}</span>
                   </span>
                 </li>
               ))}
@@ -128,7 +128,7 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
 
           <section className={cardClass} data-testid="mcp-how-to-connect">
             {cardHeader('02', 'HOW TO CONNECT')}
-            <p className={`font-mono text-[9.5px] leading-snug ${mutedText}`}>
+            <p className={`font-mono text-te-xs leading-snug ${mutedText}`}>
               Add this link to your AI as a connector (remote MCP server).
             </p>
             <div className="flex items-center gap-2" data-testid="mcp-url">
@@ -143,10 +143,10 @@ export const McpPanel: React.FC<McpPanelProps> = ({ theme = 'fx' }) => {
             <ul className="flex flex-col gap-1.5 pt-1" data-testid="mcp-apps">
               {APPS.map(([app, where]) => (
                 <li key={app} className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2">
-                  <span className={`sm:w-[112px] shrink-0 font-mono text-[9px] font-bold uppercase tracking-wider ${headingText}`}>
+                  <span className={`sm:w-[112px] shrink-0 font-mono text-te-xs font-bold uppercase tracking-wider ${headingText}`}>
                     {app}
                   </span>
-                  <span className={`font-mono text-[9.5px] leading-snug ${mutedText}`}>{where}</span>
+                  <span className={`font-mono text-te-xs leading-snug ${mutedText}`}>{where}</span>
                 </li>
               ))}
             </ul>

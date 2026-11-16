@@ -2128,4 +2128,43 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
 }
 console.log('✓ Suite 17: Remote MCP server (Streamable HTTP) and Cloudflare Worker verified');
 
-console.log('\n=== ALL 17 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 18: Design system: type scale and font roles
+// ============================================================================
+{
+  const listTsx = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory() ? listTsx(path.join(dir, d.name)) : d.name.endsWith('.tsx') ? [path.join(dir, d.name)] : []
+    );
+  const tsxFiles = listTsx(path.join(ROOT_DIR, 'src'));
+
+  // 18a. Only the four te-* sizes from tailwind.config.js (plus the 44px EP logo)
+  const twConfig = fs.readFileSync(path.join(ROOT_DIR, 'tailwind.config.js'), 'utf8');
+  for (const [name, px] of [['te-xs', '9px'], ['te-sm', '10.5px'], ['te-md', '12px'], ['te-lg', '14px']]) {
+    assert.ok(twConfig.includes(`'${name}': '${px}'`), `tailwind.config.js must define ${name} = ${px}`);
+  }
+  for (const file of tsxFiles) {
+    const src = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(ROOT_DIR, file);
+    const arbitrary = (src.match(/\btext-\[\d+(?:\.\d+)?px\]/g) || []).filter((c) => c !== 'text-[44px]');
+    assert.deepStrictEqual(arbitrary, [], `${rel} must use the text-te-* scale, found ${arbitrary.join(', ')}`);
+    const stock = src.match(/(?<![\w-])text-(xs|sm|base|lg|[2-9]?xl)\b/g) || [];
+    assert.deepStrictEqual(stock, [], `${rel} must use the text-te-* scale, found ${stock.join(', ')}`);
+    // 18b. TechnoType Regular has no bold face: bold text must use the Medium or Bold face, not faux bold
+    assert.ok(!/font-te-regular[^"`]*font-bold|font-bold[^"`]*font-te-regular/.test(src), `${rel} must not fake bold on TechnoType Regular`);
+  }
+
+  // 18c. Card and empty-state titles share one style
+  const titleStyle = 'font-te-bold text-te-md uppercase tracking-tight';
+  const ledgerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/PresetLedger.tsx'), 'utf8');
+  assert.ok(ledgerSrc.split(titleStyle).length - 1 >= 6, 'effect, modulation and empty-state titles must use the shared title style');
+  assert.ok(fs.readFileSync(path.join(ROOT_DIR, 'src/components/McpPanel.tsx'), 'utf8').includes(titleStyle), 'MCP card titles must use the shared title style');
+
+  // 18d. Only the web fonts that are used: IBM Plex Mono 400, 700 and 400 italic; no Inter
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.ok(!indexHtml.includes('family=Inter'), 'index.html must not load Inter');
+  assert.ok(indexHtml.includes('IBM+Plex+Mono:ital,wght@0,400;0,700;1,400'), 'index.html must load only the used Plex Mono weights');
+}
+console.log('✓ Suite 18: Design system (type scale and font roles) verified');
+
+console.log('\n=== ALL 18 PRODUCTION TEST SUITES PASSED (100%) ===');

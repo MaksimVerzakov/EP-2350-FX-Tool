@@ -173,4 +173,49 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(bus1Btn).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
   });
+
+  test('phone layout: top blocks joined at FX card width, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+
+    // No version number in the banner
+    await expect(page.getByText(/^V \d+\.\d+/)).toHaveCount(0);
+
+    // Logo, Export/Import and connector blocks stretch to the FX card's width and stack joined in that
+    // order: each face starts on the bottom border of the one above (1px shared border, no gap)
+    const faces = await page.evaluate(() =>
+      [
+        document.querySelector('[aria-label="Theme selector"]')!.closest('.h-\\[76px\\]')!,
+        document.querySelector('[aria-label="Export and Import actions"]')!.closest('.h-\\[76px\\]')!,
+        document.querySelector('[data-testid="device-connector"] > div.border')!
+      ].map((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      })
+    );
+    const cardBox = await page.locator('.te-ledger-card').first().boundingBox();
+    for (const f of faces) {
+      expect(f.x).toBe(Math.round(cardBox!.x));
+      expect(f.w).toBe(Math.round(cardBox!.width));
+    }
+    expect(faces[1].y).toBe(faces[0].y + faces[0].h - 1);
+    expect(faces[2].y).toBe(faces[1].y + faces[1].h - 1);
+
+    // Header: full-width preset selector with the notes field on its own row below
+    const selector = await page.getByRole('group', { name: 'Preset selector' }).boundingBox();
+    const notes = await page.getByPlaceholder('PRESET NOTES / COMMENT...').boundingBox();
+    const card = await page.locator('.te-ledger-card').first().boundingBox();
+    expect(selector!.width).toBeGreaterThan(card!.width - 40);
+    expect(notes!.y).toBeGreaterThan(selector!.y + selector!.height);
+
+    // The FX board grows with its effects instead of the fixed 626px desktop height
+    expect(card!.height).toBeGreaterThan(900);
+
+    // FX CHAIN / MCP switch is docked on the card: the pressed tab shares the card's top border
+    // (1px overlap) and the card is stacked above it, so the tabs never draw over the header
+    const fxTab = await page.getByRole('button', { name: 'FX CHAIN', exact: true }).boundingBox();
+    expect(Math.round(fxTab!.y + fxTab!.height - card!.y)).toBe(1);
+    const topAtTabFoot = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.te-ledger-card') !== null, [fxTab!.x + 10, card!.y + 2]);
+    expect(topAtTabFoot).toBe(true);
+  });
 });
