@@ -8,10 +8,29 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  Trash2,
-  GitBranch,
-  PowerOff
+  Trash2
 } from 'lucide-react';
+
+// Line icons drawn in the EP display style (square caps, 1.5 stroke, currentColor).
+const BusIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true">
+    <path d="M4.5 17H2V6.5Q2 5 3.5 5h17Q22 5 22 6.5V17h-2.5M14.5 17h-5" />
+    <rect x="4" y="7.5" width="4" height="3" />
+    <rect x="10" y="7.5" width="4" height="3" />
+    <rect x="16" y="7.5" width="4" height="3" />
+    <path d="M2 13h20" />
+    <circle cx="7" cy="17" r="2" />
+    <circle cx="17" cy="17" r="2" />
+  </svg>
+);
+
+// Bypass: the signal runs straight past an (empty, dashed) effect block.
+const BypassIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true">
+    <rect x="8" y="3.5" width="8" height="6" strokeDasharray="2 2" />
+    <path d="M2 16h19M18 13l3 3-3 3" />
+  </svg>
+);
 
 interface PresetLedgerProps {
   preset: PresetConfig;
@@ -703,7 +722,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               {activeBus === 2 && (
                 <button
                   onClick={() => handleTransferBus(globalIdx)}
-                  className="p-1 hover:bg-[#00a69c] hover:text-white text-[#00a69c] active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
+                  className={`p-1 ${
+                    isTing
+                      ? 'hover:bg-[#00503a] text-[#00503a]'
+                      : 'hover:bg-[#141617] text-[#141617]'
+                  } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
                   title="Move effect to Bus 1"
                 >
                   <ArrowLeft className="w-3 h-3" />
@@ -743,7 +766,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 <button
                   disabled={isSample}
                   onClick={() => handleTransferBus(globalIdx)}
-                  className="p-1 hover:bg-[#d99b26] hover:text-white text-[#d99b26] disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer"
+                  className={`p-1 ${
+                    isTing
+                      ? 'hover:bg-[#00503a] text-[#00503a]'
+                      : 'hover:bg-[#141617] text-[#141617]'
+                  } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
                   title={isSample ? 'SAMPLE is restricted to Bus 1' : 'Move effect to Bus 2'}
                 >
                   <ArrowRight className="w-3 h-3" />
@@ -879,7 +906,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </svg>
         </button>
         <div
-          className={`h-[22px] translate-y-[3px] px-2.5 flex items-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
+          className={`h-[22px] w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
             isTing
               ? 'bg-[#dbd0b9] text-[#00503a] border-[#00503a]'
               : 'bg-[#dbdddb] text-[#141617] border-[#141617]'
@@ -908,12 +935,12 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     return (
       <div className="te-bevel-frame w-full">
       <div className="te-ledger-card w-full flex flex-col select-none overflow-hidden h-[626px] relative z-10">
-        {/* 1. TOP HEADER TAB (FX OFF / BYPASS STATE) */}
+        {/* 1. TOP HEADER TAB: same colour and selector width as when a preset is selected */}
         <div
           className={`relative ${
             isTing
               ? 'bg-[#00503a] border-b border-[#00281c]'
-              : 'bg-[#141617] border-b border-[#000000]'
+              : 'bg-[#f15a22] border-b border-[#141617]'
           } text-white px-4 py-2 border-t border-white/25 flex items-center justify-between gap-3 shrink-0`}
         >
           {/* 45° Extruded Binder Tab Edge on the Right */}
@@ -921,7 +948,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             <svg className="w-full h-full" viewBox="0 0 12 40" preserveAspectRatio="none">
               <polygon
                 points="0,0 12,12 12,40 0,40"
-                fill={isTing ? '#003828' : '#000000'}
+                fill={isTing ? '#003828' : '#d14612'}
                 stroke={isTing ? '#00281c' : '#141617'}
                 strokeWidth="1"
               />
@@ -929,32 +956,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* FX OFF Selector (EP Sample Tool style) */}
             {renderPresetSelectorBar({
-              label: (
-                <span className="text-[#f15a22] flex items-center gap-1.5">
-                  <PowerOff className="w-3 h-3" />
-                  FX OFF
-                </span>
-              ),
+              label: 'FX OFF',
               onPrev: () => onSelectPreset?.(totalPresets - 1),
               prevTitle: `Select Preset ${totalPresets}`,
               onNext: () => onSelectPreset?.(0),
               nextTitle: 'Select Preset 1',
             })}
-
-            <span
-              className={`${
-                isTing ? 'bg-[#003828]' : 'bg-black'
-              } text-white/80 px-2.5 py-1 font-mono text-xs font-bold tracking-wider uppercase border border-white/25 shrink-0`}
-            >
-              BYPASS // DRY MIC
-            </span>
           </div>
-
-          <span className="font-mono text-[10px] tracking-wide text-white/60 uppercase truncate hidden sm:inline">
-            ALL PRESET LEDS OFF ON HARDWARE
-          </span>
         </div>
 
         {/* 2. EFFECTS SWITCHED OFF EMPTY STATE BODY */}
@@ -965,35 +974,10 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         >
           <div
             className={`w-full h-full flex flex-col items-center justify-center gap-5 border border-dashed ${
-              isTing
-                ? 'border-[#b2aca1] bg-[#ede8dd]'
-                : 'border-[#d2d5d2] bg-[#fbfcfb]'
+              isTing ? 'border-[#b2aca1]' : 'border-[#d2d5d2]'
             } rounded-none p-8 text-center`}
           >
-            {/* 4 Unlit Hardware LEDs + PowerOff Badge */}
-            <div className="flex flex-col items-center gap-2.5">
-              <div
-                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center ${
-                  isTing
-                    ? 'border-[#00503a]/30 bg-[#e4dac5] text-[#00503a]'
-                    : 'border-[#141617]/25 bg-[#eceeed] text-[#141617]'
-                }`}
-              >
-                <PowerOff className="w-5 h-5 text-[#f15a22]" />
-              </div>
-              <div className="flex items-center gap-2 px-3 py-1 bg-[#181a1c] border border-black rounded-none">
-                {[0, 1, 2, 3].map((led) => (
-                  <span
-                    key={led}
-                    className="w-2.5 h-2.5 rounded-full bg-[#2b3034] border border-black"
-                    title={`Preset LED ${led + 1}: OFF`}
-                  />
-                ))}
-                <span className="font-mono text-[9px] font-bold tracking-wider text-white/70 uppercase ml-1">
-                  LED 1-4 OFF
-                </span>
-              </div>
-            </div>
+            <BypassIcon className={`w-10 h-10 ${isTing ? 'text-[#00503a]/40' : 'text-[#141617]/35'}`} />
 
             <div className="max-w-md flex flex-col gap-1.5">
               <span
@@ -1008,7 +992,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   isTing ? 'text-[#5b695e]' : 'text-[#73787a]'
                 }`}
               >
-                No FX preset slot is active on the microphone. Vocal audio passes through dry without effect processing while sample triggers remain available. Press the orange Preset button on the mic or choose a slot below to enable effects.
+                Press the orange Preset button on the mic or choose a slot below to enable effects.
               </span>
             </div>
 
@@ -1079,7 +1063,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 placeholder="PRESET NAME"
                 aria-label={`Preset ${preset.pos + 1} name`}
                 maxLength={20}
-                className={`bg-transparent font-mono font-bold text-[10.5px] tracking-wider uppercase focus:outline-none w-[150px] text-center ${
+                className={`bg-transparent font-mono font-bold text-[10.5px] tracking-wider uppercase focus:outline-none w-full text-center ${
                   isTing
                     ? 'text-[#00503a] placeholder:text-[#00503a]/50'
                     : 'text-[#141617] placeholder:text-[#141617]/50'
@@ -1143,7 +1127,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             <span
               className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
                 activeBus === 1
-                  ? 'bg-[#00a69c] border-[#141617]'
+                  ? 'bg-[#f15a22] border-[#141617]'
                   : isTing
                   ? 'bg-transparent border-[#5b695e]'
                   : 'bg-transparent border-[#73787a]'
@@ -1170,7 +1154,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             <span
               className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
                 activeBus === 2
-                  ? 'bg-[#d99b26] border-[#141617]'
+                  ? 'bg-[#f15a22] border-[#141617]'
                   : isTing
                   ? 'bg-transparent border-[#5b695e]'
                   : 'bg-transparent border-[#73787a]'
@@ -1221,12 +1205,10 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         {visibleBusItems.length === 0 ? (
           <div
             className={`w-full h-full flex-1 flex flex-col items-center justify-center gap-3 border border-dashed ${
-              isTing
-                ? 'border-[#b2aca1] bg-[#ede8dd]'
-                : 'border-[#d2d5d2] bg-[#fbfcfb]'
+              isTing ? 'border-[#b2aca1]' : 'border-[#d2d5d2]'
             } rounded-none p-6 text-center`}
           >
-            <GitBranch className={`w-8 h-8 ${activeBus === 1 ? 'text-[#00a69c]/40' : 'text-[#d99b26]/40'}`} />
+            <BusIcon className={`w-10 h-10 ${isTing ? 'text-[#00503a]/40' : 'text-[#141617]/35'}`} />
             <div className="text-center">
               <span
                 className={`block font-mono text-[11px] font-bold ${
