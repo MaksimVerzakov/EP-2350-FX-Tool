@@ -2039,6 +2039,38 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   const rebuilt = await buildSkill({ outDir: path.join(TMP_TEST_BUILD, 'skill-again'), appUrl: 'https://example.test/app/', version: '9.9.9-test' });
   assert.ok(fs.readFileSync(rebuilt.zipPath).equals(zip), 'The same sources must produce the same zip');
 
+  // 16c2. One-link entry points: short skill.md and the Agent Skills discovery index (schema 0.2.0,
+  // as read by `npx skills add <url>`: archive entry, sha256 digest, SKILL.md at the archive root)
+  const { WELL_KNOWN_DIR, DISCOVERY_SCHEMA } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/build-skill.mjs')).href);
+  const siteOut = path.dirname(skillOut);
+  assert.strictEqual(fs.readFileSync(path.join(siteOut, 'skill.md'), 'utf8'), skillMd, 'skill.md is SKILL.md at a short URL');
+  const index = JSON.parse(fs.readFileSync(path.join(siteOut, WELL_KNOWN_DIR, 'index.json'), 'utf8'));
+  assert.strictEqual(index.$schema, DISCOVERY_SCHEMA);
+  assert.strictEqual(DISCOVERY_SCHEMA, 'https://schemas.agentskills.io/discovery/0.2.0/schema.json');
+  assert.strictEqual(index.skills.length, 1);
+  const entry = index.skills[0];
+  assert.strictEqual(entry.name, SKILL_DIR_NAME);
+  assert.match(entry.name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
+  assert.strictEqual(entry.type, 'archive');
+  assert.ok(entry.description.length > 0 && entry.description.length <= 1024);
+  assert.ok(skillMd.includes(`\ndescription: ${entry.description}\n`), 'Index description matches the SKILL.md frontmatter');
+  const flat = fs.readFileSync(path.join(siteOut, WELL_KNOWN_DIR, entry.url));
+  const crypto = await import('node:crypto');
+  assert.strictEqual(entry.digest, `sha256:${crypto.createHash('sha256').update(flat).digest('hex')}`, 'Digest must match the archive');
+  {
+    const end = flat.length - 22;
+    let off = flat.readUInt32LE(end + 16);
+    const names = [];
+    for (let i = 0; i < flat.readUInt16LE(end + 10); i++) {
+      const nameLen = flat.readUInt16LE(off + 28);
+      names.push(flat.toString('utf8', off + 46, off + 46 + nameLen));
+      off += 46 + nameLen + flat.readUInt16LE(off + 30) + flat.readUInt16LE(off + 32);
+    }
+    assert.deepStrictEqual(names.sort(), [...files].sort(), 'Discovery archive holds the skill files with SKILL.md at its root');
+  }
+  const deployYml = fs.readFileSync(path.join(ROOT_DIR, '.github/workflows/deploy.yml'), 'utf8');
+  assert.ok(/include-hidden-files: true/.test(deployYml), 'Pages upload must include dist/.well-known/');
+
   // 16d. Unresolved imports fail the bundle instead of producing a broken validator
   const { bundleTs } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-ts.mjs')).href);
   const brokenEntryDir = path.join(TMP_TEST_BUILD, 'bundle-broken');
