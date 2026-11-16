@@ -485,7 +485,7 @@ export const App: React.FC = () => {
                     onClick={() => setRightPanelMode(tab.id)}
                     aria-pressed={isActive}
                     title={tab.title}
-                    className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-[8.5px] font-bold tracking-normal uppercase cursor-pointer ${
+                    className={`te-dock-btn ${tab.isEdge ? 'te-dock-btn--edge' : ''} h-[26px] ${tab.widthClass} px-[5px] flex items-center justify-center gap-[4px] font-mono text-te-xs font-bold tracking-normal uppercase cursor-pointer ${
                       isTing
                         ? 'bg-[#ece6d9] text-[#00503a]'
                         : 'bg-[#e4e5e4] text-[#141617]'

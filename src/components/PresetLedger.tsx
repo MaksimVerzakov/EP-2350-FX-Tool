@@ -665,11 +665,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         >
           {/* Sequential Step Counter & Effect Name + Modulation Badges */}
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-mono text-[10px] font-bold text-[#f15a22]">
+            <span className="font-mono text-te-sm font-bold text-[#f15a22]">
               {(busPosition + 1).toString().padStart(2, '0')}.
             </span>
             <span
-              className={`font-bold text-[12px] uppercase tracking-tight ${
+              className={`font-te-bold text-te-md uppercase tracking-tight ${
                 isTing ? 'text-[#00503a]' : 'text-[#141617]'
               } truncate`}
             >
@@ -680,7 +680,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               <div className="flex items-center gap-1 shrink-0 ml-1">
                 {isHandleTarget && (
                   <span
-                    className="text-[7.5px] font-mono font-bold bg-[#f15a22] text-white px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight"
+                    className="text-te-xs font-mono font-bold bg-[#f15a22] text-white px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight"
                     title={`Handle modulates ${preset.handle?.param}`}
                   >
                     HNDL: {preset.handle?.param}
@@ -688,7 +688,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 )}
                 {isShakeTarget && (
                   <span
-                    className={`text-[7.5px] font-mono font-bold ${
+                    className={`text-te-xs font-mono font-bold ${
                       isTing ? 'bg-[#00503a]' : 'bg-[#141617]'
                     } text-white px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight`}
                     title={`Shake modulates ${preset.shake?.param}`}
@@ -698,7 +698,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 )}
                 {isLfoTarget && (
                   <span
-                    className="text-[7.5px] font-mono font-bold bg-[#00a69c] text-white px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight"
+                    className="text-te-xs font-mono font-bold bg-[#00a69c] text-white px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight"
                     title={`LFO modulates ${preset.lfo?.param}`}
                   >
                     LFO: {preset.lfo?.param}
@@ -906,7 +906,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           </svg>
         </button>
         <div
-          className={`h-[22px] min-w-0 flex-1 sm:flex-none sm:w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-[10.5px] tracking-wider uppercase border-y z-0 whitespace-nowrap ${
+          className={`h-[22px] min-w-0 flex-1 sm:flex-none sm:w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-te-sm tracking-wider uppercase border-y z-0 whitespace-nowrap ${
             isTing
               ? 'bg-[#dbd0b9] text-[#00503a] border-[#00503a]'
               : 'bg-[#dbdddb] text-[#141617] border-[#141617]'
@@ -981,14 +981,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
             <div className="max-w-md flex flex-col gap-1.5">
               <span
-                className={`font-mono text-sm font-bold tracking-wider uppercase ${
+                className={`font-te-bold text-te-md uppercase tracking-tight ${
                   isTing ? 'text-[#00503a]' : 'text-[#141617]'
                 }`}
               >
                 EFFECTS SWITCHED OFF (BYPASS)
               </span>
               <span
-                className={`font-mono text-[10px] leading-relaxed ${
+                className={`font-mono text-te-sm leading-relaxed ${
                   isTing ? 'text-[#5b695e]' : 'text-[#73787a]'
                 }`}
               >
@@ -1012,10 +1012,10 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     } hover:text-white transition-colors cursor-pointer flex flex-col items-start gap-0.5 active:translate-x-[1px] active:translate-y-[1px]`}
                     title={`Switch on Preset ${idx + 1} (${label})`}
                   >
-                    <span className="font-mono text-[9px] font-bold text-[#f15a22] uppercase">
+                    <span className="font-mono text-te-xs font-bold text-[#f15a22] uppercase">
                       SLOT 0{idx + 1}
                     </span>
-                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-tight truncate w-full text-left">
+                    <span className="font-mono text-te-sm font-bold uppercase tracking-tight truncate w-full text-left">
                       {label}
                     </span>
                   </button>
@@ -1063,7 +1063,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 placeholder="PRESET NAME"
                 aria-label={`Preset ${preset.pos + 1} name`}
                 maxLength={20}
-                className={`bg-transparent font-mono font-bold text-[10.5px] tracking-wider uppercase focus:outline-none w-full text-center ${
+                className={`bg-transparent font-mono font-bold text-te-sm tracking-wider uppercase focus:outline-none w-full text-center ${
                   isTing
                     ? 'text-[#00503a] placeholder:text-[#00503a]/50'
                     : 'text-[#141617] placeholder:text-[#141617]/50'
@@ -1091,7 +1091,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             onChange={(e) => onUpdatePreset({ ...preset, comment: e.target.value })}
             placeholder="PRESET NOTES / COMMENT..."
             title={preset.comment || 'Preset comment / performance notes'}
-            className="h-[22px] translate-y-[3px] w-full bg-black/25 text-white/95 placeholder:text-white/45 px-2.5 font-mono text-[10px] tracking-wide border border-white/25 focus:outline-none focus:bg-black/50 focus:border-white truncate"
+            className="h-[22px] translate-y-[3px] w-full bg-black/25 text-white/95 placeholder:text-white/45 px-2.5 font-mono text-te-sm tracking-wide border border-white/25 focus:outline-none focus:bg-black/50 focus:border-white truncate"
           />
         </div>
       </div>
@@ -1114,7 +1114,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             onClick={() => setActiveBus(1)}
             aria-pressed={activeBus === 1}
             title="Switch to Bus 1 (Primary signal path)"
-            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-wider uppercase cursor-pointer ${
               isTing
                 ? 'bg-[#ece6d9] text-[#00503a]'
                 : 'bg-[#e4e5e4] text-[#141617]'
@@ -1141,7 +1141,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             onClick={() => setActiveBus(2)}
             aria-pressed={activeBus === 2}
             title="Switch to Bus 2 (Parallel signal path)"
-            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-wider uppercase cursor-pointer ${
+            className={`te-btn-3d h-[24px] w-[78px] px-2 flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-wider uppercase cursor-pointer ${
               isTing
                 ? 'bg-[#ece6d9] text-[#00503a]'
                 : 'bg-[#e4e5e4] text-[#141617]'
@@ -1165,7 +1165,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         </div>
 
         {/* Plain-text effect counts underneath each bus */}
-        <div className="w-[156px] grid grid-cols-2 mt-[6px] font-mono text-[8.5px] font-bold tracking-wider uppercase leading-none text-center">
+        <div className="w-[156px] grid grid-cols-2 mt-[6px] font-mono text-te-xs font-bold tracking-wider uppercase leading-none text-center">
           <span
             className={
               activeBus === 1
@@ -1211,14 +1211,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             <BusIcon className={`w-10 h-10 ${isTing ? 'text-[#00503a]/40' : 'text-[#141617]/35'}`} />
             <div className="text-center">
               <span
-                className={`block font-mono text-[11px] font-bold ${
+                className={`block font-te-bold text-te-md uppercase tracking-tight ${
                   isTing ? 'text-[#00503a]' : 'text-[#141617]'
                 }`}
               >
                 NO EFFECTS IN BUS {activeBus}
               </span>
               <span
-                className={`block font-mono text-[9px] ${
+                className={`block font-mono text-te-xs ${
                   isTing ? 'text-[#5b695e]' : 'text-[#73787a]'
                 } mt-0.5`}
               >
@@ -1231,7 +1231,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               data-add-effect-trigger="true"
               disabled={isAtEffectLimit}
               onClick={(e) => openAddMenu(e, undefined, 'empty')}
-              className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer text-white ${
+              className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer text-white ${
                 isTing
                   ? 'bg-[#00503a] hover:bg-[#00664a]'
                   : 'bg-[#141617] hover:bg-[#232628]'
@@ -1258,7 +1258,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 data-add-effect-trigger="true"
                 disabled={isAtEffectLimit}
                 onClick={(e) => openAddMenu(e, undefined, 'bottom')}
-                className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest uppercase cursor-pointer text-white ${
+                className={`te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[26px] px-3.5 flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer text-white ${
                   isTing
                     ? 'bg-[#00503a] hover:bg-[#00664a]'
                     : 'bg-[#141617] hover:bg-[#232628]'
@@ -1296,10 +1296,10 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               } pb-1 mb-1`}
             >
               <div className="flex items-baseline gap-2">
-                <span className="text-[9.5px] font-mono font-bold uppercase tracking-wider text-[#f15a22]">
+                <span className="text-te-xs font-mono font-bold uppercase tracking-wider text-[#f15a22]">
                   ADD EFFECT (BUS {activeBus})
                 </span>
-                <span className="text-[8px] font-mono text-[#73787a]">
+                <span className="text-te-xs font-mono text-[#73787a]">
                   {typeof addMenuTarget.insertIndex === 'number'
                     ? `INSERT @ #${addMenuTarget.insertIndex + 1}`
                     : 'APPEND'}
@@ -1307,7 +1307,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
               </div>
               <button
                 onClick={() => setAddMenuTarget(null)}
-                className="text-xs text-[#73787a] hover:text-[#141617] cursor-pointer"
+                className="text-te-md text-[#73787a] hover:text-[#141617] cursor-pointer"
               >
                 ✕
               </button>
@@ -1324,11 +1324,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   return (
                     <div
                       key={key}
-                      className="px-2 py-1 text-[9px] font-mono text-[#abb5ba] flex items-center justify-between cursor-not-allowed bg-black/5"
+                      className="px-2 py-1 text-te-xs font-mono text-[#abb5ba] flex items-center justify-between cursor-not-allowed bg-black/5"
                       title="The SAMPLE primitive is restricted to Bus 1 in firmware"
                     >
                       <span>{meta.displayName}</span>
-                      <span className="text-[7.5px] italic text-[#f15a22]">
+                      <span className="text-te-xs italic text-[#f15a22]">
                         BUS 1 ONLY
                       </span>
                     </div>
@@ -1339,11 +1339,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   return (
                     <div
                       key={key}
-                      className="px-2 py-1 text-[9px] font-mono text-[#abb5ba] flex items-center justify-between cursor-not-allowed bg-black/5"
+                      className="px-2 py-1 text-te-xs font-mono text-[#abb5ba] flex items-center justify-between cursor-not-allowed bg-black/5"
                       title="This effect can only be used once per preset across both buses"
                     >
                       <span>{meta.displayName}</span>
-                      <span className="text-[7.5px] italic">
+                      <span className="text-te-xs italic">
                         1x (IN BUS {existingBus})
                       </span>
                     </div>
@@ -1354,14 +1354,14 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   <button
                     key={key}
                     onClick={() => handleAddEffect(key as EffectType, addMenuTarget.insertIndex)}
-                    className={`px-2 py-1 text-[9.5px] font-mono font-bold ${
+                    className={`px-2 py-1 text-te-xs font-mono font-bold ${
                       isTing
                         ? 'text-[#00503a] hover:bg-[#f15a22]'
                         : 'text-[#141617] hover:bg-[#f15a22]'
                     } hover:text-white flex items-center justify-between text-left transition-colors cursor-pointer rounded-none`}
                   >
                     <span>{meta.displayName}</span>
-                    <span className="text-[7.5px] opacity-70">
+                    <span className="text-te-xs opacity-70">
                       {meta.params.length} params
                     </span>
                   </button>
@@ -1411,8 +1411,8 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
           : 'te-card-3d border border-[#141617] bg-white p-2 flex flex-col justify-between rounded-none';
         const modHeaderBorder = isTing ? 'border-[#d8ceba]' : 'border-[#eceeed]';
         const modSelectClass = isTing
-          ? 'bg-[#ffffff] border border-[#00503a] text-[#00503a] text-[8.5px] font-mono px-1 py-0.5 rounded-none outline-none focus:border-[#f15a22] cursor-pointer truncate w-full disabled:opacity-40 disabled:pointer-events-none'
-          : 'bg-[#ffffff] border border-[#141617] text-[#141617] text-[8.5px] font-mono px-1 py-0.5 rounded-none outline-none focus:border-[#f15a22] cursor-pointer truncate w-full disabled:opacity-40 disabled:pointer-events-none';
+          ? 'bg-[#ffffff] border border-[#00503a] text-[#00503a] text-te-xs font-mono px-1 py-0.5 rounded-none outline-none focus:border-[#f15a22] cursor-pointer truncate w-full disabled:opacity-40 disabled:pointer-events-none'
+          : 'bg-[#ffffff] border border-[#141617] text-[#141617] text-te-xs font-mono px-1 py-0.5 rounded-none outline-none focus:border-[#f15a22] cursor-pointer truncate w-full disabled:opacity-40 disabled:pointer-events-none';
 
         return (
           <div
@@ -1436,7 +1436,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                       }`}
                     />
                     <span
-                      className={`font-mono text-[9px] font-bold tracking-wider uppercase ${
+                      className={`font-te-bold text-te-md uppercase tracking-tight ${
                         isTing ? 'text-[#00503a]' : 'text-[#141617]'
                       }`}
                     >
@@ -1446,7 +1446,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
                   <div className="flex items-center gap-1">
                     <span
-                      className={`text-[7px] font-mono font-bold uppercase transition-colors ${
+                      className={`text-te-xs font-mono font-bold uppercase transition-colors ${
                         preset.handle
                           ? 'text-[#f15a22]'
                           : 'text-[#8a9092]'
@@ -1488,7 +1488,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 <div className={`flex flex-col justify-between flex-1 transition-opacity duration-150 ${!preset.handle ? 'opacity-35 pointer-events-none' : ''}`}>
                   <div className="flex flex-col gap-1 mb-1.5">
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
                       <select
                         disabled={!preset.handle}
                         value={handleTargetVal}
@@ -1508,7 +1508,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
                       <select
                         disabled={!preset.handle || preset.handle.target === 'lfo'}
                         value={handleParamVal}
@@ -1582,7 +1582,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                       }`}
                     />
                     <span
-                      className={`font-mono text-[9px] font-bold tracking-wider uppercase ${
+                      className={`font-te-bold text-te-md uppercase tracking-tight ${
                         isTing ? 'text-[#00503a]' : 'text-[#141617]'
                       }`}
                     >
@@ -1592,7 +1592,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
                   <div className="flex items-center gap-1">
                     <span
-                      className={`text-[7px] font-mono font-bold uppercase transition-colors ${
+                      className={`text-te-xs font-mono font-bold uppercase transition-colors ${
                         preset.shake
                           ? 'text-[#f15a22]'
                           : 'text-[#8a9092]'
@@ -1634,7 +1634,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 <div className={`flex flex-col justify-between flex-1 transition-opacity duration-150 ${!preset.shake ? 'opacity-35 pointer-events-none' : ''}`}>
                   <div className="flex flex-col gap-1 mb-1.5">
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
                       <select
                         disabled={!preset.shake}
                         value={shakeTargetVal}
@@ -1657,7 +1657,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
                       <select
                         disabled={!preset.shake}
                         value={shakeParamVal}
@@ -1713,7 +1713,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                       }`}
                     />
                     <span
-                      className={`font-mono text-[9px] font-bold tracking-wider uppercase ${
+                      className={`font-te-bold text-te-md uppercase tracking-tight ${
                         isTing ? 'text-[#00503a]' : 'text-[#141617]'
                       }`}
                     >
@@ -1723,7 +1723,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
 
                   <div className="flex items-center gap-1">
                     <span
-                      className={`text-[7px] font-mono font-bold uppercase transition-colors ${
+                      className={`text-te-xs font-mono font-bold uppercase transition-colors ${
                         preset.lfo
                           ? 'text-[#f15a22]'
                           : 'text-[#8a9092]'
@@ -1765,7 +1765,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                 <div className={`flex flex-col justify-between flex-1 transition-opacity duration-150 ${!preset.lfo ? 'opacity-35 pointer-events-none' : ''}`}>
                   <div className="flex flex-col gap-1 mb-1.5">
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">TGT:</span>
                       <select
                         disabled={!preset.lfo}
                         value={lfoTargetVal}
@@ -1788,7 +1788,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <span className="text-[7.5px] font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
+                      <span className="text-te-xs font-mono font-bold text-[#73787a] uppercase w-8 shrink-0">PRM:</span>
                       <select
                         disabled={!preset.lfo}
                         value={lfoParamVal}

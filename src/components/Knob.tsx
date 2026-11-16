@@ -204,12 +204,12 @@ export const Knob: React.FC<KnobProps> = ({
     >
       {/* Parameter Label + Mod Indicator */}
       <div className="flex items-center justify-between w-full mb-0.5 px-0.5">
-        <span className="text-[8px] font-te-bold tracking-wider text-[#5b6670] uppercase truncate leading-none text-center w-full">
+        <span className="text-te-xs font-te-bold tracking-wider text-[#5b6670] uppercase truncate leading-none text-center w-full">
           {label}
         </span>
         {isModulated && (
           <span
-            className={`text-[6.5px] font-te-bold px-0.5 py-[0.5px] text-white rounded-[1px] leading-none uppercase shrink-0 ${
+            className={`text-te-xs font-te-bold px-0.5 py-[0.5px] text-white rounded-[1px] leading-none uppercase shrink-0 ${
               modulationSource === 'LFO'
                 ? 'bg-[#00a69c]'
                 : modulationSource === 'SHK'
@@ -295,7 +295,7 @@ export const Knob: React.FC<KnobProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onDoubleClick={onReset}
-          className="w-[52px] h-[17px] text-[9px] font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-[#141617] focus:border-[#f15a22] rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
+          className="w-[52px] h-[17px] text-te-xs font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-[#141617] focus:border-[#f15a22] rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
         />
       </div>
     </div>

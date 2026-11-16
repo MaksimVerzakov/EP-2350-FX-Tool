@@ -153,8 +153,8 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                     }`}
                   />
                   <span
-                    className={`font-te-regular text-[10px] tracking-wider uppercase leading-none pl-3.5 transition-colors ${
-                      isTing ? 'text-white font-bold' : 'text-white/75 group-hover:text-white'
+                    className={`font-te-medium text-te-sm tracking-wider uppercase leading-none pl-3.5 transition-colors ${
+                      isTing ? 'text-white' : 'text-white/75 group-hover:text-white'
                     }`}
                   >
                     TING
@@ -170,8 +170,8 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   aria-pressed={!isTing}
                 >
                   <span
-                    className={`font-te-regular text-[10px] tracking-wider uppercase leading-none pr-3.5 transition-colors ${
-                      !isTing ? 'text-white font-bold' : 'text-white/75 group-hover:text-white'
+                    className={`font-te-medium text-te-sm tracking-wider uppercase leading-none pr-3.5 transition-colors ${
+                      !isTing ? 'text-white' : 'text-white/75 group-hover:text-white'
                     }`}
                   >
                     FX
@@ -215,7 +215,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 />
 
                 <span
-                  className={`font-te-regular text-[13px] tracking-wider uppercase leading-none ${
+                  className={`font-te-regular text-te-md tracking-wider uppercase leading-none ${
                     isTing ? 'text-[#00503a]' : 'text-[#141617]'
                   }`}
                 >
@@ -294,7 +294,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
               >
                 <span className="w-[11px] h-[11px] rounded-full border border-[#141617]/55 absolute left-[7px] top-[6px] shrink-0" />
                 <Download className="w-2.5 h-2.5 text-white shrink-0 ml-2.5" />
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   EXPORT
                 </span>
               </button>
@@ -309,7 +309,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 title="Import config.json from TINGDISK"
               >
                 <Upload className="w-2.5 h-2.5 text-white shrink-0 mr-0.5" />
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold pr-2.5">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white pr-2.5">
                   IMPORT
                 </span>
                 <span className="w-[11px] h-[11px] rounded-full border border-white/40 group-hover:border-white/70 absolute right-[7px] top-[6px] shrink-0" />
@@ -364,7 +364,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   type="text"
                   value={packName}
                   onChange={(e) => onUpdatePackName(e.target.value.toUpperCase())}
-                  className="text-white px-2 font-mono text-[10px] font-bold tracking-wider uppercase border-0 focus:outline-none focus:ring-1 flex-1 min-w-0 bg-transparent focus:ring-[#f15a22]"
+                  className="text-white px-2 font-mono text-te-sm font-bold tracking-wider uppercase border-0 focus:outline-none focus:ring-1 flex-1 min-w-0 bg-transparent focus:ring-[#f15a22]"
                   placeholder="PACK NAME"
                   maxLength={24}
                 />
@@ -406,7 +406,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 }`}
               >
                 <div className="flex items-center justify-between px-1">
-                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[#f15a22] flex items-center gap-1">
+                  <span className="font-mono text-te-xs font-bold uppercase tracking-wider text-[#f15a22] flex items-center gap-1">
                     <Usb className="w-3 h-3 shrink-0" />
                     ON THE MIC
                   </span>
@@ -428,7 +428,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide flex items-center gap-1.5">
+                    <span className="font-mono text-te-sm font-bold uppercase tracking-wide flex items-center gap-1.5">
                       <Usb className="w-3 h-3 shrink-0 text-[#f15a22] group-hover:text-white" />
                       {devicePackName}
                     </span>
@@ -437,7 +437,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                     )}
                   </div>
                   <span
-                    className={`font-mono text-[8px] uppercase truncate ${
+                    className={`font-mono text-te-xs uppercase truncate ${
                       isDevicePack
                         ? 'text-white/70'
                         : isTing
@@ -456,11 +456,11 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 isTing ? 'border-[#00503a]/20' : 'border-[#e2e4e2]'
               }`}
             >
-              <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[#f15a22]">
+              <span className="font-mono text-te-xs font-bold uppercase tracking-wider text-[#f15a22]">
                 OFFICIAL TE PRESET PACKS
               </span>
               <span
-                className={`font-mono text-[8px] ${
+                className={`font-mono text-te-xs ${
                   isTing ? 'text-[#4b6b5d]' : 'text-[#73787a]'
                 }`}
               >
@@ -489,7 +489,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide">
+                    <span className="font-mono text-te-sm font-bold uppercase tracking-wide">
                       {item.name}
                     </span>
                     {isSelected && (
@@ -497,7 +497,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                     )}
                   </div>
                   <span
-                    className={`font-mono text-[8px] uppercase truncate ${
+                    className={`font-mono text-te-xs uppercase truncate ${
                       isSelected
                         ? 'text-white/70'
                         : isTing
@@ -530,12 +530,12 @@ export const TopBanner: React.FC<TopBannerProps> = ({
               >
                 <div className="flex items-center gap-1">
                   <Plus className="w-3 h-3 shrink-0" />
-                  <span className="font-mono text-[10.5px] font-bold uppercase tracking-wide">
+                  <span className="font-mono text-te-sm font-bold uppercase tracking-wide">
                     NEW PACK
                   </span>
                 </div>
                 <span
-                  className={`font-mono text-[8px] uppercase truncate ${
+                  className={`font-mono text-te-xs uppercase truncate ${
                     isTing
                       ? 'text-[#4b6b5d] group-hover:text-white/85'
                       : 'text-[#73787a] group-hover:text-white/85'

@@ -222,7 +222,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               style={{ height: HEADER_H }}
             >
               <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
-              <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold whitespace-nowrap">
+              <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white whitespace-nowrap">
                 {!isSupported ? 'chrome / edge only' : isConnecting ? 'connecting…' : 'connect the mic'}
               </span>
               <Ring pos="right-[7px] top-[6px]" tone="border-[#141617]/55" />
@@ -265,7 +265,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 style={{ height: HEADER_H }}
               >
                 <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   save
                 </span>
               </span>
@@ -297,7 +297,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 }`}
                 style={{ height: HEADER_H }}
               >
-                <span className="font-te-regular text-[10px] tracking-wider uppercase leading-none text-white font-bold">
+                <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   eject
                 </span>
                 <Ring pos="right-[7px] top-[6px]" tone="border-white/40" />
