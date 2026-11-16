@@ -2056,6 +2056,7 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   for (const gone of ['mcp', 'src/mcp', 'scripts/build-cloudflare-worker.mjs']) {
     assert.ok(!fs.existsSync(path.join(ROOT_DIR, gone)), `${gone} was retired with the MCP server`);
   }
+  assert.ok(!fs.existsSync(path.join(ROOT_DIR, 'wrangler.jsonc')), 'The site is hosted on GitHub Pages only; Cloudflare config was removed');
   assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
   assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx no longer subscribes to the MCP live-push bridge');
 

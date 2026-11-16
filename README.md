@@ -2,7 +2,7 @@
 
 A companion web workbench, DSP engine, hardware validator, and **AI sound designer skill** for designing, auditioning, and deploying effect packs on the [Teenage Engineering EP-2350 fx mic](https://teenage.engineering/guides/ep-2350).
 
-- **Web App**: [ep-2350-fx-tool.xam-vz.workers.dev](https://ep-2350-fx-tool.xam-vz.workers.dev/) · [GitHub Pages](https://maksimverzakov.github.io/EP-2350-FX-Tool/)
+- **Web App**: [maksimverzakov.github.io/EP-2350-FX-Tool](https://maksimverzakov.github.io/EP-2350-FX-Tool/)
 - **AI Skill**: [`ep2350-sound-designer.zip`](https://maksimverzakov.github.io/EP-2350-FX-Tool/skill/ep2350-sound-designer.zip)
 
 ---
