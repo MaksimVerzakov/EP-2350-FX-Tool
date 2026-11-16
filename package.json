@@ -6,14 +6,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node --no-warnings scripts/build-skill.mjs",
+    "build": "tsc && vite build && node --no-warnings scripts/build-skill.mjs && node --no-warnings scripts/build-worker.mjs",
     "preview": "vite preview",
     "test": "node test/run-test.mjs",
     "test:e2e": "playwright test",
     "skill": "node --no-warnings scripts/build-skill.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
-    "version:major": "npm version major --no-git-tag-version"
+    "version:major": "npm version major --no-git-tag-version",
+    "worker": "node --no-warnings scripts/build-worker.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.41.0",

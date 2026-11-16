@@ -2081,16 +2081,12 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
     'bundleTs must reject when an import cannot be resolved'
   );
 
-  // 16e. The production build publishes the skill next to the web app; the MCP server is gone
+  // 16e. The production build publishes the skill next to the web app and builds the Worker
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
   assert.ok(pkg.scripts.build.includes('scripts/build-skill.mjs'), 'npm run build must build the skill into dist/skill');
-  assert.ok(!('mcp' in pkg.scripts), 'The MCP server script was retired');
-  for (const gone of ['mcp', 'src/mcp', 'scripts/build-cloudflare-worker.mjs']) {
-    assert.ok(!fs.existsSync(path.join(ROOT_DIR, gone)), `${gone} was retired with the MCP server`);
-  }
-  assert.ok(!fs.existsSync(path.join(ROOT_DIR, 'wrangler.jsonc')), 'The site is hosted on GitHub Pages only; Cloudflare config was removed');
+  assert.ok(pkg.scripts.build.includes('scripts/build-worker.mjs'), 'npm run build must build the Cloudflare Worker');
   assert.ok(!fs.readFileSync(path.join(ROOT_DIR, 'vite.config.ts'), 'utf8').includes('__mcp_sync'));
-  assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx no longer subscribes to the MCP live-push bridge');
+  assert.ok(!appSrc.includes('__mcp_sync'), 'App.tsx has no MCP live-push bridge');
 
   // 16f. UI exposes the FX CHAIN / SKILL.MD switch and setup guide for Claude, ChatGPT, and Gemini
   assert.ok(appSrc.includes('FX CHAIN') && appSrc.includes('SKILL.MD'), 'App.tsx must provide the FX CHAIN | SKILL.MD switch');
@@ -2102,4 +2098,134 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
 }
 console.log('✓ Suite 16: Sound designer skill (SKILL.md, validator CLI, zip) verified');
 
-console.log('\n=== ALL 16 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ============================================================================
+// SUITE 17: Remote MCP server (Streamable HTTP) and its Cloudflare Worker
+// ============================================================================
+{
+  const { bundleTs } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/bundle-ts.mjs')).href);
+  const mcpDir = path.join(TMP_TEST_BUILD, 'mcp');
+  const { outFile: workerFile } = await bundleTs({
+    rootDir: ROOT_DIR,
+    entry: 'src/mcp/worker.ts',
+    outFile: path.join(mcpDir, 'worker.mjs'),
+    platform: 'neutral',
+    version: '9.9.9'
+  });
+  const worker = (await import(pathToFileURL(workerFile).href)).default;
+  const ORIGIN = 'https://ep.example.workers.dev';
+  const assetsHits = [];
+  const env = { ASSETS: { fetch: async (req) => (assetsHits.push(new URL(req.url).pathname), new Response('asset')) } };
+  let nextId = 1;
+  const rpc = async (method, params, { id = nextId++ } = {}) => {
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+        body: JSON.stringify(id === null ? { jsonrpc: '2.0', method, params } : { jsonrpc: '2.0', id, method, params })
+      }),
+      env
+    );
+    return { status: res.status, headers: res.headers, body: res.status === 202 ? null : await res.json() };
+  };
+
+  // 17a. initialize: protocol negotiation, server info, workflow instructions
+  const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  assert.strictEqual(init.status, 200);
+  assert.strictEqual(init.headers.get('access-control-allow-origin'), '*', 'Public endpoint: browser-based clients may call it');
+  assert.strictEqual(init.body.result.protocolVersion, '2025-06-18');
+  assert.strictEqual(init.body.result.serverInfo.version, '9.9.9');
+  assert.ok(init.body.result.capabilities.tools);
+  assert.ok(/validate_pack/.test(init.body.result.instructions) && /share link/.test(init.body.result.instructions));
+  const oldInit = await rpc('initialize', { protocolVersion: '1999-01-01' });
+  assert.strictEqual(oldInit.body.result.protocolVersion, '2025-11-25', 'Unknown versions get the latest supported one');
+
+  // 17b. notifications get 202 with no body; ping; unknown methods error
+  assert.strictEqual((await rpc('notifications/initialized', {}, { id: null })).status, 202);
+  assert.deepStrictEqual((await rpc('ping', {})).body.result, {});
+  assert.strictEqual((await rpc('nope/method', {})).body.error.code, -32601);
+
+  // 17c. tools/list
+  const tools = (await rpc('tools/list', {})).body.result.tools;
+  assert.deepStrictEqual(tools.map((t) => t.name), ['get_format_guide', 'validate_pack', 'get_example_pack']);
+  for (const t of tools) assert.strictEqual(t.inputSchema.type, 'object', `${t.name} needs an object input schema`);
+
+  // 17d. get_format_guide returns SKILL.md (no frontmatter) and points at the MCP tools
+  const guide = (await rpc('tools/call', { name: 'get_format_guide', arguments: {} })).body.result.content[0].text;
+  assert.ok(guide.startsWith('You are connected to the EP-2350 MCP server'));
+  assert.ok(!guide.includes('\nname: ep2350-sound-designer'), 'Frontmatter is stripped');
+  for (const fx of Object.keys(EFFECTS_REGISTRY)) assert.ok(guide.includes(`### ${fx}`), `Guide documents ${fx}`);
+
+  // 17e. validate_pack: a valid official pack gets a share link on the Worker's own domain
+  const dubText = fs.readFileSync(path.join(ROOT_DIR, 'packs/ep-2350_preset_pack-dub/config.json'), 'utf8');
+  for (const config of [dubText, JSON.parse(dubText)]) {
+    const r = (await rpc('tools/call', { name: 'validate_pack', arguments: { config } })).body.result;
+    assert.ok(!r.isError);
+    assert.ok(r.content[0].text.startsWith('VALID'), r.content[0].text);
+    assert.strictEqual(r.structuredContent.isValid, true);
+    assert.ok(r.structuredContent.shareUrl.startsWith(`${ORIGIN}/#`), r.structuredContent.shareUrl);
+    const decoded = decodeHashPayload(r.structuredContent.shareUrl);
+    assert.ok(decoded, 'The share link decodes in the web app');
+    assert.strictEqual(r.structuredContent.config.presets.length, 4);
+  }
+
+  // 17f. validate_pack: errors carry the field and the fix; no link for an invalid pack
+  const bad = await rpc('tools/call', {
+    name: 'validate_pack',
+    arguments: { config: { name: 'X', presets: [{ pos: 0, name: 'A', list: [{ effect: 'NOPE' }] }] } }
+  });
+  const badResult = bad.body.result;
+  assert.strictEqual(badResult.structuredContent.isValid, false);
+  assert.ok(badResult.structuredContent.errors.length > 0);
+  assert.ok(badResult.content[0].text.startsWith('INVALID') && badResult.content[0].text.includes('fix:'));
+  assert.ok(!('shareUrl' in badResult.structuredContent));
+  const broken = (await rpc('tools/call', { name: 'validate_pack', arguments: { config: '{"name": ' } })).body.result;
+  assert.ok(broken.content[0].text.startsWith('INVALID'), 'Broken JSON text is reported, not thrown');
+  assert.strictEqual((await rpc('tools/call', { name: 'validate_pack', arguments: {} })).body.result.isError, true);
+
+  // 17g. get_example_pack
+  const ex = (await rpc('tools/call', { name: 'get_example_pack', arguments: { name: 'mysterious' } })).body.result;
+  assert.strictEqual(JSON.parse(ex.content[0].text).presets.length, 4);
+  assert.strictEqual((await rpc('tools/call', { name: 'get_example_pack', arguments: { name: 'x' } })).body.result.isError, true);
+  assert.strictEqual((await rpc('tools/call', { name: 'nope', arguments: {} })).body.error.code, -32602);
+
+  // 17h. transport: batches, parse errors, GET 405, CORS preflight, other paths go to static assets
+  const batchRes = await worker.fetch(
+    new Request(`${ORIGIN}/mcp/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ jsonrpc: '2.0', id: 'a', method: 'ping' }, { jsonrpc: '2.0', method: 'notifications/initialized' }])
+    }),
+    env
+  );
+  assert.deepStrictEqual(await batchRes.json(), [{ jsonrpc: '2.0', id: 'a', result: {} }]);
+  const parseRes = await worker.fetch(new Request(`${ORIGIN}/mcp`, { method: 'POST', body: '{oops' }), env);
+  assert.strictEqual(parseRes.status, 400);
+  assert.strictEqual((await parseRes.json()).error.code, -32700);
+  assert.strictEqual((await worker.fetch(new Request(`${ORIGIN}/mcp`), env)).status, 405);
+  assert.strictEqual((await worker.fetch(new Request(`${ORIGIN}/mcp`, { method: 'OPTIONS' }), env)).status, 204);
+  assert.strictEqual(await (await worker.fetch(new Request(`${ORIGIN}/skill.md`), env)).text(), 'asset');
+  assert.deepStrictEqual(assetsHits, ['/skill.md'], 'Only non-/mcp paths reach the static assets');
+
+  // 17i. EP2350_UI_URL overrides where share links point
+  const pinned = await worker.fetch(
+    new Request(`${ORIGIN}/mcp`, {
+      method: 'POST',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'validate_pack', arguments: { config: dubText } } })
+    }),
+    { ...env, EP2350_UI_URL: 'https://maksimverzakov.github.io/EP-2350-FX-Tool/' }
+  );
+  assert.ok((await pinned.json()).result.structuredContent.shareUrl.startsWith('https://maksimverzakov.github.io/EP-2350-FX-Tool/#'));
+
+  // 17j. Hosting config: Worker runs only for /mcp; the bundle stays out of the public assets
+  const wrangler = fs.readFileSync(path.join(ROOT_DIR, 'wrangler.jsonc'), 'utf8');
+  assert.ok(wrangler.includes('"main": "dist/_worker.js"'));
+  assert.ok(wrangler.includes('"run_worker_first": ["/mcp", "/mcp/*"]'));
+  const { buildWorker } = await import(pathToFileURL(path.join(ROOT_DIR, 'scripts/build-worker.mjs')).href);
+  const builtDir = path.join(mcpDir, 'dist');
+  await buildWorker(builtDir);
+  assert.ok(fs.existsSync(path.join(builtDir, '_worker.js')));
+  assert.strictEqual(fs.readFileSync(path.join(builtDir, '.assetsignore'), 'utf8').trim(), '_worker.js');
+}
+console.log('✓ Suite 17: Remote MCP server (Streamable HTTP) and Cloudflare Worker verified');
+
+console.log('\n=== ALL 17 PRODUCTION TEST SUITES PASSED (100%) ===');
