@@ -12,7 +12,7 @@ import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
-import { SkillPanel } from './components/SkillPanel';
+import { McpPanel } from './components/McpPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
 
@@ -52,7 +52,7 @@ export const App: React.FC = () => {
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
-  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'skill'>('fx');
+  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'mcp'>('fx');
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -463,7 +463,7 @@ export const App: React.FC = () => {
             <AudioPlayerCompact theme={theme} className="-mt-[250px]" />
           </div>
 
-          {/* RIGHT COLUMN: Attached FX CHAIN | SKILL.MD Tab Switch + Ledger Sheet / Skill Panel */}
+          {/* RIGHT COLUMN: Attached FX CHAIN | MCP Tab Switch + Ledger Sheet / MCP Panel */}
           <div className="flex-1 min-w-0 max-w-[756px] w-full flex flex-col items-center relative">
             <div
               className="flex items-start self-end mr-[13px] mb-[2px] lg:mb-0 lg:mr-0 lg:absolute lg:-top-[34px] lg:right-[13px] z-20"
@@ -472,7 +472,7 @@ export const App: React.FC = () => {
             >
               {([
                 { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
-                { id: 'skill', label: 'SKILL.MD', widthClass: 'w-[75px]', isEdge: true, title: 'Show AI sound designer skill guide' }
+                { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', isEdge: true, title: 'Connect the EP-2350 tool to your AI' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
                 const isTing = theme === 'ting';
@@ -518,7 +518,7 @@ export const App: React.FC = () => {
                 theme={theme}
               />
             ) : (
-              <SkillPanel theme={theme} />
+              <McpPanel theme={theme} />
             )}
           </div>
         </div>

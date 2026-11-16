@@ -528,7 +528,7 @@ html[data-theme='ting'] .te-card-3d::after {
 }
 
 /*
- * Docked 2-plane switch (FX CHAIN | SKILL.MD) mounted directly onto the top-right edge of the
+ * Docked 2-plane switch (FX CHAIN | MCP) mounted directly onto the top-right edge of the
  * 5px-deep .te-bevel-frame ledger block: unpressed sits 3px proud above the block (8px total
  * bevel on the rightmost button to reach the x=1051 back plane); pressed drops 3px flush onto
  * the block's 5px front plane while retaining a 5px side bevel aligned with the main block.

@@ -4,6 +4,8 @@ import { parseConfigJson } from './parser';
 import { serializeToConfigJson } from './serializer';
 
 export const DEFAULT_PUBLIC_APP_URL = 'https://maksimverzakov.github.io/EP-2350-FX-Tool';
+/** Public MCP endpoint (Cloudflare Worker, src/mcp/worker.ts). GitHub Pages has no server code. */
+export const DEFAULT_MCP_URL = 'https://ep-2350-fx-tool.xam-vz.workers.dev/mcp';
 
 export function encodeBase64Url(input: string): string {
   const bytes = new TextEncoder().encode(input);

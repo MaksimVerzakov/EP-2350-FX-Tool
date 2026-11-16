@@ -111,63 +111,50 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(mixInput).toHaveValue('50%');
   });
 
-  test('switches between FX CHAIN and SKILL.MD views with matching block size and live skill assets', async ({ page, request }) => {
+  test('switches between FX CHAIN and MCP views with matching block size and a live MCP endpoint', async ({ page, request }) => {
     await page.goto('/');
 
     const fxChainBtn = page.getByRole('button', { name: 'FX CHAIN' });
-    const skillMdBtn = page.getByRole('button', { name: 'SKILL.MD' });
+    const mcpBtn = page.getByRole('button', { name: 'MCP', exact: true });
 
     await expect(fxChainBtn).toHaveAttribute('aria-pressed', 'true');
-    await expect(skillMdBtn).toHaveAttribute('aria-pressed', 'false');
+    await expect(mcpBtn).toHaveAttribute('aria-pressed', 'false');
 
     const ledgerBox = await page.locator('.te-ledger-card').first().boundingBox();
     expect(ledgerBox).not.toBeNull();
     const fxHeaderBox = await page.locator('.te-ledger-card').first().locator(':scope > div').first().boundingBox();
     expect(fxHeaderBox).not.toBeNull();
 
-    await skillMdBtn.click();
-    await expect(skillMdBtn).toHaveAttribute('aria-pressed', 'true');
+    await mcpBtn.click();
+    await expect(mcpBtn).toHaveAttribute('aria-pressed', 'true');
     await expect(fxChainBtn).toHaveAttribute('aria-pressed', 'false');
 
-    const skillPanel = page.getByTestId('skill-md-panel');
-    await expect(skillPanel).toBeVisible();
-    await expect(skillPanel).toContainText('HOW IT WORKS');
-    await expect(skillPanel).toContainText('HOW TO INSTALL');
-    await expect(skillPanel.getByTestId('skill-zip')).toContainText('ep2350-sound-designer.zip');
+    const mcpPanel = page.getByTestId('mcp-panel');
+    await expect(mcpPanel).toBeVisible();
+    await expect(mcpPanel).toContainText('HOW IT WORKS');
+    await expect(mcpPanel).toContainText('HOW TO CONNECT');
 
     // The header tab matches the FX board header exactly
-    const skillHeaderBox = await page.getByTestId('skill-md-header').boundingBox();
-    expect(Math.round(skillHeaderBox!.height)).toBe(Math.round(fxHeaderBox!.height));
+    const mcpHeaderBox = await page.getByTestId('mcp-header').boundingBox();
+    expect(Math.round(mcpHeaderBox!.height)).toBe(Math.round(fxHeaderBox!.height));
 
-    const skillBox = await skillPanel.boundingBox();
-    expect(skillBox).not.toBeNull();
-    expect(Math.round(skillBox!.width)).toBe(Math.round(ledgerBox!.width));
-    expect(Math.round(skillBox!.height)).toBe(Math.round(ledgerBox!.height));
+    const mcpBox = await mcpPanel.boundingBox();
+    expect(mcpBox).not.toBeNull();
+    expect(Math.round(mcpBox!.width)).toBe(Math.round(ledgerBox!.width));
+    expect(Math.round(mcpBox!.height)).toBe(Math.round(ledgerBox!.height));
 
-    // Verify the dev server serves SKILL.md and the zip archive cleanly
-    const mdRes = await request.get('/skill/ep2350-sound-designer/SKILL.md');
-    expect(mdRes.status()).toBe(200);
-    expect(await mdRes.text()).toContain('ep2350-sound-designer');
-
-    const zipRes = await request.get('/skill/ep2350-sound-designer.zip');
-    expect(zipRes.status()).toBe(200);
-
-    // One-link entry points: skill.md short link and the `npx skills add` discovery index
-    await expect(skillPanel.getByTestId('skill-short-url')).toContainText('/skill.md');
-    await expect(skillPanel.getByTestId('skill-install-cmd')).toContainText('npx skills add http');
-    const shortRes = await request.get('/skill.md');
-    expect(shortRes.status()).toBe(200);
-    expect(await shortRes.text()).toContain('name: ep2350-sound-designer');
-    const indexRes = await request.get('/.well-known/agent-skills/index.json');
-    expect(indexRes.status()).toBe(200);
-    const index = await indexRes.json();
-    expect(index.skills[0].name).toBe('ep2350-sound-designer');
-    const archiveRes = await request.get(`/.well-known/agent-skills/${index.skills[0].url}`);
-    expect(archiveRes.status()).toBe(200);
+    // The panel shows this server's own /mcp, and that endpoint answers MCP
+    const mcpUrl = (await mcpPanel.getByTestId('mcp-url').locator('code').textContent())!.trim();
+    expect(mcpUrl).toMatch(/^http:\/\/[^/]+\/mcp$/);
+    const initRes = await request.post(mcpUrl, {
+      data: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }
+    });
+    expect(initRes.status()).toBe(200);
+    expect((await initRes.json()).result.serverInfo.name).toBe('ep2350-sound-designer');
 
     // Switch back to FX CHAIN
     await fxChainBtn.click();
-    await expect(skillPanel).toHaveCount(0);
+    await expect(mcpPanel).toHaveCount(0);
     await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('WALKIE TALKIE');
   });
 
