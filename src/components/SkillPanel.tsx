@@ -23,10 +23,9 @@ function resolveAppBaseUrl(): string {
 }
 
 const STEPS = [
-  ['DESCRIBE', 'Tell your AI the sound you want.'],
-  ['GET A LINK', 'It writes the preset, checks it and gives you a link.'],
-  ['LISTEN', 'Open the link to hear it and tweak it here.'],
-  ['UPLOAD', 'Send it to your EP-2350 over USB-C.']
+  ['DESCRIBE', 'Ask your AI for the effects you want.'],
+  ['LISTEN & TWEAK', 'Open the link it gives you, test the pack and adjust it if needed.'],
+  ['SAVE TO DEVICE', 'Upload it to your EP-2350 mic over USB-C.']
 ] as const;
 
 export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
@@ -127,30 +126,17 @@ export const SkillPanel: React.FC<SkillPanelProps> = ({ theme = 'fx' }) => {
             </svg>
           </div>
 
-          {/* Name plate, matching the preset selector's plate */}
-          <div className="flex items-start shrink-0 pb-[3px]">
-            <div
-              className={`h-[22px] translate-y-[3px] px-2.5 flex items-center font-mono font-bold text-[10.5px] tracking-wider uppercase border whitespace-nowrap ${
-                isTing
-                  ? 'bg-[#dbd0b9] text-[#00503a] border-[#00503a]'
-                  : 'bg-[#dbdddb] text-[#141617] border-[#141617]'
-              }`}
-            >
-              AI SOUND DESIGNER
-            </div>
-          </div>
-
-          {/* Matches the preset comment field */}
-          <div className="bg-black/25 text-white/95 px-2.5 py-1 font-mono text-[10px] tracking-wide border border-white/25 flex-1 min-w-[140px] truncate">
-            A skill that teaches any AI to design EP-2350 presets
-          </div>
+          {/* Title; 25px content height keeps the header the same size as the FX board's */}
+          <h2 className="h-[25px] flex items-center font-mono font-bold text-[10.5px] tracking-wider uppercase">
+            ADD EP MIC TOOL TO YOUR AI
+          </h2>
         </div>
 
         {/* 2. BODY: same canvas as the FX chain */}
         <div className={`flex-1 min-h-0 overflow-y-auto p-3 ${isTing ? 'bg-[#f4f1ea]' : 'bg-[#eceeed]'} flex flex-col gap-3`}>
           <section className={cardClass} data-testid="skill-how-it-works">
             {cardHeader('01', 'HOW IT WORKS')}
-            <ol className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+            <ol className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
               {STEPS.map(([title, text], i) => (
                 <li key={title} className="flex items-start gap-2">
                   <span
