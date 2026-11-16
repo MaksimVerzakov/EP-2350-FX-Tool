@@ -122,6 +122,8 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
 
     const ledgerBox = await page.locator('.te-ledger-card').first().boundingBox();
     expect(ledgerBox).not.toBeNull();
+    const fxHeaderBox = await page.locator('.te-ledger-card').first().locator(':scope > div').first().boundingBox();
+    expect(fxHeaderBox).not.toBeNull();
 
     await skillMdBtn.click();
     await expect(skillMdBtn).toHaveAttribute('aria-pressed', 'true');
@@ -129,10 +131,13 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
 
     const skillPanel = page.getByTestId('skill-md-panel');
     await expect(skillPanel).toBeVisible();
-    await expect(skillPanel).toContainText('HOW THE SKILL WORKS');
-    await expect(skillPanel).toContainText('01 // CLAUDE');
-    await expect(skillPanel).toContainText('02 // CHATGPT');
-    await expect(skillPanel).toContainText('03 // GEMINI');
+    await expect(skillPanel).toContainText('HOW IT WORKS');
+    await expect(skillPanel).toContainText('HOW TO INSTALL');
+    await expect(skillPanel.getByTestId('skill-zip')).toContainText('ep2350-sound-designer.zip');
+
+    // The header tab matches the FX board header exactly
+    const skillHeaderBox = await page.getByTestId('skill-md-header').boundingBox();
+    expect(Math.round(skillHeaderBox!.height)).toBe(Math.round(fxHeaderBox!.height));
 
     const skillBox = await skillPanel.boundingBox();
     expect(skillBox).not.toBeNull();
