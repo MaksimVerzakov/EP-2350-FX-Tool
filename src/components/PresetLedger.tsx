@@ -11,6 +11,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { themeColor } from '../theme/tokens';
+import { Tooltip } from './Tooltip';
 
 // Line icons drawn in the EP display style (square caps, 1.5 stroke, currentColor).
 const BusIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -717,64 +718,74 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             >
               {/* Bus 2: [ ← ] to move to Bus 1 */}
               {activeBus === 2 && (
-                <button
-                  onClick={() => handleTransferBus(globalIdx)}
-                  className={`p-1 ${
-                    'hover:bg-te-ink text-te-ink'
-                  } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
-                  title="Move effect to Bus 1"
-                >
-                  <ArrowLeft className="w-3 h-3" />
-                </button>
+                <Tooltip label="Move to Bus 1">
+                  <button
+                    onClick={() => handleTransferBus(globalIdx)}
+                    className={`p-1 ${
+                      'hover:bg-te-ink text-te-ink'
+                    } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
+                    aria-label="Move effect to Bus 1"
+                  >
+                    <ArrowLeft className="w-3 h-3" />
+                  </button>
+                </Tooltip>
               )}
 
               {/* Move Up */}
-              <button
-                disabled={busPosition === 0}
-                onClick={() => handleMoveBusItem(busPosition, 'up')}
-                className={`p-1 ${
-                  'hover:bg-te-ink text-te-ink'
-                } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
-                title="Move earlier in signal path"
-              >
-                <ArrowUp className="w-3 h-3" />
-              </button>
-
-              {/* Move Down */}
-              <button
-                disabled={busPosition === visibleBusItems.length - 1}
-                onClick={() => handleMoveBusItem(busPosition, 'down')}
-                className={`p-1 ${
-                  'hover:bg-te-ink text-te-ink'
-                } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
-                title="Move later in signal path"
-              >
-                <ArrowDown className="w-3 h-3" />
-              </button>
-
-              {/* Bus 1: [ → ] to move to Bus 2 */}
-              {activeBus === 1 && (
+              <Tooltip label={busPosition === 0 ? 'Already first in chain' : 'Move earlier in chain'}>
                 <button
-                  disabled={isSample}
-                  onClick={() => handleTransferBus(globalIdx)}
+                  disabled={busPosition === 0}
+                  onClick={() => handleMoveBusItem(busPosition, 'up')}
                   className={`p-1 ${
                     'hover:bg-te-ink text-te-ink'
                   } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
-                  title={isSample ? 'SAMPLE is restricted to Bus 1' : 'Move effect to Bus 2'}
+                  aria-label="Move earlier in signal path"
                 >
-                  <ArrowRight className="w-3 h-3" />
+                  <ArrowUp className="w-3 h-3" />
                 </button>
+              </Tooltip>
+
+              {/* Move Down */}
+              <Tooltip label={busPosition === visibleBusItems.length - 1 ? 'Already last in chain' : 'Move later in chain'}>
+                <button
+                  disabled={busPosition === visibleBusItems.length - 1}
+                  onClick={() => handleMoveBusItem(busPosition, 'down')}
+                  className={`p-1 ${
+                    'hover:bg-te-ink text-te-ink'
+                  } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
+                  aria-label="Move later in signal path"
+                >
+                  <ArrowDown className="w-3 h-3" />
+                </button>
+              </Tooltip>
+
+              {/* Bus 1: [ → ] to move to Bus 2 */}
+              {activeBus === 1 && (
+                <Tooltip label={isSample ? 'SAMPLE stays on Bus 1' : 'Move to Bus 2'}>
+                  <button
+                    disabled={isSample}
+                    onClick={() => handleTransferBus(globalIdx)}
+                    className={`p-1 ${
+                      'hover:bg-te-ink text-te-ink'
+                    } hover:text-white disabled:opacity-20 disabled:pointer-events-none active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer`}
+                    aria-label={isSample ? 'SAMPLE is restricted to Bus 1' : 'Move effect to Bus 2'}
+                  >
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                </Tooltip>
               )}
             </div>
 
             {/* Delete button */}
-            <button
-              onClick={() => handleDeleteEffect(globalIdx)}
-              className="p-1 text-te-muted hover:text-[#e52817] active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer ml-0.5"
-              title="Delete effect"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            <Tooltip label="Delete effect">
+              <button
+                onClick={() => handleDeleteEffect(globalIdx)}
+                className="p-1 text-te-muted hover:text-[#e52817] active:translate-x-[1px] active:translate-y-[1px] transition-colors cursor-pointer ml-0.5"
+                aria-label="Delete effect"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </Tooltip>
           </div>
         </div>
 
@@ -881,19 +892,20 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   }) => (
     <div className="flex items-start shrink-0 pb-[3px] w-full sm:w-auto">
       <div className="flex items-start w-full sm:w-auto" role="group" aria-label="Preset selector">
-        <button
-          type="button"
-          onClick={opts.onPrev}
-          title={opts.prevTitle}
-          aria-label={opts.prevTitle}
-          className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
-            'bg-te-control text-te-ink'
-          }`}
-        >
-          <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
-            <polygon points="6,1 2,4 6,7" />
-          </svg>
-        </button>
+        <Tooltip label={opts.prevTitle}>
+          <button
+            type="button"
+            onClick={opts.onPrev}
+            aria-label={opts.prevTitle}
+            className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
+              'bg-te-control text-te-ink'
+            }`}
+          >
+            <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
+              <polygon points="6,1 2,4 6,7" />
+            </svg>
+          </button>
+        </Tooltip>
         <div
           className={`h-[22px] min-w-0 flex-1 sm:flex-none sm:w-[170px] translate-y-[3px] px-2.5 flex items-center justify-center font-mono font-bold text-te-sm tracking-wider uppercase border-y z-0 whitespace-nowrap ${
             'bg-te-bevel text-te-ink border-te-ink'
@@ -901,19 +913,20 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
         >
           {opts.label}
         </div>
-        <button
-          type="button"
-          onClick={opts.onNext}
-          title={opts.nextTitle}
-          aria-label={opts.nextTitle}
-          className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
-            'bg-te-control text-te-ink'
-          }`}
-        >
-          <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
-            <polygon points="2,1 6,4 2,7" />
-          </svg>
-        </button>
+        <Tooltip label={opts.nextTitle}>
+          <button
+            type="button"
+            onClick={opts.onNext}
+            aria-label={opts.nextTitle}
+            className={`te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 ${
+              'bg-te-control text-te-ink'
+            }`}
+          >
+            <svg viewBox="0 0 8 8" className="w-2 h-2 fill-current" aria-hidden="true">
+              <polygon points="2,1 6,4 2,7" />
+            </svg>
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

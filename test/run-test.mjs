@@ -2210,4 +2210,43 @@ console.log('✓ Suite 18: Design system (type scale and font roles) verified');
 }
 console.log('✓ Suite 19: Design system (colour tokens) verified');
 
-console.log('\n=== ALL 19 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ==========================================
+// Suite 20: In-app messages and tooltips
+// ==========================================
+{
+  const srcDir = path.join(ROOT_DIR, 'src');
+  const files = [];
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((d) => {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) walk(full);
+    else if (/\.(tsx?|jsx?)$/.test(d.name)) files.push(full);
+  });
+  walk(srcDir);
+
+  // 20a. No blocking browser dialogs: messages go through the TE toast instead
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.ok(!/(^|[^\w.])(window\.)?(alert|confirm|prompt)\s*\(/m.test(src), `${path.relative(ROOT_DIR, f)} must not call alert/confirm/prompt; use the in-app Toast`);
+  }
+  const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
+  assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 3, 'Connect, save and import failures must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 1, 'A successful import must show a confirmation toast');
+  const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
+  assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
+
+  // 20b. Every icon-only button in an effect row has a tooltip and an accessible name
+  const ledger = fs.readFileSync(path.join(srcDir, 'components/PresetLedger.tsx'), 'utf8');
+  for (const icon of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Trash2']) {
+    const at = ledger.indexOf(`<${icon} className`);
+    assert.ok(at > 0, `PresetLedger must render the ${icon} button`);
+    const before = ledger.slice(Math.max(0, at - 900), at);
+    const wrap = before.lastIndexOf('<Tooltip label=');
+    assert.ok(wrap > before.lastIndexOf('</Tooltip>'), `The ${icon} button must be wrapped in a Tooltip`);
+    assert.ok(before.slice(before.lastIndexOf('<button')).includes('aria-label='), `The ${icon} button must have an aria-label`);
+  }
+  assert.ok(ledger.includes("'SAMPLE stays on Bus 1'"), 'The disabled move-to-Bus-2 arrow must explain why');
+}
+console.log('✓ Suite 20: In-app messages and tooltips verified');
+
+console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');

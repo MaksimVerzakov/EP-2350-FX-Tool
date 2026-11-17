@@ -218,4 +218,28 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     const topAtTabFoot = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest('.te-ledger-card') !== null, [fxTab!.x + 10, card!.y + 2]);
     expect(topAtTabFoot).toBe(true);
   });
+
+  test('effect arrows show tooltips, and imports report through the in-app toast instead of alert()', async ({ page }) => {
+    const dialogs: string[] = [];
+    page.on('dialog', (d) => { dialogs.push(d.message()); void d.dismiss(); });
+    await page.goto('/');
+
+    const later = page.getByRole('button', { name: 'Move later in signal path' }).first();
+    await later.hover();
+    const tip = page.getByRole('tooltip');
+    await expect(tip).toHaveText('Move later in chain');
+    const [tipBox, btnBox] = [await tip.boundingBox(), await later.boundingBox()];
+    expect(tipBox!.y + tipBox!.height).toBeLessThanOrEqual(btnBox!.y);
+    await page.mouse.move(0, 0);
+    await expect(tip).toHaveCount(0);
+
+    const input = page.locator('input[type="file"]');
+    await input.setInputFiles({ name: 'config.json', mimeType: 'application/json', buffer: Buffer.from('{ not json') });
+    const toast = page.getByTestId('toast');
+    await expect(toast).toHaveAttribute('data-kind', 'error');
+    await expect(toast).toContainText('IMPORT FAILED', { ignoreCase: true });
+    await page.getByRole('button', { name: 'Close message' }).click();
+    await expect(toast).toHaveCount(0);
+    expect(dialogs).toEqual([]);
+  });
 });
