@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Download, Upload, ChevronDown, Check, Plus, Usb } from 'lucide-react';
+import { Download, Upload, ChevronDown, Check, Plus, Usb, Link2 } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
 import { bottomBevelPoints, rightBevelPoints, useBlockWidth } from './useBlockWidth';
@@ -18,6 +18,9 @@ interface TopBannerProps {
   isDevicePack?: boolean;
   devicePackName?: string;
   onSelectDevicePack?: () => void;
+  /** Name of the pack opened from a share link, if any. */
+  sharedPackName?: string;
+  onSelectSharedPack?: () => void;
   /** Device connector block rendered to the left of the Export/Import block. */
   deviceConnector?: React.ReactNode;
 }
@@ -35,6 +38,8 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   isDevicePack = false,
   devicePackName,
   onSelectDevicePack,
+  sharedPackName,
+  onSelectSharedPack,
   deviceConnector
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -441,6 +446,50 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 </button>
               </div>
             )}
+
+            {sharedPackName && (() => {
+              const isSharedSelected =
+                !isDevicePack && packName.trim().toUpperCase() === sharedPackName.trim().toUpperCase();
+              return (
+                <div className="border-b pb-1 mb-0.5 flex flex-col gap-1 border-te-rule">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="font-mono text-te-xs font-bold uppercase tracking-wider text-te-accent flex items-center gap-1">
+                      <Link2 className="w-3 h-3 shrink-0" />
+                      FROM SHARE LINK
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="shared-pack-option"
+                    onClick={() => {
+                      onSelectSharedPack?.();
+                      setDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1.5 rounded-[1px] transition-colors cursor-pointer flex flex-col gap-0.5 group ${
+                      isSharedSelected
+                        ? 'bg-te-ink text-white'
+                        : 'hover:bg-te-accent hover:text-white text-te-ink'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-te-sm font-bold uppercase tracking-wide">
+                        {sharedPackName}
+                      </span>
+                      {isSharedSelected && (
+                        <Check className="w-3 h-3 group-hover:text-white shrink-0 text-te-accent" />
+                      )}
+                    </div>
+                    <span
+                      className={`font-mono text-te-xs uppercase truncate ${
+                        isSharedSelected ? 'text-white/70' : 'text-te-muted group-hover:text-white/85'
+                      }`}
+                    >
+                      PACK OPENED FROM A LINK
+                    </span>
+                  </button>
+                </div>
+              );
+            })()}
 
             <div
               className={`flex items-center justify-between border-b pb-1 mb-0.5 px-1 ${

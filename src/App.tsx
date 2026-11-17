@@ -4,7 +4,7 @@ import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
-import { decodeHashPayload } from './utils/presetUrl';
+import { decodeHashPayload, type DecodedHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
 
@@ -63,6 +63,13 @@ export const App: React.FC = () => {
   const [savedDeviceJson, setSavedDeviceJson] = useState<string | null>(null);
   const [tabGuardStatus, setTabGuardStatus] = useState<'checking' | 'active' | 'blocked'>('checking');
   const prevTabGuardStatusRef = useRef(tabGuardStatus);
+  /** Pack opened from a share link (#pack=...), kept so it stays selectable after the mic connects. */
+  const [sharedPack, setSharedPack] = useState<PackConfig | null>(null);
+  /**
+   * Share-link payload the editor is still showing. While set, connecting the mic must not
+   * replace the editor contents with the mic's config.json. Cleared once the user picks another pack.
+   */
+  const pendingShareRef = useRef<DecodedHashPayload | null>(null);
 
   const isMultiTabBlocked = tabGuardStatus === 'blocked';
   const isTabLeader = tabGuardStatus === 'active';
@@ -75,9 +82,29 @@ export const App: React.FC = () => {
     if (!parsed.pack) {
       throw new Error(parsed.error || 'Invalid config.json on connected device.');
     }
-    setPack(parsed.pack);
     setDevicePack(parsed.pack);
     setSavedDeviceJson(serializeToConfigJson(parsed.pack));
+
+    const pendingShare = pendingShareRef.current;
+    if (pendingShare) {
+      // A share link is open: keep it in the editor (unsaved vs. the mic) instead of
+      // overwriting it with the mic's pack. The mic's pack stays selectable in the pack list.
+      if (pendingShare.type === 'preset') {
+        // A shared single preset lands in its slot on top of the mic's pack.
+        setPack({
+          ...parsed.pack,
+          presets: parsed.pack.presets.map((p) =>
+            p.pos === pendingShare.slot ? pendingShare.preset : p
+          )
+        });
+        setActiveSlot(pendingShare.slot);
+      }
+      setIsDeviceConnected(true);
+      setIsDevicePack(false);
+      return;
+    }
+
+    setPack(parsed.pack);
     const hwSlots = await ep2350Serial.pollHardwareSlot().catch(() => null);
     if (hwSlots) {
       setActiveSlot(hwSlots.fxSlot);
@@ -186,7 +213,9 @@ export const App: React.FC = () => {
     const applyHashPayload = () => {
       const decoded = decodeHashPayload(window.location.hash);
       if (!decoded) return;
+      pendingShareRef.current = decoded;
       if (decoded.type === 'pack') {
+        setSharedPack(decoded.pack);
         setPack(decoded.pack);
         setActiveSlot(decoded.slot);
         setIsDevicePack(false);
@@ -338,6 +367,7 @@ export const App: React.FC = () => {
 
   const handleSelectDevicePack = () => {
     if (!devicePack) return;
+    pendingShareRef.current = null;
     setPack(devicePack);
     setActiveSlot(0);
     setIsDevicePack(true);
@@ -351,6 +381,7 @@ export const App: React.FC = () => {
     try {
       const jsonStr = serializeToConfigJson(pack);
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
+      pendingShareRef.current = null;
       setDevicePack(pack);
       setIsDevicePack(true);
       setSavedDeviceJson(jsonStr);
@@ -369,13 +400,23 @@ export const App: React.FC = () => {
   const handleSelectDefaultPack = (presetPack: OfficialPackPreset) => {
     const parsed = parseConfigJson(presetPack.rawJson);
     if (parsed.pack) {
+      pendingShareRef.current = null;
       setPack(parsed.pack);
       setActiveSlot(0);
       setIsDevicePack(false);
     }
   };
 
+  const handleSelectSharedPack = () => {
+    if (!sharedPack) return;
+    pendingShareRef.current = { type: 'pack', pack: sharedPack, slot: 0 };
+    setPack(sharedPack);
+    setActiveSlot(0);
+    setIsDevicePack(false);
+  };
+
   const handleCreateNewPack = () => {
+    pendingShareRef.current = null;
     setPack(createEmptyPack());
     setActiveSlot(0);
     setIsDevicePack(false);
@@ -384,6 +425,7 @@ export const App: React.FC = () => {
   const handleImportJson = (rawJson: string) => {
     const parsed = parseConfigJson(rawJson);
     if (parsed.pack) {
+      pendingShareRef.current = null;
       setPack(parsed.pack);
       setActiveSlot(0);
       setIsDevicePack(false);
@@ -431,6 +473,8 @@ export const App: React.FC = () => {
           isDevicePack={isDevicePack}
           devicePackName={devicePack?.name}
           onSelectDevicePack={handleSelectDevicePack}
+          sharedPackName={sharedPack?.name}
+          onSelectSharedPack={handleSelectSharedPack}
           deviceConnector={
             <DeviceConnector
               theme={theme}

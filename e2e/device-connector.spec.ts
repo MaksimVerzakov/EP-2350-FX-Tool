@@ -132,4 +132,57 @@ test.describe('Device connector block', () => {
     const log = await serialLog(page);
     expect(log.some((l) => l.includes('_f.write') && l.includes('NEW PACK'))).toBe(true);
   });
+
+  test.describe('share link', () => {
+    const sharedPackJson = JSON.stringify({
+      name: 'MCP SHARED PACK',
+      presets: [
+        { pos: 0, name: 'SHARED ONE', list: [{ effect: 'DELAY', time: 0.3, echo: 0.4 }, { effect: 'SAMPLE' }] },
+        { pos: 1, name: 'SHARED TWO', list: [{ effect: 'REVERB', time: 0.6 }, { effect: 'SAMPLE' }] },
+        { pos: 2, name: 'SHARED THREE', list: [{ effect: 'DIST', amount: 8, mix: 0.4 }, { effect: 'SAMPLE' }] },
+        { pos: 3, name: 'SHARED FOUR', list: [{ effect: 'RING', frequency: 440, mix: 0.5 }, { effect: 'SAMPLE' }] }
+      ]
+    });
+    const packHash = `#pack=${Buffer.from(sharedPackJson).toString('base64url')}`;
+
+    test('a shared pack survives connecting the mic and can be saved to it', async ({ page }) => {
+      await page.goto(`/${packHash}`);
+      const packName = page.getByPlaceholder('PACK NAME');
+      await expect(packName).toHaveValue('MCP SHARED PACK');
+
+      await page.getByRole('button', { name: 'Connect the mic' }).click();
+      const save = page.getByRole('button', { name: 'Save to the mic' });
+      await expect(save).toBeVisible();
+
+      // The shared pack stays in the editor and is flagged as unsaved vs. the mic
+      await expect(packName).toHaveValue('MCP SHARED PACK');
+      await expect(save).toBeEnabled();
+
+      // Both packs are selectable from the pack list
+      await page.getByLabel('Select default pack').click();
+      await expect(page.getByText('FROM SHARE LINK')).toBeVisible();
+      await page.getByRole('button', { name: /TING HARDWARE PACK/ }).click();
+      await expect(packName).toHaveValue('TING HARDWARE PACK');
+
+      await page.getByLabel('Select default pack').click();
+      await page.getByTestId('shared-pack-option').click();
+      await expect(packName).toHaveValue('MCP SHARED PACK');
+
+      await save.click();
+      await expect(page.getByTestId('saved-indicator')).toBeVisible();
+      const log = await serialLog(page);
+      expect(log.some((l) => l.includes('_f.write') && l.includes('MCP SHARED PACK'))).toBe(true);
+    });
+
+    test('a shared preset lands in its slot on top of the mic pack', async ({ page }) => {
+      const preset = { pos: 2, name: 'LINKED PRESET', list: [{ effect: 'DELAY', time: 0.1 }, { effect: 'SAMPLE' }] };
+      await page.goto(`/#preset=${Buffer.from(JSON.stringify(preset)).toString('base64url')}&slot=2`);
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('LINKED PRESET');
+
+      await page.getByRole('button', { name: 'Connect the mic' }).click();
+      await expect(page.getByRole('button', { name: 'Save to the mic' })).toBeEnabled();
+      await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('TING HARDWARE PACK');
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('LINKED PRESET');
+    });
+  });
 });
