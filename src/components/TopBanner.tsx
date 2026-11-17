@@ -232,7 +232,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
       {/* 2. Right group: Device Connector block + Export/Import block. On phones Export/Import comes first and the
           connector last, joined to the blocks above; DOM order is phone order so each lower block paints over the
           bottom bevel of the one above it. From sm up the connector sits on the left. */}
-      <div className="w-full sm:w-auto -mt-[6px] sm:mt-0 flex flex-col sm:flex-row items-stretch sm:items-start gap-0 sm:gap-[19px]">
+      <div className="w-full sm:w-auto mt-[19px] sm:mt-0 flex flex-col sm:flex-row items-stretch sm:items-start gap-0 sm:gap-[19px]">
 
       {/* Right Modular Block (Same 10 x 3 cell size & 3D format as Left Block: Row 1 = [EXPORT][IMPORT], Row 2 = Pack Dropdown) */}
       <div ref={dropdownRef} className="w-full sm:w-auto sm:order-2 flex flex-col items-start relative">
@@ -529,7 +529,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
           </div>
         )}
       </div>
-      <div className="w-full sm:w-auto -mt-[6px] sm:mt-0 sm:order-1">{deviceConnector}</div>
+      <div className="w-full sm:w-auto mt-[19px] sm:mt-0 sm:order-1">{deviceConnector}</div>
       </div>
     </div>
   );

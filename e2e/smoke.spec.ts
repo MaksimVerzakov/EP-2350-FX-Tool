@@ -174,15 +174,15 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
     await expect(page.getByText('NO EFFECTS IN BUS 2')).toBeVisible();
   });
 
-  test('phone layout: top blocks joined at FX card width, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
+  test('phone layout: top blocks at FX card width one grid cell apart, connector last, stacked header, tall FX board, tabs docked on the card', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
 
     // No version number in the banner
     await expect(page.getByText(/^V \d+\.\d+/)).toHaveCount(0);
 
-    // Logo, Export/Import and connector blocks stretch to the FX card's width and stack joined in that
-    // order: each face starts on the bottom border of the one above (1px shared border, no gap)
+    // Logo, Export/Import and connector blocks stretch to the FX card's width and stack in that order,
+    // one 25px grid cell apart: each face's top border sits one grid line below the bottom border above
     const faces = await page.evaluate(() =>
       [
         document.querySelector('[aria-label="Theme selector"]')!.closest('.h-\\[76px\\]')!,
@@ -198,8 +198,8 @@ test.describe('EP-2350 FX Tool Smoke Tests', () => {
       expect(f.x).toBe(Math.round(cardBox!.x));
       expect(f.w).toBe(Math.round(cardBox!.width));
     }
-    expect(faces[1].y).toBe(faces[0].y + faces[0].h - 1);
-    expect(faces[2].y).toBe(faces[1].y + faces[1].h - 1);
+    expect(faces[1].y).toBe(faces[0].y + faces[0].h - 1 + 25);
+    expect(faces[2].y).toBe(faces[1].y + faces[1].h - 1 + 25);
 
     // Header: full-width preset selector with the notes field on its own row below
     const selector = await page.getByRole('group', { name: 'Preset selector' }).boundingBox();
