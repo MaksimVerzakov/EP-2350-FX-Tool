@@ -1510,7 +1510,8 @@ const cyberWalkiePreset = {
     { effect: 'SAMPLE' }
   ],
   handle: { row: 2, param: 'wet-level', depth: 45 },
-  shake: { row: 3, param: 'frequency', depth: 900 }
+  shake: { row: 3, param: 'frequency', depth: 900 },
+  trigger: { row: 4 }
 };
 const validatePayload = validatePresetInput({ preset: cyberWalkiePreset });
 assert.strictEqual(validatePayload.isValid, true, 'Hand-written preset must have 0 hardware validation errors');
@@ -1969,6 +1970,28 @@ console.log('✓ Suite 14: Presets accepted in either scale (editor 0..100 or co
   assert.ok(text.includes('LFO (sine, 0.3 Hz) swings row 2 DELAY time between 330 ms and 370 ms'));
   const noMods = await validate({ preset: { list: [{ effect: 'RING', frequency: 200, mix: 60 }, { effect: 'SAMPLE' }] } });
   assert.ok(noMods.summary.includes('Handle: not used (squeezing does nothing).'));
+
+  // SAMPLE must not go on BUS 2; BUS 1 or no BUS is fine
+  const onBus2 = await validate({ preset: { list: [{ effect: 'DELAY', BUS: 1 }, { effect: 'SAMPLE', BUS: 2 }], trigger: { row: 1 } } });
+  assert.strictEqual(onBus2.isValid, false);
+  assert.ok(find(onBus2, 'list[1].BUS', 'sample_on_bus2'), 'SAMPLE on BUS 2 is an error');
+  const onBus1 = await validate({ preset: { list: [{ effect: 'DELAY', BUS: 2 }, { effect: 'SAMPLE', BUS: 1 }], trigger: { row: 1 } } });
+  assert.ok(!find(onBus1, 'list[1].BUS', 'sample_on_bus2'), 'SAMPLE on BUS 1 is allowed');
+
+  // A missing trigger is a warning naming the SAMPLE row, and export points the trigger at it
+  const noTrigger = await validate({ preset: { list: [{ effect: 'SAMPLE' }, { effect: 'DELAY' }] } });
+  const trigWarn = find(noTrigger, 'trigger', 'missing_trigger');
+  assert.ok(trigWarn && trigWarn.type === 'warning' && trigWarn.fix.includes('"row": 0'), 'missing_trigger warning with the SAMPLE row');
+  assert.deepStrictEqual(noTrigger.normalizedPresetJson.trigger, { row: 0 }, 'Export adds trigger at the SAMPLE row');
+  const withTrigger = await validate({ preset: { list: [{ effect: 'SAMPLE' }], trigger: { row: 0 } } });
+  assert.ok(!find(withTrigger, 'trigger', 'missing_trigger'));
+
+  // A samples block is a warning: WAV files cannot travel with the pack
+  const withSamples = validatePresetInput({
+    configJson: JSON.stringify({ name: 'S', samples: [{ file: 'drum.wav', playmode: 'oneshot' }], presets: [{ pos: 0, name: 'A', list: [{ effect: 'SAMPLE' }], trigger: { row: 0 } }] })
+  });
+  assert.strictEqual(withSamples.isValid, true, 'samples block alone does not invalidate');
+  assert.ok(find(withSamples, 'samples', 'samples_block'), 'samples block warning');
 }
 console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and plain-language summary verified');
 
@@ -2003,6 +2026,28 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   // Percent knobs are documented in config.json scale (0..1), never as 0..100
   assert.ok(/\| `echo` \| [^|]+ \| 0 \.\. 1 \| 0\.4 \| -1 \.\. 1 \|/.test(guide), 'Percent parameters must be shown as 0..1');
   assert.ok(guide.includes('| `frequency` | carrier freq | 0 .. 20000 Hz | 440 | -5000 .. 5000 Hz |'));
+
+  // Rules come first, before the examples and the effect tables, and cover what assistants get wrong
+  const at = (h) => guide.indexOf(`\n## ${h}\n`);
+  assert.ok(at('Rules') > 0 && at('Rules') < at('Examples') && at('Examples') < at('Effects'), 'Rules, then Examples, then Effects');
+  const rules = guide.slice(at('Rules'), at('Examples'));
+  for (const needle of ['Strict JSON', 'case-sensitive', '`EQUALISER` (spelled with an S)', '`CUTOFF`, `Q`, `GAIN`', 'SAMPLE never goes on BUS 2', '`trigger.row` is the SAMPLE row', 'counted from 0', 'not percentages', '`samples`']) {
+    assert.ok(rules.includes(needle), `Rules must mention ${needle}`);
+  }
+  assert.ok(guide.includes('https://teenage.engineering/guides/ep-2350'), 'Guide links the official TE guide');
+  for (const h of ['Values', 'Buses', 'Modulation', 'Sound design']) assert.ok(at(h) > 0, `Guide has a ${h} section`);
+  assert.ok(!/resonant/i.test(guide), 'Filters have no resonance parameter, so the guide does not call them resonant');
+
+  // Every JSON example in the guide passes validate_pack with no errors and no warnings
+  const examples = [...guide.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+  assert.ok(examples.length >= 1, 'Guide has JSON examples');
+  for (const ex of examples) {
+    const res = validatePresetInput({ configJson: ex });
+    assert.strictEqual(res.isValid, true, `Guide example must be valid: ${JSON.stringify(res.errors)}`);
+    assert.deepStrictEqual(res.warnings, [], `Guide example must have no warnings: ${JSON.stringify(res.warnings)}`);
+  }
+  const exText = JSON.stringify(JSON.parse(examples[0]));
+  for (const needle of ['"BAD RECEPTION"', '"EQUALISER","CUTOFF"', '"BUS":2', '"lfo"']) assert.ok(exText.includes(needle), `Examples show ${needle}`);
 
   // 16b. The skill is retired: no build script, CLI, dev route or published files
   for (const gone of ['scripts/build-skill.mjs', 'src/skill']) {
@@ -2113,7 +2158,8 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
     assert.ok(r.structuredContent.shareUrl.startsWith(`${ORIGIN}/#`), r.structuredContent.shareUrl);
     const decoded = decodeHashPayload(r.structuredContent.shareUrl);
     assert.ok(decoded, 'The share link decodes in the web app');
-    assert.strictEqual(r.structuredContent.config.presets.length, 4);
+    assert.strictEqual(decoded.pack.presets.length, 4, 'The share link carries the whole pack');
+    assert.ok(!('config' in r.structuredContent), 'No echo of the config the assistant sent');
   }
 
   // 17f. validate_pack: errors carry the field and the fix; no link for an invalid pack
@@ -2145,11 +2191,20 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
   // A value on the 0..100 scale is rejected in a config.json
   const percent = await validate({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] });
   assert.strictEqual(percent.structuredContent.errors[0].path, 'presets[0].list[0].echo');
+  // Issues are lean: code, path, message, fix (no type or presetPos; the list and the path say both)
+  assert.deepStrictEqual(Object.keys(percent.structuredContent.errors[0]).sort(), ['code', 'fix', 'message', 'path']);
+  // The summary covers only the presets that were sent, not the placeholder slots the pack is padded with
+  const onePreset = await validate({ name: 'ONE', presets: [{ pos: 0, name: 'SOLO', list: [{ effect: 'LOWPASS', cutoff: 0.5 }, { effect: 'SAMPLE' }], trigger: { row: 1 } }] });
+  assert.strictEqual(onePreset.structuredContent.isValid, true);
+  const oneSummary = onePreset.structuredContent.summary.join('\n');
+  assert.ok(oneSummary.includes('Preset 0 "SOLO"') && !/PRESET [234]|Preset [123] /.test(oneSummary), oneSummary);
+  assert.ok(!onePreset.content[0].text.includes('PRESET 2'), 'Text result has no placeholder slots either');
   // A single preset is accepted and gets a #preset= link
   const single = await validate({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } });
   assert.strictEqual(single.structuredContent.isValid, true, single.content[0].text);
   assert.ok(single.structuredContent.shareUrl.startsWith(`${ORIGIN}/#preset=`));
-  assert.deepStrictEqual(single.structuredContent.config.list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
+  const singleRow = decodeHashPayload(single.structuredContent.shareUrl).preset.list[0];
+  assert.deepStrictEqual([singleRow.effect, singleRow.frequency, singleRow.mix], ['RING', 80, 70], 'The link opens the preset as sent (editor scale)');
   // Every official pack is valid
   for (const name of ['broken_radio', 'mysterious']) {
     const packText = fs.readFileSync(path.join(ROOT_DIR, `packs/ep-2350_preset_pack-${name}/config.json`), 'utf8');

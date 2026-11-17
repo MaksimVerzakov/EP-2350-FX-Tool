@@ -142,6 +142,15 @@ export function validatePresetInput(
     if (typeof packObj.name !== 'string' || !packObj.name.trim()) {
       addPack('warning', 'pack_name', 'name', 'The pack has no name.', 'Set "name", e.g. "DUB PACK".');
     }
+    if (packObj.samples !== undefined) {
+      addPack(
+        'warning',
+        'samples_block',
+        'samples',
+        'The pack has a "samples" block. WAV files cannot travel with the pack or its share link, so the mic would look for files the user does not have.',
+        'Leave "samples" out; the mic then uses its built-in sounds.'
+      );
+    }
     if (!Array.isArray(packObj.presets) || packObj.presets.length === 0) {
       addPack('error', 'missing_presets', 'presets', 'config.json has no "presets" array (or it is empty).', 'Add "presets": up to 4 presets with pos 0..3.');
       return { isValid: false, ...split(packIssues), summary: [] };
@@ -167,8 +176,10 @@ export function validatePresetInput(
       return { isValid: false, ...split(packIssues), summary: [] };
     }
     const normalizedConfigJson = JSON.parse(serializeToConfigJson(parsed.pack));
+    // Summarise only the presets that were sent; the parser fills empty slots with placeholders
+    const sentPos = new Set(packObj.presets.map((p: any, i: number) => (p && typeof p.pos === 'number' ? p.pos : i)));
     const summary = parsed.pack.presets
-      .filter((p) => p.list.length > 0)
+      .filter((p) => sentPos.has(p.pos) && p.list.length > 0)
       .flatMap((p) => [`Preset ${p.pos} "${p.name || ''}":`, ...describePreset(p).map((l) => `  ${l}`)]);
     const { errors, warnings } = split(packIssues);
     return {
