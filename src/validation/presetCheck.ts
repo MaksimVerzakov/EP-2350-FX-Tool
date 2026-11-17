@@ -1,5 +1,6 @@
 import type { EffectMeta, EffectType, ParamDef, PresetConfig } from '../types/config';
 import { EFFECTS_REGISTRY, MAX_EFFECTS_PER_PRESET, getModDepthConfig } from '../constants/effectsRegistry';
+import { busLanes } from '../utils/busRouting';
 
 /**
  * Detailed preset checks and a plain-language summary for AI assistants.
@@ -458,9 +459,15 @@ function describeRow(fx: Record<string, any>): string {
 export function describePreset(preset: PresetConfig): string[] {
   const lines: string[] = [];
   const list = preset.list as Array<Record<string, any>>;
-  const chain = list.map((fx) => `${String(fx.effect).toUpperCase()}${fx.BUS ? ` (bus ${fx.BUS})` : ''}`);
+  const lanes = busLanes(list);
+  const chain = list.map((fx, i) => `${String(fx.effect).toUpperCase()}${lanes[i] === 'mix' ? ' (mix)' : fx.BUS ? ` (bus ${fx.BUS})` : ''}`);
   lines.push(`Signal chain: voice → ${chain.join(' → ') || '(no effects)'}${list.some((fx) => String(fx.effect).toUpperCase() === 'SAMPLE') ? '' : ' → SAMPLE (added on export)'}.`);
-  if (list.some((fx) => fx.BUS)) lines.push('Rows on BUS 1 and BUS 2 run in parallel and are mixed back together.');
+  if (list.some((fx) => fx.BUS)) {
+    const mixRows = lanes.map((l, i) => (l === 'mix' ? i : -1)).filter((i) => i >= 0);
+    lines.push(
+      `Rows on BUS 1 and BUS 2 run in parallel and are mixed back together${mixRows.length ? `; row${mixRows.length > 1 ? 's' : ''} ${mixRows.join(', ')} (no BUS, after the bus rows) process${mixRows.length > 1 ? '' : 'es'} that mix` : ''}.`
+    );
+  }
   list.forEach((fx, i) => lines.push(`Row ${i} ${describeRow(fx)}.`));
 
   const target = (row: number | undefined) =>

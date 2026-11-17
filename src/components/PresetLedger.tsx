@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { themeColor } from '../theme/tokens';
 import { Tooltip } from './Tooltip';
+import { busLanes } from '../utils/busRouting';
 
 // Line icons drawn in the EP display style (square caps, 1.5 stroke, currentColor).
 const BusIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -212,6 +213,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
   const bus2Items = preset.list
     .map((fx, idx) => ({ fx, idx }))
     .filter((item) => item.fx.BUS === 2);
+
+  // Rows without BUS after the bus rows process the mix of both buses; they show under Bus 1 with a MIX badge
+  const lanes = busLanes(preset.list);
 
   // Skip rendering SAMPLE INJECTOR in the UI if it is the last item in Bus 1, unchanged, and unmodulated
   const lastBus1Item = bus1Items[bus1Items.length - 1];
@@ -430,7 +434,11 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
     const updated: AnyEffect = { ...fx };
     const destinationBus: 1 | 2 = fx.BUS === 2 ? 1 : 2;
     if (fx.BUS === 2) {
-      delete updated.BUS; // Moves to Bus 1
+      // Moves to Bus 1. While other rows carry an explicit BUS, write BUS 1: a row without BUS after
+      // the bus rows would process the mix of both buses instead of running on Bus 1.
+      const othersUseBus = preset.list.some((other, i) => i !== globalIdx && (other.BUS === 1 || other.BUS === 2));
+      if (othersUseBus) updated.BUS = 1;
+      else delete updated.BUS;
     } else {
       updated.BUS = 2; // Moves to Bus 2
     }
@@ -675,6 +683,13 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
             >
               {meta.displayName}
             </span>
+            {lanes[globalIdx] === 'mix' && (
+              <Tooltip label="No BUS, after the bus rows: processes the mix of Bus 1 and Bus 2">
+                <span className="text-te-xs font-mono font-bold border border-te-ink text-te-ink px-1.5 py-0.5 rounded-[1px] uppercase tracking-tight shrink-0">
+                  MIX
+                </span>
+              </Tooltip>
+            )}
             {/* Modulation Badges indicating effect is modulated */}
             {(isHandleTarget || isShakeTarget || isLfoTarget) && (
               <div className="flex items-center gap-1 shrink-0 ml-1">

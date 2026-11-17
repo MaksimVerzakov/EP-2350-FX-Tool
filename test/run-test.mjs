@@ -29,6 +29,7 @@ function buildSourceModulesForTest() {
     'src/utils/webSerial.ts',
     'src/utils/tabGuard.ts',
     'src/utils/wavCodec.ts',
+    'src/utils/busRouting.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
@@ -1174,6 +1175,63 @@ assert.ok(parseConfigJson(123).error, 'Non-string input must return error');
 assert.ok(parseConfigJson('x'.repeat(5_000_005)).error, 'Oversized JSON > 5MB must return error');
 const emptyPresetsIssues = validatePackConfig({ name: 'X', useBuiltInSamples: true, samples: [], presets: [] });
 assert.ok(emptyPresetsIssues.some((i) => i.type === 'error' && i.message.includes('At least one preset')));
+
+// 8z. BUS lanes: rows without BUS after the bus rows process the mix of both buses
+{
+  const { busLanes } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/busRouting.mjs')).href);
+  assert.deepStrictEqual(busLanes([{}, {}, {}]), [1, 1, 1], 'No BUS anywhere: a plain series chain');
+  assert.deepStrictEqual(busLanes([{}, { BUS: 2 }, {}]), [1, 2, 'mix'], 'A row without BUS after the bus rows is a mix row');
+  assert.deepStrictEqual(busLanes([{ BUS: 2 }, { BUS: 1 }, { BUS: 1 }, {}, {}]), [2, 1, 1, 'mix', 'mix']);
+  assert.deepStrictEqual(busLanes([{}, { BUS: 1 }, { BUS: 2 }]), [1, 1, 2], 'Rows without BUS before the bus rows stay on bus 1');
+
+  const reach = (from) => {
+    const seen = new Set();
+    const stack = [from];
+    while (stack.length) {
+      const n = stack.pop();
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      (n.connections || []).forEach((c) => stack.push(c));
+    }
+    return seen;
+  };
+  const busEngine = new DspAudioEngine();
+  await busEngine.init();
+  const dualMono = {
+    id: 'dm', pos: 0, name: 'DUAL MONO', comment: '',
+    list: [
+      { id: 'b0', effect: 'BALANCE', balance: 1, BUS: 2 },
+      { id: 'b1', effect: 'SAMPLE', BUS: 1 },
+      { id: 'b2', effect: 'DELAY', time: 0.35, echo: 40, BUS: 1 },
+      { id: 'b3', effect: 'BALANCE', balance: 0, BUS: 1 },
+      { id: 'b4', effect: 'BALANCE', balance: 0.8 }
+    ],
+    handle: { row: 4, param: 'balance', depth: -20 },
+    trigger: { row: 1 }
+  };
+  busEngine.updatePreset(dualMono);
+  await busEngine.start();
+  const balRow = (row) => busEngine.activeNodes.find((n) => n.effectType === 'BALANCE' && n.nodeRefs.rowIdx === row).nodeRefs;
+  const mixIn = balRow(4).panner;
+  assert.ok(reach(balRow(0).chopperGain).has(mixIn), 'Bus 2 output feeds the mix row');
+  assert.ok(reach(balRow(3).chopperGain).has(mixIn), 'Bus 1 output feeds the mix row');
+  assert.ok(reach(balRow(4).chopperGain).has(busEngine.gainMaster), 'The mix row feeds the master gain');
+  assert.ok(!reach(balRow(0).chopperGain).has(balRow(3).panner), 'Bus 2 does not run through bus 1');
+
+  // Rebuilding cuts the old chain, mix rows included, from the master gain
+  const oldMixOut = balRow(4).chopperGain;
+  busEngine.updatePreset({ ...dualMono, list: dualMono.list.slice(0, 4) });
+  assert.ok(!reach(oldMixOut).has(busEngine.gainMaster), 'Old mix rows are disconnected on rebuild');
+  busEngine.stop();
+
+  // The summary names mix rows, and the editor marks them and keeps moved rows on Bus 1
+  const dmSummary = validatePresetInput({ preset: dualMono }).summary;
+  assert.ok(dmSummary[0].includes('BALANCE (bus 1) → BALANCE (mix)'), dmSummary[0]);
+  assert.ok(dmSummary.some((l) => l.includes('row 4 (no BUS, after the bus rows) processes that mix')), JSON.stringify(dmSummary));
+  const ledgerSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/PresetLedger.tsx'), 'utf8');
+  assert.ok(ledgerSrc.includes("lanes[globalIdx] === 'mix'") && ledgerSrc.includes('processes the mix of Bus 1 and Bus 2'), 'Editor shows a MIX badge with a tooltip');
+  assert.ok(ledgerSrc.includes('if (othersUseBus) updated.BUS = 1;'), 'Moving a row to Bus 1 writes BUS 1 while other rows use BUS');
+}
 
 console.log('✓ Suite 8: DspAudioEngine all 11 effects, bundled WAV samples, AudioWorklet & race protection verified');
 
