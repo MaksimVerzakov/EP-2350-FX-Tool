@@ -2485,7 +2485,22 @@ console.log('✓ Suite 20: In-app messages and tooltips verified');
   assert.strictEqual(second.packs.length, 1);
   const untouched = up.migrateLegacyPack(memStore({ [up.LEGACY_PACK_KEY]: serializeToConfigJson(official[0]) }), official);
   assert.strictEqual(untouched.packs.length, 0, 'An untouched official pack is not copied into YOUR PACKS');
+
+  // 21e. incoming packs (links / imports): identical → open, same name → ask, new → add
+  const stored = up.addUserPack([], { ...createEmptyPack(), name: 'ROBOT VOICE' }).packs;
+  assert.deepStrictEqual(up.planIncomingPack(stored, { ...stored[0].pack }), { action: 'open', id: stored[0].id });
+  const fixed = { ...stored[0].pack, name: 'robot voice ', presets: stored[0].pack.presets.map((p, i) => (i === 0 ? { ...p, name: 'FIXED' } : p)) };
+  const plan = up.planIncomingPack(stored, fixed);
+  assert.strictEqual(plan.action, 'ask', 'Same name (case/space-insensitive) but different contents must ask');
+  assert.strictEqual(plan.existingId, stored[0].id);
+  assert.strictEqual(plan.copyName, 'ROBOT VOICE 2');
+  assert.strictEqual(up.planIncomingPack(stored, { ...fixed, name: 'OTHER' }).action, 'add');
+  const withCopy = up.addUserPack(stored, { ...fixed, name: 'ROBOT VOICE 2' }).packs;
+  assert.strictEqual(up.uniqueCopyName(withCopy, 'ROBOT VOICE'), 'ROBOT VOICE 3');
+  const longName = 'A'.repeat(24);
+  const longCopy = up.uniqueCopyName(up.addUserPack([], { ...createEmptyPack(), name: longName }).packs, longName);
+  assert.ok(longCopy.length <= 24 && longCopy.endsWith(' 2'), 'Copy names stay within the 24-character limit');
 }
-console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate) verified');
+console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate, same-name conflicts) verified');
 
 console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');

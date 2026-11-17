@@ -112,4 +112,55 @@ test.describe('YOUR PACKS', () => {
     await openPackList(page);
     await expect(yourPacks(page).getByRole('button', { name: 'OLD SAVED PACK', exact: true })).toBeVisible();
   });
+
+  test.describe('same-name pack from a link', () => {
+    const linkFor = (presetName: string) =>
+      `/#pack=${Buffer.from(sharedPackJson.replace('SHARED ONE', presetName)).toString('base64url')}`;
+    const dialog = (page: Page) => page.getByTestId('pack-conflict-dialog');
+
+    test.beforeEach(async ({ page }) => {
+      await page.goto(linkFor('BROKEN TAKE'));
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('BROKEN TAKE');
+      await expect.poll(() => storedPacks(page)).toContain('BROKEN TAKE');
+    });
+
+    test('REPLACE swaps the stored pack for the new one', async ({ page }) => {
+      await page.goto(linkFor('FIXED TAKE'));
+      await expect(dialog(page)).toContainText('MCP SHARED PACK');
+      await dialog(page).getByRole('button', { name: 'REPLACE' }).click();
+      await expect(dialog(page)).toHaveCount(0);
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('FIXED TAKE');
+      await openPackList(page);
+      await expect(yourPacks(page).getByRole('button', { name: 'MCP SHARED PACK', exact: true })).toHaveCount(1);
+      await expect.poll(() => storedPacks(page)).not.toContain('BROKEN TAKE');
+    });
+
+    test('SAVE AS COPY keeps both packs', async ({ page }) => {
+      await page.goto(linkFor('FIXED TAKE'));
+      await dialog(page).getByRole('button', { name: 'SAVE AS COPY' }).click();
+      await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('MCP SHARED PACK 2');
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('FIXED TAKE');
+      await openPackList(page);
+      await yourPacks(page).getByRole('button', { name: 'MCP SHARED PACK', exact: true }).click();
+      await expect(page.getByPlaceholder('PRESET NAME')).toHaveValue('BROKEN TAKE');
+    });
+
+    test('CANCEL leaves YOUR PACKS untouched', async ({ page }) => {
+      await page.goto(linkFor('FIXED TAKE'));
+      await dialog(page).getByRole('button', { name: 'CANCEL' }).click();
+      await expect(dialog(page)).toHaveCount(0);
+      await expect.poll(() => storedPacks(page)).toContain('BROKEN TAKE');
+      await expect.poll(() => storedPacks(page)).not.toContain('FIXED TAKE');
+    });
+
+    test('a re-sent preset link with the same name asks too', async ({ page }) => {
+      const presetLink = (fx: string) =>
+        `/#preset=${Buffer.from(JSON.stringify({ name: 'ROBOT', list: [{ effect: fx }, { effect: 'SAMPLE' }] })).toString('base64url')}`;
+      await page.goto(presetLink('DELAY'));
+      await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('ROBOT');
+      await expect.poll(() => storedPacks(page)).toContain('ROBOT');
+      await page.goto(presetLink('REVERB'));
+      await expect(dialog(page)).toContainText('ROBOT');
+    });
+  });
 });

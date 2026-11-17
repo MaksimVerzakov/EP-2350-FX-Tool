@@ -164,3 +164,40 @@ export function migrateLegacyPack(
   saveUserPacks(store, packs);
   return { packs, migratedId: id };
 }
+
+const normalizeName = (name: string) => name.trim().toUpperCase();
+
+/** The YOUR PACKS entry with this pack name (case-insensitive), if any. */
+export function findUserPackByName(packs: UserPack[], name: string): UserPack | undefined {
+  const target = normalizeName(name);
+  return packs.find((p) => normalizeName(p.pack.name) === target);
+}
+
+/** A pack name not used in YOUR PACKS yet: "NAME 2", "NAME 3", ... within the 24-character limit. */
+export function uniqueCopyName(packs: UserPack[], name: string, maxLength = 24): string {
+  const base = normalizeName(name) || 'UNTITLED PACK';
+  for (let n = 2; n < 1000; n++) {
+    const suffix = ` ${n}`;
+    const candidate = `${base.slice(0, maxLength - suffix.length).trimEnd()}${suffix}`;
+    if (!findUserPackByName(packs, candidate)) return candidate;
+  }
+  return base.slice(0, maxLength);
+}
+
+export type IncomingPackPlan =
+  | { action: 'open'; id: string }
+  | { action: 'add' }
+  | { action: 'ask'; existingId: string; copyName: string };
+
+/**
+ * What to do with a pack arriving from a link: identical to a stored pack → just open it;
+ * same name but different contents → ask (replace / save as copy); otherwise add it.
+ */
+export function planIncomingPack(packs: UserPack[], pack: PackConfig): IncomingPackPlan {
+  const fp = packFingerprint(pack);
+  const identical = packs.find((p) => packFingerprint(p.pack) === fp);
+  if (identical) return { action: 'open', id: identical.id };
+  const sameName = findUserPackByName(packs, pack.name);
+  if (sameName) return { action: 'ask', existingId: sameName.id, copyName: uniqueCopyName(packs, pack.name) };
+  return { action: 'add' };
+}
