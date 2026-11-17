@@ -1,5 +1,6 @@
 import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
+import { busLanes } from '../utils/busRouting';
 import {
   NoiseGateKernel,
   PitchShiftKernel,
@@ -853,21 +854,23 @@ export class DspAudioEngine {
 
     const bus1Effects: Array<{ fx: AnyEffect; idx: number }> = [];
     const bus2Effects: Array<{ fx: AnyEffect; idx: number }> = [];
+    const mixEffects: Array<{ fx: AnyEffect; idx: number }> = [];
 
     if (this.preset && this.preset.list.length > 0) {
+      const lanes = busLanes(this.preset.list);
       this.preset.list.forEach((fx, rowIdx) => {
-        if (fx.BUS === 2) {
-          bus2Effects.push({ fx, idx: rowIdx });
-        } else {
-          bus1Effects.push({ fx, idx: rowIdx });
-        }
+        const lane = lanes[rowIdx];
+        (lane === 2 ? bus2Effects : lane === 'mix' ? mixEffects : bus1Effects).push({ fx, idx: rowIdx });
       });
     }
 
-    // Master summing node before master gain
+    // Summing node for both buses. The chain's last node (chainOut) is what rebuilds and stop()
+    // disconnect from the master gain, so the mix rows' tails are cut along with the buses.
     const busSummer = this.ctx.createGain();
     busSummer.gain.value = 1.0;
-    this.busSummer = busSummer;
+    const chainOut = this.ctx.createGain();
+    chainOut.gain.value = 1.0;
+    this.busSummer = chainOut;
 
     // 1. Process Bus 1 (Primary parallel branch)
     let bus1Head: AudioNode = this.sourceHub;
@@ -903,7 +906,22 @@ export class DspAudioEngine {
       bus2Head.connect(busSummer);
     }
 
-    busSummer.connect(this.gainMaster);
+    // 3. Rows without BUS after the bus rows process the sum of both buses
+    let mixHead: AudioNode = busSummer;
+    mixEffects.forEach(({ fx, idx }) => {
+      const built = this.buildEffectNodes(fx, idx);
+      if (built) {
+        mixHead.connect(built.input);
+        mixHead = built.output;
+        this.activeNodes.push({
+          effectType: fx.effect,
+          params: { ...fx },
+          nodeRefs: built.nodeRefs
+        });
+      }
+    });
+    mixHead.connect(chainOut);
+    chainOut.connect(this.gainMaster);
     this.applyLiveModulation(true);
   }
 
