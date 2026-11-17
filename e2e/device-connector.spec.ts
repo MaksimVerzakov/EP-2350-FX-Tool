@@ -89,6 +89,8 @@ test.describe('Device connector block', () => {
     const eject = page.getByRole('button', { name: 'Eject the mic' });
     await expect(save).toBeVisible();
     await expect(eject).toBeVisible();
+    const [saveBox, ejectBox] = [await save.boundingBox(), await eject.boundingBox()];
+    expect(Math.abs(saveBox!.width - ejectBox!.width)).toBeLessThanOrEqual(1);
     await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('TING HARDWARE PACK');
 
     // The pack list still offers the mic's pack, without save/disconnect links

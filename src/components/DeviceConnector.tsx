@@ -245,7 +245,9 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
             </span>
           </button>
         ) : (
-          <div className="w-full h-full grid grid-cols-[100px_1fr]" role="group" aria-label="Connected mic actions">
+          <div className="w-full h-full grid grid-cols-2" role="group" aria-label="Connected mic actions">
+            {/* Two equal columns: on the 251px desktop block the divider lands on the 125px grid line,
+                and on phones (full-width block) SAVE and EJECT stay the same width. */}
             {/* SAVE column: orange header + grey body with the floppy icon */}
             <button
               type="button"
