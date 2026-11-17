@@ -17,7 +17,8 @@ export default {
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
     if (pathname === MCP_PATH) {
       const appUrl = (env.EP2350_UI_URL || url.origin).replace(/\/+$/, '');
-      return handleMcpRequest(request, { appUrl });
+      // One JSON line per MCP message; Workers Logs indexes the fields (see observability in wrangler.jsonc).
+      return handleMcpRequest(request, { appUrl, log: (entry) => console.log(JSON.stringify(entry)) });
     }
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response('Not Found', { status: 404 });

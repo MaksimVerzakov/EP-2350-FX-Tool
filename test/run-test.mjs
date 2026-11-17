@@ -1996,6 +1996,13 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
   });
   const worker = (await import(pathToFileURL(workerFile).href)).default;
   const ORIGIN = 'https://ep.example.workers.dev';
+  // The Worker logs one JSON line per MCP message: collect them instead of printing them.
+  const mcpLogs = [];
+  const realConsoleLog = console.log;
+  console.log = (...args) => {
+    if (typeof args[0] === 'string' && args[0].startsWith('{"event":"mcp"')) mcpLogs.push(JSON.parse(args[0]));
+    else realConsoleLog(...args);
+  };
   const assetsHits = [];
   const env = { ASSETS: { fetch: async (req) => (assetsHits.push(new URL(req.url).pathname), new Response('asset')) } };
   let nextId = 1;
@@ -2137,6 +2144,60 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
   await buildWorker(builtDir);
   assert.ok(fs.existsSync(path.join(builtDir, '_worker.js')));
   assert.strictEqual(fs.readFileSync(path.join(builtDir, '.assetsignore'), 'utf8').trim(), '_worker.js');
+  {
+  // 17z. Logging: one JSON line per message with client, tool, verdict, issue codes and the submitted config
+  const logged = async (method, params, opts) => {
+    const before = mcpLogs.length;
+    const res = await rpc(method, params, opts);
+    return { res, entries: mcpLogs.slice(before) };
+  };
+  const { entries: initLogs } = await logged('initialize', { protocolVersion: '2025-06-18', clientInfo: { name: 'openai-mcp', version: '1.0.0' } });
+  assert.strictEqual(initLogs.length, 1);
+  assert.deepStrictEqual(initLogs[0].client, { name: 'openai-mcp', version: '1.0.0' });
+  assert.strictEqual(initLogs[0].protocolVersion, '2025-06-18');
+  assert.strictEqual(initLogs[0].ok, true);
+  assert.ok(!('ip' in initLogs[0]) && !JSON.stringify(initLogs[0]).includes('cf-connecting-ip'), 'No IP address is logged');
+
+  const badPack = { name: 'X', presets: [{ pos: 0, name: 'A', list: [{ effect: 'EQUALISER', gain: 0.5 }, { effect: 'SAMPLE' }], trigger: { row: 1 } }] };
+  const { entries: badLogs } = await logged('tools/call', { name: 'validate_pack', arguments: { config: badPack } });
+  assert.strictEqual(badLogs.length, 1);
+  const bad = badLogs[0];
+  assert.strictEqual(bad.method, 'tools/call');
+  assert.strictEqual(bad.tool, 'validate_pack');
+  assert.strictEqual(bad.isValid, false);
+  assert.ok(bad.errors.includes('unknown_param presets[0].list[0].gain'), JSON.stringify(bad.errors));
+  assert.deepStrictEqual(JSON.parse(bad.config), badPack, 'The submitted config is logged as sent');
+  assert.strictEqual(bad.status, 200);
+  assert.ok(typeof bad.ms === 'number');
+
+  const big = JSON.stringify({ name: 'BIG', presets: [], pad: 'x'.repeat(20000) });
+  const { entries: bigLogs } = await logged('tools/call', { name: 'validate_pack', arguments: { config: big } });
+  assert.strictEqual(bigLogs[0].configTruncated, true);
+  assert.strictEqual(bigLogs[0].config.length, 8000);
+  assert.strictEqual(bigLogs[0].configChars, big.length);
+
+  const { entries: exLogs } = await logged('tools/call', { name: 'get_example_pack', arguments: { name: 'dub' } });
+  assert.strictEqual(exLogs[0].example, 'dub');
+  const { entries: errLogs } = await logged('nope/method', {});
+  assert.strictEqual(errLogs[0].ok, false);
+  assert.strictEqual(errLogs[0].rpcError.code, -32601);
+  const { entries: noteLogs } = await logged('notifications/initialized', {}, { id: null });
+  assert.strictEqual(noteLogs[0].status, 202);
+
+  const parseErr = await worker.fetch(new Request(`${ORIGIN}/mcp`, { method: 'POST', headers: { 'cf-ray': 'abc123-AMS', 'user-agent': 'ua-test' }, body: '{oops' }), env);
+  assert.strictEqual(parseErr.status, 400);
+  const parseLog = mcpLogs[mcpLogs.length - 1];
+  assert.deepStrictEqual([parseLog.method, parseLog.status, parseLog.rpcError.code, parseLog.ray, parseLog.userAgent], [null, 400, -32700, 'abc123-AMS', 'ua-test']);
+
+  // Static assets are not logged
+  const assetLogsBefore = mcpLogs.length;
+  await worker.fetch(new Request(`${ORIGIN}/index.html`), env);
+  assert.strictEqual(mcpLogs.length, assetLogsBefore);
+
+  const wrangler = fs.readFileSync(path.join(ROOT_DIR, 'wrangler.jsonc'), 'utf8');
+  assert.ok(/"observability":\s*\{\s*"enabled":\s*true/.test(wrangler), 'Workers Logs enabled');
+  console.log = realConsoleLog;
+  }
 }
 console.log('✓ Suite 17: Remote MCP server (Streamable HTTP) and Cloudflare Worker verified');
 

@@ -38,6 +38,41 @@ export const SERVER_INSTRUCTIONS = `Designs effect presets for the Teenage Engin
 export interface McpOptions {
   /** Web app URL that share links open in (no trailing slash). */
   appUrl: string;
+  /** Called once per JSON-RPC message (and once per rejected request) with what came in and what went out. */
+  log?: (entry: McpLogEntry) => void;
+}
+
+/** Longest config text kept in a log entry; longer configs are cut and flagged. */
+export const MAX_LOGGED_CONFIG_CHARS = 8000;
+
+/**
+ * One log line per MCP message: which client called which tool with what, and what it got back.
+ * No IP address is recorded.
+ */
+export interface McpLogEntry {
+  event: 'mcp';
+  method: string | null;
+  tool?: string;
+  /** clientInfo from initialize (e.g. { name: "openai-mcp" }), to tell clients apart. */
+  client?: { name?: string; version?: string };
+  protocolVersion?: string;
+  userAgent?: string;
+  ray?: string;
+  status: number;
+  /** false for a JSON-RPC error or a tool result with isError. */
+  ok: boolean;
+  rpcError?: { code: number; message: string };
+  /** validate_pack: the verdict and each issue as "code path". */
+  isValid?: boolean;
+  errors?: string[];
+  warnings?: string[];
+  /** validate_pack: the submitted config as text, cut to MAX_LOGGED_CONFIG_CHARS. */
+  config?: string;
+  configChars?: number;
+  configTruncated?: boolean;
+  /** get_example_pack: the requested name. */
+  example?: string;
+  ms: number;
 }
 
 type JsonRpcId = string | number | null;
@@ -181,7 +216,71 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } });
 
 /** Streamable HTTP transport, stateless: POST carries JSON-RPC, answered with application/json. */
+type RequestMeta = Pick<McpLogEntry, 'userAgent' | 'ray'>;
+
+const issueList = (issues: unknown): string[] =>
+  Array.isArray(issues) ? issues.map((i: any) => `${i?.code ?? 'issue'} ${i?.path ?? ''}`.trim()) : [];
+
+/** Builds the log entry for one JSON-RPC message and its reply (null for notifications). */
+export function describeExchange(
+  msg: JsonRpcMessage,
+  reply: Record<string, any> | null,
+  meta: RequestMeta & { status: number; ms: number }
+): McpLogEntry {
+  const method = msg && typeof msg.method === 'string' ? msg.method : null;
+  const params = (msg && msg.params) || {};
+  const result = reply?.result;
+  const entry: McpLogEntry = {
+    event: 'mcp',
+    method,
+    ...meta,
+    ok: !reply?.error && !result?.isError
+  };
+  if (reply?.error) entry.rpcError = { code: reply.error.code, message: String(reply.error.message) };
+  if (method === 'initialize') {
+    const info = params.clientInfo;
+    if (info && typeof info === 'object') entry.client = { name: info.name, version: info.version };
+    if (typeof params.protocolVersion === 'string') entry.protocolVersion = params.protocolVersion;
+  }
+  if (method === 'tools/call' && typeof params.name === 'string') {
+    entry.tool = params.name;
+    const args = params.arguments ?? {};
+    if (params.name === 'validate_pack' && args.config !== undefined) {
+      const text = typeof args.config === 'string' ? args.config : JSON.stringify(args.config);
+      const chars = text?.length ?? 0;
+      entry.configChars = chars;
+      entry.config = text?.slice(0, MAX_LOGGED_CONFIG_CHARS);
+      if (chars > MAX_LOGGED_CONFIG_CHARS) entry.configTruncated = true;
+      const structured = result?.structuredContent;
+      if (structured) {
+        entry.isValid = !!structured.isValid;
+        entry.errors = issueList(structured.errors);
+        entry.warnings = issueList(structured.warnings);
+      }
+    }
+    if (params.name === 'get_example_pack' && typeof args.name === 'string') entry.example = args.name;
+  }
+  return entry;
+}
+
+function safeLog(opts: McpOptions, entry: McpLogEntry) {
+  try {
+    opts.log?.(entry);
+  } catch {
+    // Logging must never break a tool call.
+  }
+}
+
 export async function handleMcpRequest(request: Request, opts: McpOptions): Promise<Response> {
+  const started = Date.now();
+  const meta: RequestMeta = {
+    userAgent: request.headers.get('user-agent') ?? undefined,
+    ray: request.headers.get('cf-ray') ?? undefined
+  };
+  const reject = (status: number, code: number, message: string) => {
+    safeLog(opts, { event: 'mcp', method: null, ...meta, status, ok: false, rpcError: { code, message }, ms: Date.now() - started });
+    return json({ jsonrpc: '2.0', id: null, error: { code, message } }, status);
+  };
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (request.method === 'DELETE') return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (request.method !== 'POST') {
@@ -190,18 +289,22 @@ export async function handleMcpRequest(request: Request, opts: McpOptions): Prom
   }
 
   const raw = await request.text();
-  if (raw.length > MAX_REQUEST_BYTES) {
-    return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large' } }, 413);
-  }
+  if (raw.length > MAX_REQUEST_BYTES) return reject(413, -32600, 'Request too large');
   let body: unknown;
   try {
     body = JSON.parse(raw);
   } catch {
-    return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
+    return reject(400, -32700, 'Parse error');
   }
 
-  const messages = Array.isArray(body) ? body : [body];
-  const replies = messages.map((m) => handleRpc(m as JsonRpcMessage, opts)).filter((r) => r !== null);
+  const messages = (Array.isArray(body) ? body : [body]) as JsonRpcMessage[];
+  const exchanges = messages.map((m) => ({ msg: m, reply: handleRpc(m, opts) }));
+  const replies = exchanges.map((e) => e.reply).filter((r) => r !== null);
+  const status = replies.length === 0 ? 202 : 200;
+  if (opts.log) {
+    const ms = Date.now() - started;
+    for (const { msg, reply } of exchanges) safeLog(opts, describeExchange(msg, reply, { ...meta, status, ms }));
+  }
   if (replies.length === 0) return new Response(null, { status: 202, headers: CORS_HEADERS });
   return json(Array.isArray(body) ? replies : replies[0]);
 }
