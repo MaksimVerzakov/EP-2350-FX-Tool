@@ -2,7 +2,7 @@
 
 A companion web workbench, DSP engine, hardware validator, and **MCP server for AI assistants** for designing, auditioning, and deploying effect packs on the [Teenage Engineering EP-2350 fx mic](https://teenage.engineering/guides/ep-2350).
 
-- **Web App**: [maksimverzakov.github.io/EP-2350-FX-Tool](https://maksimverzakov.github.io/EP-2350-FX-Tool/)
+- **Web App**: [maksimverzakov.github.io/EP-2350-FX-Tool](https://maksimverzakov.github.io/EP-2350-FX-Tool/) (also served at [ep-2350-fx-tool.xam-vz.workers.dev](https://ep-2350-fx-tool.xam-vz.workers.dev/), where MCP share links open)
 - **MCP server**: `https://ep-2350-fx-tool.xam-vz.workers.dev/mcp`
 
 ---
@@ -11,8 +11,10 @@ A companion web workbench, DSP engine, hardware validator, and **MCP server for 
 
 ### 1. FX Tool Workbench
 - **Preset & Chain Editor**: Build 4-preset packs across dual effect buses with control over Squeeze Handle, Shake, and LFO modulations.
-- **Instant Sharing**: Open and share individual presets or full packs via stateless `#preset=` / `#pack=` links with zero account setup.
-- **USB-C Hardware Integration**: Import and export hardware `config.json` packs, or connect an EP-2350 directly in the browser over Web Serial for live parameter updates and saving.
+- **Your Packs**: Keep as many packs as you like in the pack list. **NEW PACK**, imported `config.json` files and packs opened from links are all saved in your browser (`localStorage`), and edits save as you go. The official Teenage Engineering packs stay untouched: edits to them are kept only if you save the pack to the mic or export it, which adds a copy to Your Packs.
+- **Instant Sharing**: Open and share individual presets or full packs via `#pack=` / `#preset=` links, with no account. The whole pack is in the link. Opening one adds it to Your Packs (a single preset becomes its own pack, named after the preset). If you already have a pack with that name but different contents, for example a fixed version re-sent by your AI, you choose **REPLACE** or **SAVE AS COPY**.
+- **USB-C Hardware Integration**: **IMPORT** and **EXPORT** hardware `config.json` packs, or connect an EP-2350 in the browser over Web Serial for live parameter updates and saving.
+- **Themes**: Switch between the **TING** (original EP-2350 green) and **FX** themes in the top-left badge.
 
 ### 2. DSP Audio Engine
 - **Live Browser Auditioning**: Real-time audio engine modeled on the EP-2350 effects, interactive mic controls (slot switcher, handle lever, shake trigger), built-in sample/speech sources, and custom `.wav` loading.
@@ -47,6 +49,8 @@ Then ask for a sound ("a broken radio voice that gets clearer when I squeeze the
 
 The server is stateless, needs no account and runs on a Cloudflare Worker next to the web app (`src/mcp/`). It uses the same effect registry and validation code as the editor.
 
+Share links open the web app on the Worker's address (`ep-2350-fx-tool.xam-vz.workers.dev`), or on `EP2350_UI_URL` when that variable is set. Browsers keep saved data separately for each address, so packs opened there appear in Your Packs on that address, not on the GitHub Pages copy.
+
 ---
 
 ## Local Development
@@ -61,5 +65,6 @@ npm run build    # Build the static app and the Cloudflare Worker into dist/
 
 ## Loading Config onto Hardware
 
-- **USB-C Live Mode**: Click **Connect** in the web app to sync and tweak presets directly on a connected EP-2350 over Web Serial.
-- **Disk Export**: Click **Export `config.json`**, mount the EP-2350 (`fx-mic disk`) over USB-C, copy `config.json` to the root folder, and eject the disk.
+- **USB-C Live Mode** (Chrome or Edge on desktop): Click **Connect the mic**. The app opens the pack stored on the mic (listed as **ON THE MIC** in the pack list) and follows the mic's preset and sample slots. The block then splits into **SAVE**, which writes the open pack to the mic, and **EJECT**. Your Packs stay available, so you can open one and save it to the mic.
+- **Disk Export**: Click **EXPORT**, mount the EP-2350 (`fx-mic disk`) over USB-C, copy `config.json` to the root folder, and eject the disk.
+- **One tab at a time**: Only one tab can talk to the mic and save packs. Other tabs of the app are dimmed until you close the active one.
