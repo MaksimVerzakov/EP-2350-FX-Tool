@@ -35,14 +35,10 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
     // Check single-use effects
     const seenEffects = new Set<string>();
     let hasSampleBlock = false;
-    let hasEqualiser = false;
 
     preset.list.forEach((effect) => {
       if (effect.effect === 'SAMPLE') {
         hasSampleBlock = true;
-      }
-      if (effect.effect === 'EQUALISER') {
-        hasEqualiser = true;
       }
       if (SINGLE_INSTANCE_EFFECTS.has(effect.effect)) {
         if (seenEffects.has(effect.effect)) {
@@ -56,13 +52,6 @@ export function validatePackConfig(pack: PackConfig): ValidationIssue[] {
       }
     });
 
-    if (hasEqualiser) {
-      issues.push({
-        type: 'warning',
-        message: `Preset ${preset.pos} (${preset.name || 'Unnamed'}): 'EQUALISER' is documented in the TE guide but unsupported on stock firmware <= 1.0.8.`,
-        presetPos: preset.pos
-      });
-    }
 
     if (!hasSampleBlock) {
       issues.push({

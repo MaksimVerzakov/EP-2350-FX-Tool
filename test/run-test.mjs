@@ -241,7 +241,7 @@ assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('Handle ta
 assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('Shake targets row -1')));
 assert.ok(issues.some((i) => i.type === 'error' && i.message.includes('LFO targets row 8')));
 
-// Verify 16-row hardware limit and EQUALISER firmware compatibility warning
+// Verify 16-row hardware limit, and that EQUALISER gets no compatibility warning
 const oversizedPresetPack = {
   name: 'OVERSIZED',
   useBuiltInSamples: true,
@@ -266,8 +266,8 @@ assert.ok(
   'Validator must report an error when a preset exceeds 16 effects'
 );
 assert.ok(
-  oversizedIssues.some((i) => i.type === 'warning' && i.message.includes("'EQUALISER' is documented in the TE guide")),
-  'Validator must warn about EQUALISER firmware <= 1.0.8 compatibility'
+  !oversizedIssues.some((i) => /EQUALISER|firmware/i.test(i.message) && i.type === 'warning'),
+  'EQUALISER is a documented effect: no compatibility warning'
 );
 
 // Verify 16 non-SAMPLE effects triggers 17-effect limit error because SAMPLE is required
@@ -1835,7 +1835,7 @@ console.log('✓ Suite 14: Presets accepted in either scale (editor 0..100 or co
     assert.strictEqual(res.shareUrl, undefined, `${label}: no shareUrl`);
   }
 
-  // Too many rows, silent rows, extreme filters, zero depth, firmware support, missing SAMPLE
+  // Too many rows, silent rows, extreme filters, zero depth, missing SAMPLE
   const tooMany = await validate({ preset: { list: Array.from({ length: 16 }, () => ({ effect: 'LOWPASS', cutoff: 0.5 })) } });
   assert.ok(find(tooMany, 'list', 'too_many_rows').message.includes('17 rows'), 'Counts the SAMPLE row export adds');
   const quiet = await validate({
@@ -1849,9 +1849,17 @@ console.log('✓ Suite 14: Presets accepted in either scale (editor 0..100 or co
     }
   });
   assert.strictEqual(quiet.isValid, true, 'Warnings alone do not invalidate a preset');
-  for (const code of ['filter_extreme', 'silent_row', 'zero_depth', 'firmware_support', 'missing_sample']) {
+  for (const code of ['filter_extreme', 'silent_row', 'zero_depth', 'missing_sample']) {
     assert.ok(quiet.warnings.some((w) => w.code === code), `warning ${code}`);
   }
+  assert.ok(!quiet.warnings.some((w) => w.code === 'firmware_support'), 'No firmware warning for EQUALISER');
+  assert.ok(!JSON.stringify(quiet).toLowerCase().includes('firmware'), 'Validation output never mentions firmware');
+
+  // A normalized 0..1 knob reports its range without a misleading unit: REVERB time is 0..1 (0-6 s), not 0..1 s
+  const reverbTime = await validate({ preset: { list: [{ effect: 'REVERB', time: 2.5 }, { effect: 'SAMPLE' }] } });
+  const reverbMsg = find(reverbTime, 'list[0].time', 'out_of_range').message;
+  assert.ok(!reverbMsg.includes('0..1 s'), `REVERB time range must not read as 0..1 seconds: ${reverbMsg}`);
+  assert.ok(/0\.\.1 \(0\.0s to 6\.0s\)/.test(reverbMsg), `REVERB time range must say what 0..1 means: ${reverbMsg}`);
 
   // Config scale ranges and messages use the 0..1 scale
   const cfgRange = await validate({ preset: { list: [{ effect: 'DELAY', echo: 0.4, 'wet-level': 1.5 }, { effect: 'SAMPLE' }] } });
@@ -1920,9 +1928,11 @@ console.log('✓ Suite 15: Verbose validation (exact path, message, fix) and pla
   const { renderFormatGuide } = await import(pathToFileURL(guideFile).href);
 
   // 16a. The guide documents every effect and parameter, in config.json scale, and points at the MCP tools
-  const guide = renderFormatGuide({ appUrl: 'https://example.test/app', version: '9.9.9-test' });
+  const guide = renderFormatGuide({ appUrl: 'https://example.test/app' });
   assert.ok(guide.startsWith('# EP-2350 format guide\n'), 'No skill frontmatter');
-  assert.ok(guide.includes('9.9.9-test') && guide.includes('https://example.test/app/'));
+  assert.ok(!guide.includes('9.9.9-test') && !/^Version /m.test(guide), 'Guide prints no app version (models mistake it for a firmware version)');
+  assert.ok(!guide.includes('https://example.test/app'), 'Guide does not print the web app URL; validate_pack returns the share link');
+  assert.ok(!/firmware/i.test(guide), 'Guide makes no firmware claims');
   for (const tool of ['validate_pack', 'get_example_pack']) assert.ok(guide.includes(`\`${tool}\``), `Guide must point at ${tool}`);
   assert.ok(!/skill|scripts\/ep2350|node .*validate|Checking by hand/i.test(guide), 'No skill, CLI or by-hand instructions left');
   for (const meta of Object.values(EFFECTS_REGISTRY)) {
@@ -2022,9 +2032,10 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
   assert.deepStrictEqual(tools.map((t) => t.name), ['get_format_guide', 'validate_pack', 'get_example_pack']);
   for (const t of tools) assert.strictEqual(t.inputSchema.type, 'object', `${t.name} needs an object input schema`);
 
-  // 17d. get_format_guide returns the format guide with this deployment's app URL
+  // 17d. get_format_guide returns the format guide, without app version, app URL or firmware claims
   const guide = (await rpc('tools/call', { name: 'get_format_guide', arguments: {} })).body.result.content[0].text;
-  assert.ok(guide.startsWith('# EP-2350 format guide') && guide.includes(`Web app: ${ORIGIN}/`));
+  assert.ok(guide.startsWith('# EP-2350 format guide'));
+  assert.ok(!/^Version /m.test(guide) && !guide.includes('Web app:') && !/firmware/i.test(guide));
   for (const fx of Object.keys(EFFECTS_REGISTRY)) assert.ok(guide.includes(`### ${fx}`), `Guide documents ${fx}`);
 
   // 17e. validate_pack: a valid official pack gets a share link on the Worker's own domain

@@ -1293,7 +1293,7 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                     <div
                       key={key}
                       className="px-2 py-1 text-te-xs font-mono text-[#abb5ba] flex items-center justify-between cursor-not-allowed bg-black/5"
-                      title="The SAMPLE primitive is restricted to Bus 1 in firmware"
+                      title="SAMPLE stays on Bus 1"
                     >
                       <span>{meta.displayName}</span>
                       <span className="text-te-xs italic text-te-accent">

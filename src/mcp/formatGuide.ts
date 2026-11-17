@@ -9,9 +9,8 @@ import type { EffectMeta } from '../types/config';
  */
 
 export interface FormatGuideOptions {
-  /** Public web app URL (opens share links, imports config.json). */
-  appUrl: string;
-  version: string;
+  /** Public web app URL. Kept for callers; the guide itself does not print it. */
+  appUrl?: string;
 }
 
 const num = (v: number) => String(Math.round(v * 1000) / 1000);
@@ -50,15 +49,13 @@ function effectSection(meta: EffectMeta): string {
   ].join('\n');
 }
 
-export function renderFormatGuide({ appUrl, version }: FormatGuideOptions): string {
+export function renderFormatGuide(_opts: FormatGuideOptions = {}): string {
   const effects = Object.values(EFFECTS_REGISTRY);
   const single = effects.filter((e) => e.singleInstance).map((e) => e.type);
 
   return `# EP-2350 format guide
 
 The EP-2350 fx mic loads one file, \`config.json\`, holding 4 presets. Each preset is a chain of effects plus what the squeeze handle, a shake and an LFO do to it. This guide tells you how to write that file.
-
-Version ${version}. Web app: ${appUrl}/
 
 ## Workflow
 
