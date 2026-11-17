@@ -30,10 +30,7 @@ const EXAMPLE_PACKS: Record<string, string> = {
 
 export const SERVER_INSTRUCTIONS = `Designs effect presets for the Teenage Engineering EP-2350 fx mic.
 
-1. Call get_format_guide once to learn the config.json format and the effect parameters.
-2. Write the pack (up to 4 presets) for what the user described, following the Rules at the top of the guide.
-3. Call validate_pack with it. Fix every error it reports and call it again until it is VALID.
-4. Give the user the share link from validate_pack. It opens the pack in the EP-2350 FX Tool web app, where they can listen to it, tweak it and send it to the mic over USB-C.`;
+Call get_format_guide first: it holds the rules, examples and workflow. Then write the pack, call validate_pack until it is VALID, and give the user its share link.`;
 
 export interface McpOptions {
   /** Web app URL that share links open in (no trailing slash). */
@@ -97,7 +94,7 @@ export const TOOLS = [
     name: 'get_format_guide',
     title: 'EP-2350 format guide',
     description:
-      'Returns the EP-2350 config.json format: pack and preset structure, every effect with its parameters, ranges and defaults, and how the squeeze handle, shake and LFO modulate them. Call this once before writing a pack.',
+      'The EP-2350 config.json reference: rules, examples, every effect parameter and the workflow. Call once before writing a pack.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
@@ -105,7 +102,7 @@ export const TOOLS = [
     name: 'validate_pack',
     title: 'Check a pack and get its link',
     description:
-      'Checks an EP-2350 config.json pack ({ "name", "presets": [...] }) or a single preset ({ "name", "list": [...] }). Returns VALID or every error with the exact field and how to fix it, a plain-language summary of what each preset does, and, when valid, a share link that opens the pack in the EP-2350 FX Tool web app. Always call this before giving a pack to the user, and give them the share link.',
+      'Checks a pack ({ "name", "presets": [...] }) or one preset ({ "name", "list": [...] }): errors with fixes, a summary of what each preset does, and, when valid, the share link to give the user.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -123,7 +120,7 @@ export const TOOLS = [
     name: 'get_example_pack',
     title: 'Official example pack',
     description:
-      'Returns one of the three official Teenage Engineering EP-2350 packs (4 presets each) as config.json, as a starting point for a style: broken_radio (lo-fi radio and walkie talkie), dub (echoes and springs), mysterious (dark and pitched).',
+      'One of the official TE packs as config.json, as a starting point: broken_radio (lo-fi radio), dub (echoes and springs), mysterious (dark and pitched).',
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string', enum: Object.keys(EXAMPLE_PACKS) } },
@@ -146,13 +143,15 @@ function callTool(name: string, args: Record<string, any>, opts: McpOptions): Re
         return { content: [text('validate_pack needs "config": the pack or preset as a JSON object or JSON text.')], isError: true };
       }
       const result = validateText(typeof config === 'string' ? config : JSON.stringify(config), opts.appUrl);
+      // Lean result: each issue as { code, path, message, fix }; no echo of the config the assistant just sent
+      const lean = (issues: any[] | undefined) =>
+        (issues ?? []).map(({ code, path, message, fix }) => ({ code, path, message, fix }));
       const structured = {
         isValid: !!result.isValid,
-        errors: result.errors ?? [],
-        warnings: result.warnings ?? [],
+        errors: lean(result.errors),
+        warnings: lean(result.warnings),
         summary: result.summary ?? [],
-        ...(result.isValid ? { shareUrl: result.shareUrl } : {}),
-        ...(result.isValid ? { config: result.normalizedConfigJson ?? result.normalizedPresetJson } : {})
+        ...(result.isValid ? { shareUrl: result.shareUrl } : {})
       };
       return { content: [text(formatResult(result))], structuredContent: structured };
     }

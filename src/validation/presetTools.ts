@@ -176,8 +176,10 @@ export function validatePresetInput(
       return { isValid: false, ...split(packIssues), summary: [] };
     }
     const normalizedConfigJson = JSON.parse(serializeToConfigJson(parsed.pack));
+    // Summarise only the presets that were sent; the parser fills empty slots with placeholders
+    const sentPos = new Set(packObj.presets.map((p: any, i: number) => (p && typeof p.pos === 'number' ? p.pos : i)));
     const summary = parsed.pack.presets
-      .filter((p) => p.list.length > 0)
+      .filter((p) => sentPos.has(p.pos) && p.list.length > 0)
       .flatMap((p) => [`Preset ${p.pos} "${p.name || ''}":`, ...describePreset(p).map((l) => `  ${l}`)]);
     const { errors, warnings } = split(packIssues);
     return {

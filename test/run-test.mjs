@@ -2158,7 +2158,8 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
     assert.ok(r.structuredContent.shareUrl.startsWith(`${ORIGIN}/#`), r.structuredContent.shareUrl);
     const decoded = decodeHashPayload(r.structuredContent.shareUrl);
     assert.ok(decoded, 'The share link decodes in the web app');
-    assert.strictEqual(r.structuredContent.config.presets.length, 4);
+    assert.strictEqual(decoded.pack.presets.length, 4, 'The share link carries the whole pack');
+    assert.ok(!('config' in r.structuredContent), 'No echo of the config the assistant sent');
   }
 
   // 17f. validate_pack: errors carry the field and the fix; no link for an invalid pack
@@ -2190,11 +2191,20 @@ console.log('✓ Suite 16: Format guide, build and MCP panel verified');
   // A value on the 0..100 scale is rejected in a config.json
   const percent = await validate({ name: 'T', presets: [{ pos: 0, name: 'X', list: [{ effect: 'DELAY', echo: 60 }, { effect: 'SAMPLE' }] }] });
   assert.strictEqual(percent.structuredContent.errors[0].path, 'presets[0].list[0].echo');
+  // Issues are lean: code, path, message, fix (no type or presetPos; the list and the path say both)
+  assert.deepStrictEqual(Object.keys(percent.structuredContent.errors[0]).sort(), ['code', 'fix', 'message', 'path']);
+  // The summary covers only the presets that were sent, not the placeholder slots the pack is padded with
+  const onePreset = await validate({ name: 'ONE', presets: [{ pos: 0, name: 'SOLO', list: [{ effect: 'LOWPASS', cutoff: 0.5 }, { effect: 'SAMPLE' }], trigger: { row: 1 } }] });
+  assert.strictEqual(onePreset.structuredContent.isValid, true);
+  const oneSummary = onePreset.structuredContent.summary.join('\n');
+  assert.ok(oneSummary.includes('Preset 0 "SOLO"') && !/PRESET [234]|Preset [123] /.test(oneSummary), oneSummary);
+  assert.ok(!onePreset.content[0].text.includes('PRESET 2'), 'Text result has no placeholder slots either');
   // A single preset is accepted and gets a #preset= link
   const single = await validate({ name: 'ROBOT', list: [{ effect: 'RING', frequency: 80, mix: 0.7 }, { effect: 'SAMPLE' }], trigger: { row: 1 } });
   assert.strictEqual(single.structuredContent.isValid, true, single.content[0].text);
   assert.ok(single.structuredContent.shareUrl.startsWith(`${ORIGIN}/#preset=`));
-  assert.deepStrictEqual(single.structuredContent.config.list[0], { effect: 'RING', frequency: 80, mix: 0.7 });
+  const singleRow = decodeHashPayload(single.structuredContent.shareUrl).preset.list[0];
+  assert.deepStrictEqual([singleRow.effect, singleRow.frequency, singleRow.mix], ['RING', 80, 70], 'The link opens the preset as sent (editor scale)');
   // Every official pack is valid
   for (const name of ['broken_radio', 'mysterious']) {
     const packText = fs.readFileSync(path.join(ROOT_DIR, `packs/ep-2350_preset_pack-${name}/config.json`), 'utf8');
