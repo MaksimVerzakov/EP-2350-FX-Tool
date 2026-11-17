@@ -25,6 +25,7 @@ function buildSourceModulesForTest() {
     'src/utils/parser.ts',
     'src/utils/serializer.ts',
     'src/utils/presetUrl.ts',
+    'src/utils/userPacks.ts',
     'src/utils/webSerial.ts',
     'src/utils/tabGuard.ts',
     'src/utils/wavCodec.ts',
@@ -2231,7 +2232,7 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
   assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 3, 'Connect, save and import failures must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 1, 'A successful import must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 3, 'Import, and copying an edited official pack on save/export, must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
@@ -2249,4 +2250,57 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
 }
 console.log('✓ Suite 20: In-app messages and tooltips verified');
 
-console.log('\n=== ALL 20 PRODUCTION TEST SUITES PASSED (100%) ===');
+// ==========================================
+// Suite 21: YOUR PACKS storage (localStorage)
+// ==========================================
+{
+  const up = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/userPacks.mjs')).href);
+  const memStore = (init = {}) => {
+    const data = { ...init };
+    return { data, getItem: (k) => (k in data ? data[k] : null), setItem: (k, v) => { data[k] = String(v); } };
+  };
+  const official = OFFICIAL_TE_PACKS.map((o) => o.pack);
+  const mine = { ...createEmptyPack(), name: 'MINE' };
+
+  // 21a. add / dedupe / update / remove
+  let { packs, id } = up.addUserPack([], mine);
+  assert.strictEqual(packs.length, 1);
+  const again = up.addUserPack(packs, { ...mine }, { dedupe: true });
+  assert.strictEqual(again.id, id, 'An identical pack (e.g. the same link opened twice) must not be added twice');
+  assert.strictEqual(again.packs.length, 1);
+  assert.strictEqual(up.addUserPack(packs, { ...mine }).packs.length, 2, 'NEW PACK always adds');
+  packs = up.updateUserPack(packs, id, { ...mine, name: 'RENAMED' });
+  assert.strictEqual(packs[0].pack.name, 'RENAMED');
+  assert.strictEqual(up.removeUserPack(packs, id).length, 0);
+
+  // 21b. save / load round-trip, tolerant of junk
+  const store = memStore();
+  up.saveUserPacks(store, packs);
+  const loaded = up.loadUserPacks(store);
+  assert.strictEqual(loaded.length, 1);
+  assert.strictEqual(loaded[0].id, id);
+  assert.strictEqual(loaded[0].pack.name, 'RENAMED');
+  assert.deepStrictEqual(up.loadUserPacks(memStore({ [up.USER_PACKS_KEY]: '{not json' })), []);
+  assert.deepStrictEqual(up.loadUserPacks(memStore({ [up.USER_PACKS_KEY]: '[{"id":1}]' })), []);
+
+  // 21c. selection round-trip
+  up.saveSelection(store, { kind: 'user', id });
+  assert.deepStrictEqual(up.loadSelection(store), { kind: 'user', id });
+  up.saveSelection(store, { kind: 'official', id: 'dub' });
+  assert.deepStrictEqual(up.loadSelection(store), { kind: 'official', id: 'dub' });
+  assert.strictEqual(up.loadSelection(memStore({ [up.ACTIVE_PACK_KEY]: '{"kind":"evil"}' })), null);
+
+  // 21d. migration of the legacy single saved pack
+  const legacyStore = memStore({ [up.LEGACY_PACK_KEY]: serializeToConfigJson(mine) });
+  const migrated = up.migrateLegacyPack(legacyStore, official);
+  assert.ok(migrated.migratedId, 'An edited legacy pack becomes the first user pack');
+  assert.strictEqual(migrated.packs[0].pack.name, 'MINE');
+  const second = up.migrateLegacyPack(legacyStore, official);
+  assert.strictEqual(second.migratedId, null, 'Migration runs once');
+  assert.strictEqual(second.packs.length, 1);
+  const untouched = up.migrateLegacyPack(memStore({ [up.LEGACY_PACK_KEY]: serializeToConfigJson(official[0]) }), official);
+  assert.strictEqual(untouched.packs.length, 0, 'An untouched official pack is not copied into YOUR PACKS');
+}
+console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate) verified');
+
+console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');

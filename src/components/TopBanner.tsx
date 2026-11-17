@@ -1,9 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Download, Upload, ChevronDown, Check, Plus, Usb } from 'lucide-react';
+import { Download, Upload, ChevronDown, Check, Plus, Usb, Trash2 } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
+import type { PackSelection } from '../utils/userPacks';
 import { bottomBevelPoints, rightBevelPoints, useBlockWidth } from './useBlockWidth';
 import { themeColor } from '../theme/tokens';
+import { Tooltip } from './Tooltip';
 
 interface TopBannerProps {
   packName: string;
@@ -18,6 +20,12 @@ interface TopBannerProps {
   isDevicePack?: boolean;
   devicePackName?: string;
   onSelectDevicePack?: () => void;
+  /** Which pack the editor shows; drives the check marks in the pack list. */
+  selection?: PackSelection | null;
+  /** YOUR PACKS entries (stored in the browser). */
+  userPacks?: { id: string; name: string }[];
+  onSelectUserPack?: (id: string) => void;
+  onDeleteUserPack?: (id: string) => void;
   /** Device connector block rendered to the left of the Export/Import block. */
   deviceConnector?: React.ReactNode;
 }
@@ -35,12 +43,22 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   isDevicePack = false,
   devicePackName,
   onSelectDevicePack,
+  selection = null,
+  userPacks = [],
+  onSelectUserPack,
+  onDeleteUserPack,
   deviceConnector
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  /** YOUR PACKS entry waiting for a second click to confirm deletion. */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dropdownOpen) setConfirmDeleteId(null);
+  }, [dropdownOpen]);
   const isTing = theme === 'ting';
+  const isDeviceSelected = selection?.kind === 'device';
   const [logoRef, logoW] = useBlockWidth<HTMLDivElement>();
   const [packRef, packW] = useBlockWidth<HTMLDivElement>();
 
@@ -392,7 +410,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
         {/* Official TE Packs Dropdown Menu */}
         {dropdownOpen && (
           <div
-            className={`absolute right-[5px] top-[100px] w-[276px] border p-2 z-50 flex flex-col gap-1 ${
+            className={`absolute right-[5px] top-[100px] w-[276px] max-h-[70vh] overflow-y-auto border p-2 z-50 flex flex-col gap-1 ${
               'bg-te-surface border-te-ink'
             }`}
           >
@@ -415,7 +433,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                     setDropdownOpen(false);
                   }}
                   className={`w-full text-left px-2 py-1.5 rounded-[1px] transition-colors cursor-pointer flex flex-col gap-0.5 group ${
-                    isDevicePack
+                    isDeviceSelected
                       ? 'bg-te-ink text-white'
                       : 'hover:bg-te-accent hover:text-white text-te-ink'
                   }`}
@@ -425,13 +443,13 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                       <Usb className="w-3 h-3 shrink-0 text-te-accent group-hover:text-white" />
                       {devicePackName}
                     </span>
-                    {isDevicePack && (
+                    {isDeviceSelected && (
                       <Check className="w-3 h-3 group-hover:text-white shrink-0 text-te-accent" />
                     )}
                   </div>
                   <span
                     className={`font-mono text-te-xs uppercase truncate ${
-                      isDevicePack
+                      isDeviceSelected
                         ? 'text-white/70'
                         : 'text-te-muted group-hover:text-white/85'
                     }`}
@@ -441,6 +459,71 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                 </button>
               </div>
             )}
+
+            <div className="border-b pb-1 mb-0.5 flex flex-col gap-1 border-te-rule" data-testid="your-packs">
+              <div className="flex items-center justify-between px-1">
+                <span className="font-mono text-te-xs font-bold uppercase tracking-wider text-te-accent">
+                  YOUR PACKS
+                </span>
+                <span className="font-mono text-te-xs text-te-muted">SAVED IN THIS BROWSER</span>
+              </div>
+              {userPacks.length === 0 && (
+                <span className="px-2 py-1 font-mono text-te-xs uppercase text-te-muted">
+                  NO PACKS YET. CREATE ONE WITH NEW PACK.
+                </span>
+              )}
+              {userPacks.map((item) => {
+                const isSelected = selection?.kind === 'user' && selection.id === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className={`w-full flex items-stretch rounded-[1px] transition-colors group ${
+                      isSelected ? 'bg-te-ink text-white' : 'hover:bg-te-accent hover:text-white text-te-ink'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectUserPack?.(item.id);
+                        setDropdownOpen(false);
+                      }}
+                      className="flex-1 min-w-0 text-left px-2 py-1.5 cursor-pointer flex items-center justify-between gap-1"
+                    >
+                      <span className="font-mono text-te-sm font-bold uppercase tracking-wide truncate">
+                        {item.name || 'UNTITLED PACK'}
+                      </span>
+                      {isSelected && (
+                        <Check className="w-3 h-3 group-hover:text-white shrink-0 text-te-accent" />
+                      )}
+                    </button>
+                    {confirmDeleteId === item.id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteUserPack?.(item.id);
+                          setConfirmDeleteId(null);
+                        }}
+                        className="px-2 my-1 mr-1 flex items-center justify-center cursor-pointer shrink-0 bg-te-accent text-white font-mono text-te-xs font-bold uppercase tracking-wider"
+                        aria-label={`Confirm delete ${item.name || 'pack'}`}
+                      >
+                        DELETE?
+                      </button>
+                    ) : (
+                      <Tooltip label="Delete this pack">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(item.id)}
+                          className="h-full px-1.5 flex items-center justify-center cursor-pointer opacity-60 hover:opacity-100 shrink-0"
+                          aria-label={`Delete ${item.name || 'pack'}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </Tooltip>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             <div
               className={`flex items-center justify-between border-b pb-1 mb-0.5 px-1 ${
@@ -460,7 +543,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
             </div>
 
             {OFFICIAL_TE_PACKS.map((item) => {
-              const isSelected = !isDevicePack && packName.trim().toUpperCase() === item.name.toUpperCase();
+              const isSelected = selection?.kind === 'official' && selection.id === item.id;
               return (
                 <button
                   key={item.id}

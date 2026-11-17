@@ -132,4 +132,43 @@ test.describe('Device connector block', () => {
     const log = await serialLog(page);
     expect(log.some((l) => l.includes('_f.write') && l.includes('NEW PACK'))).toBe(true);
   });
+
+  test('a pack from a link stays in YOUR PACKS after the mic connects', async ({ page }) => {
+    const shared = JSON.stringify({
+      name: 'MCP SHARED PACK',
+      presets: [{ pos: 0, name: 'SHARED ONE', list: [{ effect: 'DELAY', time: 0.3 }, { effect: 'SAMPLE' }] }]
+    });
+    await page.goto(`/#pack=${Buffer.from(shared).toString('base64url')}`);
+    const packName = page.getByPlaceholder('PACK NAME');
+    await expect(packName).toHaveValue('MCP SHARED PACK');
+
+    // Connecting opens the mic's pack...
+    await page.getByRole('button', { name: 'Connect the mic' }).click();
+    await expect(packName).toHaveValue('TING HARDWARE PACK');
+
+    // ...and the linked pack is still one click away, ready to save to the mic
+    await page.getByLabel('Select default pack').click();
+    await page.getByTestId('your-packs').getByRole('button', { name: 'MCP SHARED PACK', exact: true }).click();
+    await expect(packName).toHaveValue('MCP SHARED PACK');
+    const save = page.getByRole('button', { name: 'Save to the mic' });
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(page.getByTestId('saved-indicator')).toBeVisible();
+    const log = await serialLog(page);
+    expect(log.some((l) => l.includes('_f.write') && l.includes('MCP SHARED PACK'))).toBe(true);
+  });
+
+  test('saving an edited official pack to the mic keeps a copy in YOUR PACKS', async ({ page }) => {
+    await page.getByRole('button', { name: 'Connect the mic' }).click();
+    await expect(page.getByRole('button', { name: 'Save to the mic' })).toBeVisible();
+
+    await page.getByLabel('Select default pack').click();
+    await page.getByRole('button', { name: /DUB PACK/ }).click();
+    await page.getByPlaceholder('PACK NAME').fill('MY DUB');
+    await page.getByRole('button', { name: 'Save to the mic' }).click();
+    await expect(page.getByTestId('saved-indicator')).toBeVisible();
+
+    await page.getByLabel('Select default pack').click();
+    await expect(page.getByTestId('your-packs').getByRole('button', { name: 'MY DUB', exact: true })).toBeVisible();
+  });
 });
