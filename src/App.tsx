@@ -17,6 +17,7 @@ import {
   loadUserPacks,
   migrateLegacyPack,
   packFingerprint,
+  planIncomingPack,
   removeUserPack,
   saveSelection,
   saveUserPacks,
@@ -30,6 +31,7 @@ import { PresetLedger } from './components/PresetLedger';
 import { McpPanel } from './components/McpPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
+import { PackConflictDialog } from './components/PackConflictDialog';
 import { Toast, useToast } from './components/Toast';
 
 const safeGetLocalStorage = (key: string): string | null => {
@@ -101,6 +103,73 @@ export const App: React.FC = () => {
   userPacksRef.current = userPacks;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  /** A linked/imported pack whose name clashes with a stored one, waiting for REPLACE / SAVE AS COPY. */
+  const [pendingIncoming, setPendingIncoming] = useState<{
+    pack: PackConfig;
+    slot: number;
+    existingId: string;
+    copyName: string;
+  } | null>(null);
+
+  /** Show a stored YOUR PACKS entry in the editor. */
+  const openStoredPack = useCallback((packs: UserPack[], id: string, slot = 0) => {
+    const found = packs.find((p) => p.id === id);
+    if (!found) return;
+    setSelection({ kind: 'user', id });
+    setPack(found.pack);
+    setActiveSlot(slot);
+    setIsDevicePack(false);
+    setRightPanelMode('fx');
+  }, []);
+
+  /**
+   * A pack arriving from a link or an import lands in YOUR PACKS: identical → open the stored one,
+   * same name but different → ask (REPLACE / SAVE AS COPY), otherwise add it.
+   */
+  const receivePack = useCallback(
+    (incoming: PackConfig, slot = 0): boolean => {
+      const plan = planIncomingPack(userPacksRef.current, incoming);
+      if (plan.action === 'ask') {
+        setPendingIncoming({ pack: incoming, slot, existingId: plan.existingId, copyName: plan.copyName });
+        return false;
+      }
+      let packs = userPacksRef.current;
+      let id: string;
+      if (plan.action === 'open') {
+        id = plan.id;
+      } else {
+        ({ packs, id } = addUserPack(packs, incoming));
+        userPacksRef.current = packs;
+        setUserPacks(packs);
+      }
+      openStoredPack(packs, id, slot);
+      return true;
+    },
+    [openStoredPack]
+  );
+
+  const handleConflictReplace = () => {
+    if (!pendingIncoming) return;
+    const packs = updateUserPack(userPacksRef.current, pendingIncoming.existingId, pendingIncoming.pack);
+    userPacksRef.current = packs;
+    setUserPacks(packs);
+    openStoredPack(packs, pendingIncoming.existingId, pendingIncoming.slot);
+    setPendingIncoming(null);
+  };
+
+  const handleConflictSaveAsCopy = () => {
+    if (!pendingIncoming) return;
+    const { packs, id } = addUserPack(userPacksRef.current, {
+      ...pendingIncoming.pack,
+      name: pendingIncoming.copyName
+    });
+    userPacksRef.current = packs;
+    setUserPacks(packs);
+    openStoredPack(packs, id, pendingIncoming.slot);
+    setPendingIncoming(null);
+  };
+
+  const handleConflictCancel = useCallback(() => setPendingIncoming(null), []);
 
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const savedTheme = safeGetLocalStorage('ep2350_theme');
@@ -258,14 +327,7 @@ export const App: React.FC = () => {
           presets: base.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
         };
       }
-      const { packs, id } = addUserPack(userPacksRef.current, linkedPack, { dedupe: true });
-      userPacksRef.current = packs;
-      setUserPacks(packs);
-      setSelection({ kind: 'user', id });
-      setPack(packs.find((p) => p.id === id)!.pack);
-      setActiveSlot(decoded.slot);
-      setIsDevicePack(false);
-      setRightPanelMode('fx');
+      receivePack(linkedPack, decoded.slot);
       // Drop the payload from the URL so a reload doesn't add the pack again.
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     };
@@ -275,7 +337,7 @@ export const App: React.FC = () => {
     return () => {
       window.removeEventListener('hashchange', applyHashPayload);
     };
-  }, []);
+  }, [receivePack]);
 
   // Sync theme to document root & localStorage
   useEffect(() => {
@@ -516,14 +578,9 @@ export const App: React.FC = () => {
   const handleImportJson = (rawJson: string) => {
     const parsed = parseConfigJson(rawJson);
     if (parsed.pack) {
-      const { packs, id } = addUserPack(userPacksRef.current, parsed.pack, { dedupe: true });
-      userPacksRef.current = packs;
-      setUserPacks(packs);
-      setSelection({ kind: 'user', id });
-      setPack(packs.find((p) => p.id === id)!.pack);
-      setActiveSlot(0);
-      setIsDevicePack(false);
-      showToast('success', 'Imported', 'config.json loaded and added to YOUR PACKS.');
+      if (receivePack(parsed.pack)) {
+        showToast('success', 'Imported', 'config.json loaded and added to YOUR PACKS.');
+      }
     } else {
       showToast('error', 'Import failed', parsed.error ?? 'This file is not a valid EP-2350 config.json.');
     }
@@ -669,6 +726,15 @@ export const App: React.FC = () => {
 
       <Toast toast={toast} onDismiss={dismissToast} />
       {isMultiTabBlocked && <MultiTabBanner theme={theme} />}
+      {pendingIncoming && !isMultiTabBlocked && (
+        <PackConflictDialog
+          packName={pendingIncoming.pack.name}
+          copyName={pendingIncoming.copyName}
+          onReplace={handleConflictReplace}
+          onSaveAsCopy={handleConflictSaveAsCopy}
+          onCancel={handleConflictCancel}
+        />
+      )}
     </div>
   );
 };
