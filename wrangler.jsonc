@@ -10,6 +10,11 @@
     "binding": "ASSETS",
     "run_worker_first": ["/mcp", "/mcp/*"]
   },
+  // Workers Logs: keeps the Worker's console output (one JSON line per MCP message) for a few days.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   // Cloudflare Workers Builds: preview deployments for pull requests.
   "previews": {}
 }
