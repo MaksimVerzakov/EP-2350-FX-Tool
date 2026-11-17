@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { INITIAL_PACK, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
+import { INITIAL_PACK, OFFICIAL_TE_PACKS, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
 import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
@@ -7,6 +7,21 @@ import { parseConfigJson } from './utils/parser';
 import { decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
+import {
+  type KeyValueStore,
+  type PackSelection,
+  type UserPack,
+  LEGACY_PACK_KEY,
+  addUserPack,
+  loadSelection,
+  loadUserPacks,
+  migrateLegacyPack,
+  packFingerprint,
+  removeUserPack,
+  saveSelection,
+  saveUserPacks,
+  updateUserPack
+} from './utils/userPacks';
 
 import { TopBanner } from './components/TopBanner';
 import { MicDevice } from './components/MicDevice';
@@ -35,15 +50,57 @@ const safeSetLocalStorage = (key: string, value: string): void => {
   }
 };
 
+const browserStore: KeyValueStore = { getItem: safeGetLocalStorage, setItem: safeSetLocalStorage };
+
+interface InitialPackState {
+  pack: PackConfig;
+  userPacks: UserPack[];
+  selection: PackSelection | null;
+}
+
+/** Resolve what the editor shows on load: the last selected user/official pack, else the last editor snapshot. */
+function resolveInitialPackState(): InitialPackState {
+  const { packs: userPacks, migratedId } = migrateLegacyPack(
+    browserStore,
+    OFFICIAL_TE_PACKS.map((o) => o.pack)
+  );
+  if (migratedId) {
+    const migrated = userPacks.find((p) => p.id === migratedId)!;
+    return { pack: migrated.pack, userPacks, selection: { kind: 'user', id: migratedId } };
+  }
+  const sel = loadSelection(browserStore);
+  if (sel?.kind === 'user') {
+    const found = userPacks.find((p) => p.id === sel.id);
+    if (found) return { pack: found.pack, userPacks, selection: sel };
+  }
+  if (sel?.kind === 'official') {
+    const official = OFFICIAL_TE_PACKS.find((o) => o.id === sel.id);
+    if (official) return { pack: official.pack, userPacks, selection: sel };
+  }
+  const saved = safeGetLocalStorage(LEGACY_PACK_KEY);
+  const parsed = saved ? parseConfigJson(saved) : null;
+  if (parsed?.pack) {
+    const fp = packFingerprint(parsed.pack);
+    const official = OFFICIAL_TE_PACKS.find((o) => packFingerprint(o.pack) === fp);
+    return { pack: parsed.pack, userPacks, selection: official ? { kind: 'official', id: official.id } : null };
+  }
+  return { pack: INITIAL_PACK, userPacks, selection: { kind: 'official', id: OFFICIAL_TE_PACKS[0].id } };
+}
+
+/** Resolved once per page load: React StrictMode calls state initializers twice, and the migration writes storage. */
+let initialPackStateCache: InitialPackState | null = null;
+const getInitialPackState = (): InitialPackState => (initialPackStateCache ??= resolveInitialPackState());
+
 export const App: React.FC = () => {
-  const [pack, setPack] = useState<PackConfig>(() => {
-    const saved = safeGetLocalStorage('ep2350_pack_config');
-    if (saved) {
-      const parsed = parseConfigJson(saved);
-      if (parsed.pack) return parsed.pack;
-    }
-    return INITIAL_PACK;
-  });
+  const [initialPackState] = useState(getInitialPackState);
+  const [pack, setPack] = useState<PackConfig>(initialPackState.pack);
+  /** "YOUR PACKS": packs the user created, imported or opened from a link, kept in localStorage. */
+  const [userPacks, setUserPacks] = useState<UserPack[]>(initialPackState.userPacks);
+  const [selection, setSelection] = useState<PackSelection | null>(initialPackState.selection);
+  const userPacksRef = useRef(userPacks);
+  userPacksRef.current = userPacks;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
 
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const savedTheme = safeGetLocalStorage('ep2350_theme');
@@ -88,6 +145,7 @@ export const App: React.FC = () => {
     }
     setIsDeviceConnected(true);
     setIsDevicePack(true);
+    setSelection({ kind: 'device' });
   }, []);
 
   useEffect(() => {
@@ -97,6 +155,7 @@ export const App: React.FC = () => {
       setIsDevicePack(false);
       setDevicePack(null);
       setSavedDeviceJson(null);
+      setSelection((prev) => (prev?.kind === 'device' ? null : prev));
     });
 
     const unsubscribePresetSlot = ep2350Serial.onPresetSlotChange((slot) => {
@@ -142,13 +201,14 @@ export const App: React.FC = () => {
     }
 
     if (prevStatus === 'blocked' && tabGuardStatus === 'active') {
-      const hasHash = typeof window !== 'undefined' && decodeHashPayload(window.location.hash) !== null;
-      if (!hasHash) {
-        const saved = safeGetLocalStorage('ep2350_pack_config');
-        if (saved) {
-          const parsed = parseConfigJson(saved);
-          if (parsed.pack) setPack(parsed.pack);
-        }
+      // Another tab may have changed YOUR PACKS while this one was blocked.
+      const fresh = loadUserPacks(browserStore);
+      setUserPacks(fresh);
+      const sel = selectionRef.current;
+      if (sel?.kind === 'user') {
+        const found = fresh.find((p) => p.id === sel.id);
+        if (found) setPack(found.pack);
+        else setSelection(null);
       }
     }
   }, [tabGuardStatus]);
@@ -186,19 +246,28 @@ export const App: React.FC = () => {
     const applyHashPayload = () => {
       const decoded = decodeHashPayload(window.location.hash);
       if (!decoded) return;
+      // A link always lands in YOUR PACKS so it survives connecting the mic or switching packs.
+      let linkedPack: PackConfig;
       if (decoded.type === 'pack') {
-        setPack(decoded.pack);
-        setActiveSlot(decoded.slot);
-        setIsDevicePack(false);
-        setRightPanelMode('fx');
-      } else if (decoded.type === 'preset') {
-        setPack((prev) => ({
-          ...prev,
-          presets: prev.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
-        }));
-        setActiveSlot(decoded.slot);
-        setRightPanelMode('fx');
+        linkedPack = decoded.pack;
+      } else {
+        const base = createEmptyPack();
+        linkedPack = {
+          ...base,
+          name: (decoded.preset.name || 'SHARED PRESET').toUpperCase().slice(0, 24),
+          presets: base.presets.map((p) => (p.pos === decoded.slot ? decoded.preset : p))
+        };
       }
+      const { packs, id } = addUserPack(userPacksRef.current, linkedPack, { dedupe: true });
+      userPacksRef.current = packs;
+      setUserPacks(packs);
+      setSelection({ kind: 'user', id });
+      setPack(packs.find((p) => p.id === id)!.pack);
+      setActiveSlot(decoded.slot);
+      setIsDevicePack(false);
+      setRightPanelMode('fx');
+      // Drop the payload from the URL so a reload doesn't add the pack again.
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
     };
 
     applyHashPayload();
@@ -217,8 +286,18 @@ export const App: React.FC = () => {
   // Save to localStorage only from the active leader tab so duplicate tabs cannot clobber edits
   useEffect(() => {
     if (!isTabLeader) return;
-    safeSetLocalStorage('ep2350_pack_config', serializeToConfigJson(pack));
+    safeSetLocalStorage(LEGACY_PACK_KEY, serializeToConfigJson(pack));
   }, [pack, isTabLeader]);
+
+  useEffect(() => {
+    if (!isTabLeader) return;
+    saveUserPacks(browserStore, userPacks);
+  }, [userPacks, isTabLeader]);
+
+  useEffect(() => {
+    if (!isTabLeader) return;
+    saveSelection(browserStore, selection);
+  }, [selection, isTabLeader]);
 
   // Synchronize active preset with DSP engine (dry bypass when FX are switched off)
   useEffect(() => {
@@ -297,21 +376,65 @@ export const App: React.FC = () => {
     const updatedPresets = pack.presets.map((p) =>
       p.pos === updated.pos ? updated : p
     );
-    const nextPack = {
+    commitPackEdit({
       ...pack,
       presets: updatedPresets
-    };
+    });
+  };
+
+  /** Apply an edit to the editor pack; user packs save as you go, official packs only live in memory. */
+  const commitPackEdit = (nextPack: PackConfig) => {
     setPack(nextPack);
     if (isDevicePack) {
       setDevicePack(nextPack);
     }
+    if (selection?.kind === 'user') {
+      setUserPacks((prev) => updateUserPack(prev, selection.id, nextPack));
+    }
   };
 
   const handleUpdatePackName = (name: string) => {
-    const nextPack = { ...pack, name };
-    setPack(nextPack);
-    if (isDevicePack) {
-      setDevicePack(nextPack);
+    commitPackEdit({ ...pack, name });
+  };
+
+  /**
+   * Edits to an official pack are not kept, unless the user saves it to the mic or exports it:
+   * then the edited pack is copied into YOUR PACKS and selected.
+   */
+  const keepEditedPackAsCopy = (): boolean => {
+    let shouldCopy = selection === null;
+    if (selection?.kind === 'official') {
+      const official = OFFICIAL_TE_PACKS.find((o) => o.id === selection.id);
+      shouldCopy = !official || packFingerprint(official.pack) !== packFingerprint(pack);
+    }
+    if (!shouldCopy) return false;
+    const { packs, id } = addUserPack(userPacksRef.current, pack);
+    userPacksRef.current = packs;
+    setUserPacks(packs);
+    setSelection({ kind: 'user', id });
+    return true;
+  };
+
+  const selectUserPack = (id: string) => {
+    const found = userPacks.find((p) => p.id === id);
+    if (!found) return;
+    setPack(found.pack);
+    setSelection({ kind: 'user', id });
+    setActiveSlot(0);
+    setIsDevicePack(false);
+  };
+
+  const handleDeleteUserPack = (id: string) => {
+    const found = userPacks.find((p) => p.id === id);
+    if (!found) return;
+    // The pack list asks "DELETE?" before calling this.
+    setUserPacks((prev) => removeUserPack(prev, id));
+    if (selection?.kind === 'user' && selection.id === id) {
+      const fallback = OFFICIAL_TE_PACKS[0];
+      setPack(fallback.pack);
+      setSelection({ kind: 'official', id: fallback.id });
+      setActiveSlot(0);
+      setIsDevicePack(false);
     }
   };
 
@@ -339,6 +462,7 @@ export const App: React.FC = () => {
   const handleSelectDevicePack = () => {
     if (!devicePack) return;
     setPack(devicePack);
+    setSelection({ kind: 'device' });
     setActiveSlot(0);
     setIsDevicePack(true);
     if (isDeviceConnected) {
@@ -351,6 +475,9 @@ export const App: React.FC = () => {
     try {
       const jsonStr = serializeToConfigJson(pack);
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
+      const copied = selection?.kind === 'official' && keepEditedPackAsCopy();
+      if (selection === null) setSelection({ kind: 'device' });
+      if (copied) showToast('success', 'Saved to the mic', 'A copy of this pack is now in YOUR PACKS.');
       setDevicePack(pack);
       setIsDevicePack(true);
       setSavedDeviceJson(jsonStr);
@@ -370,13 +497,18 @@ export const App: React.FC = () => {
     const parsed = parseConfigJson(presetPack.rawJson);
     if (parsed.pack) {
       setPack(parsed.pack);
+      setSelection({ kind: 'official', id: presetPack.id });
       setActiveSlot(0);
       setIsDevicePack(false);
     }
   };
 
   const handleCreateNewPack = () => {
-    setPack(createEmptyPack());
+    const { packs, id } = addUserPack(userPacksRef.current, createEmptyPack());
+    userPacksRef.current = packs;
+    setUserPacks(packs);
+    setSelection({ kind: 'user', id });
+    setPack(packs.find((p) => p.id === id)!.pack);
     setActiveSlot(0);
     setIsDevicePack(false);
   };
@@ -384,16 +516,23 @@ export const App: React.FC = () => {
   const handleImportJson = (rawJson: string) => {
     const parsed = parseConfigJson(rawJson);
     if (parsed.pack) {
-      setPack(parsed.pack);
+      const { packs, id } = addUserPack(userPacksRef.current, parsed.pack, { dedupe: true });
+      userPacksRef.current = packs;
+      setUserPacks(packs);
+      setSelection({ kind: 'user', id });
+      setPack(packs.find((p) => p.id === id)!.pack);
       setActiveSlot(0);
       setIsDevicePack(false);
-      showToast('success', 'Imported', 'config.json loaded. Its presets are now in the editor.');
+      showToast('success', 'Imported', 'config.json loaded and added to YOUR PACKS.');
     } else {
       showToast('error', 'Import failed', parsed.error ?? 'This file is not a valid EP-2350 config.json.');
     }
   };
 
   const handleExportJson = () => {
+    if (keepEditedPackAsCopy()) {
+      showToast('success', 'Exported', 'A copy of this pack is now in YOUR PACKS.');
+    }
     const jsonStr = serializeToConfigJson(pack);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -431,6 +570,10 @@ export const App: React.FC = () => {
           isDevicePack={isDevicePack}
           devicePackName={devicePack?.name}
           onSelectDevicePack={handleSelectDevicePack}
+          selection={selection}
+          userPacks={userPacks.map((p) => ({ id: p.id, name: p.pack.name }))}
+          onSelectUserPack={selectUserPack}
+          onDeleteUserPack={handleDeleteUserPack}
           deviceConnector={
             <DeviceConnector
               theme={theme}
