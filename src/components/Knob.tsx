@@ -213,8 +213,8 @@ export const Knob: React.FC<KnobProps> = ({
               modulationSource === 'LFO'
                 ? 'bg-[#00a69c]'
                 : modulationSource === 'SHK'
-                ? 'bg-[#141617]'
-                : 'bg-[#f15a22]'
+                ? 'bg-te-edge'
+                : 'bg-te-accent'
             }`}
             title={`Modulated by ${modulationSource || 'source'}`}
           >
@@ -295,7 +295,7 @@ export const Knob: React.FC<KnobProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onDoubleClick={onReset}
-          className="w-[52px] h-[17px] text-te-xs font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-[#141617] focus:border-[#f15a22] rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
+          className="w-[52px] h-[17px] text-te-xs font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-te-edge focus:border-te-accent rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
         />
       </div>
     </div>

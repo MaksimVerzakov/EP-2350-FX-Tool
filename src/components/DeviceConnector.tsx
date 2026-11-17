@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { ThemeMode } from '../types/config';
 import { bottomBevelPoints, rightBevelPoints, useBlockWidth } from './useBlockWidth';
+import { themeColor } from '../theme/tokens';
 
 interface DeviceConnectorProps {
   theme: ThemeMode;
@@ -149,13 +150,13 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
     setHovered(false);
   }, [isConnected]);
 
-  const lightBevel = isTing ? '#dbd0b9' : '#d8dad9';
-  const bodyFace = isTing ? 'bg-[#e8e9e4]' : 'bg-[#e5e6e6]';
-  const bodyHover = isTing ? 'group-hover:bg-[#f0f1ec]' : 'group-hover:bg-[#eeefef]';
-  const darkBevel = isTing ? '#003828' : '#000000';
-  const ink = isTing ? '#00503a' : '#141617';
-  const pageColor = isTing ? '#dbd0b9' : '#abb5ba';
-  const lightRing = isTing ? 'border-[#00503a]/40' : 'border-[#141617]/40';
+  const lightBevel = themeColor('bevel', isTing);
+  const bodyFace = 'bg-te-face';
+  const bodyHover = 'group-hover:bg-te-face-hover';
+  const darkBevel = themeColor('ink-deep', isTing);
+  const ink = themeColor('ink', isTing);
+  const pageColor = themeColor('page', isTing);
+  const lightRing = 'border-te-ink/40';
 
   const canSave = hasUnsavedChanges && saveState === 'idle';
 
@@ -196,7 +197,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
         {bevel(rightBevelPoints(W, HEADER_H, H - 1), lightBevel, 'right-bottom')}
       </svg>
 
-      <div className="relative z-10 border border-[#141617] flex w-full sm:w-[251px]" style={{ height: H }}>
+      <div className="relative z-10 border border-te-edge flex w-full sm:w-[251px]" style={{ height: H }}>
         {!isConnected ? (
           <button
             type="button"
@@ -212,20 +213,20 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 ? 'Connect your EP-2350 over USB-C to load and save its presets'
                 : 'Web Serial is not available in this browser. Use Chrome or Edge on desktop.'
             }
-            className="group w-full h-full flex flex-col cursor-pointer disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
+            className="group w-full h-full flex flex-col cursor-pointer disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-te-accent focus-visible:ring-inset"
           >
             {/* Header row: orange, like EXPORT */}
             <span
-              className={`relative w-full flex items-center justify-center border-b border-[#141617] transition-colors bg-[#f15a22] ${
-                isSupported && !isConnecting ? 'group-hover:bg-[#ff6b35]' : ''
+              className={`relative w-full flex items-center justify-center border-b border-te-edge transition-colors bg-te-accent ${
+                isSupported && !isConnecting ? 'group-hover:bg-te-accent-hover' : ''
               }`}
               style={{ height: HEADER_H }}
             >
-              <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
+              <Ring pos="left-[7px] top-[6px]" tone="border-te-edge/55" />
               <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white whitespace-nowrap">
                 {!isSupported ? 'chrome / edge only' : isConnecting ? 'connecting…' : 'connect the mic'}
               </span>
-              <Ring pos="right-[7px] top-[6px]" tone="border-[#141617]/55" />
+              <Ring pos="right-[7px] top-[6px]" tone="border-te-edge/55" />
             </span>
             {/* Body row: grey like the TOOL block, cable only (animates on hover) */}
             <span className={`relative w-full flex-1 overflow-hidden transition-colors ${bodyFace} ${isSupported && !isConnecting ? bodyHover : ''}`}>
@@ -258,13 +259,13 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                   ? 'Save changes to the mic (writes config.json and reloads the active preset)'
                   : 'Nothing to save: the mic already has this pack'
               }
-              className="group flex flex-col cursor-pointer disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
+              className="group flex flex-col cursor-pointer disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-te-accent focus-visible:ring-inset"
             >
               <span
-                className={`relative flex items-center justify-center bg-[#f15a22] border-b border-r border-[#141617] transition-colors ${canSave ? 'group-hover:bg-[#ff6b35]' : ''}`}
+                className={`relative flex items-center justify-center bg-te-accent border-b border-r border-te-edge transition-colors ${canSave ? 'group-hover:bg-te-accent-hover' : ''}`}
                 style={{ height: HEADER_H }}
               >
-                <Ring pos="left-[7px] top-[6px]" tone="border-[#141617]/55" />
+                <Ring pos="left-[7px] top-[6px]" tone="border-te-edge/55" />
                 <span className="font-te-medium text-te-sm tracking-wider uppercase leading-none text-white">
                   save
                 </span>
@@ -273,7 +274,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
                 <Ring pos="top-[7px] left-[7px]" tone={lightRing} />
                 <Ring pos="bottom-[7px] left-[7px]" tone={lightRing} />
                 {saveState === 'saved' ? (
-                  <Check className="w-[22px] h-[22px] text-[#f15a22]" strokeWidth={3} data-testid="saved-indicator" />
+                  <Check className="w-[22px] h-[22px] text-te-accent" strokeWidth={3} data-testid="saved-indicator" />
                 ) : (
                   <FloppyIcon
                     className={`w-[22px] h-[22px] transition-colors ${saveState === 'saving' ? 'animate-pulse' : ''}`}
@@ -289,11 +290,11 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               onClick={onEject}
               aria-label="Eject the mic"
               title="Eject: disconnect from the mic. Also eject the TINGDISK drive in your OS before unplugging."
-              className="group flex flex-col cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#f15a22] focus-visible:ring-inset"
+              className="group flex flex-col cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-te-accent focus-visible:ring-inset"
             >
               <span
-                className={`relative flex items-center justify-center border-b border-[#141617] transition-colors ${
-                  isTing ? 'bg-[#00503a] group-hover:bg-[#006348]' : 'bg-[#141617] group-hover:bg-[#272a2c]'
+                className={`relative flex items-center justify-center border-b border-te-edge transition-colors ${
+                  'bg-te-ink group-hover:bg-te-ink-hover'
                 }`}
                 style={{ height: HEADER_H }}
               >
@@ -305,7 +306,7 @@ export const DeviceConnector: React.FC<DeviceConnectorProps> = ({
               <span className={`relative flex-1 flex items-center justify-center transition-colors ${bodyFace} ${bodyHover}`}>
                 <Ring pos="top-[7px] right-[7px]" tone={lightRing} />
                 <Ring pos="bottom-[7px] right-[7px]" tone={lightRing} />
-                <EjectIcon className={`w-[20px] h-[20px] transition-colors group-hover:text-[#f15a22] ${isTing ? 'text-[#00503a]' : 'text-[#141617]'}`} />
+                <EjectIcon className={`w-[20px] h-[20px] transition-colors group-hover:text-te-accent ${'text-te-ink'}`} />
               </span>
             </button>
           </div>
