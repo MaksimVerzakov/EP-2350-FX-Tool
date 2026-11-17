@@ -451,7 +451,7 @@ export interface ModDepthConfig {
 
 /**
  * Returns the appropriate modulation depth range, unit, and scaling rule
- * for a given effect parameter according to EP-2350 hardware firmware rules.
+ * for a given effect parameter in config.json.
  */
 export const getModDepthConfig = (effectType?: string, paramName?: string): ModDepthConfig => {
   if (effectType === 'RING' || effectType === 'SSB') {

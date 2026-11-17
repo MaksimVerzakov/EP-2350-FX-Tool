@@ -98,8 +98,12 @@ const metaOf = (effect: unknown): EffectMeta | undefined =>
 /** Allowed range of a parameter in the scale the preset was given in. */
 function paramRange(p: ParamDef, scale: PresetScale) {
   const f = p.unit === '%' && scale === 'config' ? 0.01 : 1;
-  const unit = p.unit === '%' && scale === 'config' ? '' : p.unit;
-  return { min: p.min * f, max: p.max * f, unit, text: `${fmt(p.min * f)}..${fmt(p.max * f)}${unit ? ' ' + unit : ''}` };
+  // 0..1 knobs whose unit describes what they control (reverb time in s, cutoff in Hz, EQ gain in
+  // dB): the stored value has no unit, so show what the ends of the range mean, as the guide does.
+  const normalized = p.unit !== '%' && p.unit !== '' && Math.abs(p.max) <= 1 && Math.abs(p.min) <= 1;
+  const unit = (p.unit === '%' && scale === 'config') || normalized ? '' : p.unit;
+  const ends = normalized && p.displayScale ? ` (${p.displayScale(p.min)} to ${p.displayScale(p.max)})` : '';
+  return { min: p.min * f, max: p.max * f, unit, text: `${fmt(p.min * f)}..${fmt(p.max * f)}${unit ? ' ' + unit : ''}${ends}` };
 }
 
 function depthRange(effect: string, param: string, scale: PresetScale) {
@@ -245,9 +249,6 @@ export function checkPreset(raw: unknown, scale: PresetScale, prefix = ''): Pres
           `Use a value between ${fmt(r.min)} and ${fmt(r.max)}.`
         );
       }
-    }
-    if (meta.type === 'EQUALISER') {
-      add('warning', 'firmware_support', `${rowPath}.effect`, 'EQUALISER is documented by TE but not supported on stock firmware 1.0.8 and earlier.', 'Use LOWPASS/HIGHPASS for tone shaping unless the mic runs newer firmware.');
     }
     const pct = (k: string) => (isNum(fx[k]) ? (scale === 'config' ? fx[k] * 100 : fx[k]) : undefined);
     if ((meta.type === 'DELAY' || meta.type === 'REVERB') && pct('wet-level') === 0 && pct('dry-level') === 0) {

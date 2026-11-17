@@ -104,7 +104,7 @@ const text = (t: string) => ({ type: 'text', text: t });
 function callTool(name: string, args: Record<string, any>, opts: McpOptions): Record<string, any> {
   switch (name) {
     case 'get_format_guide':
-      return { content: [text(renderFormatGuide({ appUrl: opts.appUrl, version: TOOLS_VERSION }))] };
+      return { content: [text(renderFormatGuide({ appUrl: opts.appUrl }))] };
     case 'validate_pack': {
       const config = args.config;
       if (config === undefined || config === null || (typeof config !== 'string' && typeof config !== 'object')) {
