@@ -221,6 +221,9 @@ export function checkPreset(raw: unknown, scale: PresetScale, prefix = ''): Pres
     if (fx.BUS !== undefined && fx.BUS !== 1 && fx.BUS !== 2) {
       add('error', 'bad_bus', `${rowPath}.BUS`, `BUS is ${JSON.stringify(fx.BUS)}; it must be 1 or 2.`, 'Use BUS 1 or 2 to run rows in parallel, or leave BUS out for the main chain.');
     }
+    if (meta.type === 'SAMPLE' && fx.BUS === 2) {
+      add('error', 'sample_on_bus2', `${rowPath}.BUS`, 'SAMPLE is on BUS 2; the trigger sample must not go on bus 2.', 'Remove "BUS" from the SAMPLE row, or set it to 1.');
+    }
     const paramNames = meta.params.map((p) => p.name);
     for (const [key, value] of Object.entries(fx)) {
       if (ROW_META_KEYS.includes(key)) continue;
@@ -275,6 +278,17 @@ export function checkPreset(raw: unknown, scale: PresetScale, prefix = ''): Pres
     add('warning', 'missing_sample', 'list', 'There is no SAMPLE row. Export appends one at the end, so the trigger sample enters after every effect.', 'Add { "effect": "SAMPLE" } where the trigger sample should enter the chain (usually last).');
   }
 
+  const sampleRow = list.findIndex((fx) => isObj(fx) && metaOf(fx.effect ?? fx.EFFECT)?.type === 'SAMPLE');
+  if (sampleRow >= 0 && (raw.trigger === undefined || raw.trigger === null)) {
+    add(
+      'warning',
+      'missing_trigger',
+      'trigger',
+      `There is no trigger, and the trigger button only plays the sample when trigger.row points at the SAMPLE row. Export adds { "row": ${sampleRow} }.`,
+      `Add "trigger": { "row": ${sampleRow} }.`
+    );
+  }
+
   // Modulation
   const rowEffect = (row: unknown) => (Number.isInteger(row) && (row as number) >= 0 && (row as number) < list.length && isObj(list[row as number]) ? metaOf((list[row as number] as any).effect ?? (list[row as number] as any).EFFECT) : undefined);
   for (const key of ['handle', 'shake', 'lfo', 'trigger'] as const) {
@@ -320,7 +334,6 @@ export function checkPreset(raw: unknown, scale: PresetScale, prefix = ''): Pres
     const meta = rowEffect(mod.row);
     if (key === 'trigger') {
       if (meta && meta.type !== 'SAMPLE') {
-        const sampleRow = list.findIndex((fx) => isObj(fx) && metaOf(fx.effect ?? fx.EFFECT)?.type === 'SAMPLE');
         add('error', 'trigger_not_sample', 'trigger.row', `trigger.row ${mod.row} is ${meta.type}; the trigger button fires a SAMPLE row.`, sampleRow >= 0 ? `Set trigger.row to ${sampleRow}.` : 'Add a SAMPLE row and point trigger.row at it.');
       }
       continue;

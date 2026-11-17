@@ -142,6 +142,15 @@ export function validatePresetInput(
     if (typeof packObj.name !== 'string' || !packObj.name.trim()) {
       addPack('warning', 'pack_name', 'name', 'The pack has no name.', 'Set "name", e.g. "DUB PACK".');
     }
+    if (packObj.samples !== undefined) {
+      addPack(
+        'warning',
+        'samples_block',
+        'samples',
+        'The pack has a "samples" block. WAV files cannot travel with the pack or its share link, so the mic would look for files the user does not have.',
+        'Leave "samples" out; the mic then uses its built-in sounds.'
+      );
+    }
     if (!Array.isArray(packObj.presets) || packObj.presets.length === 0) {
       addPack('error', 'missing_presets', 'presets', 'config.json has no "presets" array (or it is empty).', 'Add "presets": up to 4 presets with pos 0..3.');
       return { isValid: false, ...split(packIssues), summary: [] };

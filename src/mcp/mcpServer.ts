@@ -31,7 +31,7 @@ const EXAMPLE_PACKS: Record<string, string> = {
 export const SERVER_INSTRUCTIONS = `Designs effect presets for the Teenage Engineering EP-2350 fx mic.
 
 1. Call get_format_guide once to learn the config.json format and the effect parameters.
-2. Write the pack (up to 4 presets) for what the user described.
+2. Write the pack (up to 4 presets) for what the user described, following the Rules at the top of the guide.
 3. Call validate_pack with it. Fix every error it reports and call it again until it is VALID.
 4. Give the user the share link from validate_pack. It opens the pack in the EP-2350 FX Tool web app, where they can listen to it, tweak it and send it to the mic over USB-C.`;
 

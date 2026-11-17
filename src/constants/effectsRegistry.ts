@@ -215,7 +215,7 @@ export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
   LOWPASS: {
     type: 'LOWPASS',
     displayName: 'LOWPASS FILTER',
-    description: '24dB/oct resonant lowpass filter attenuating higher frequencies.',
+    description: '24dB/oct lowpass filter: removes frequencies above the cutoff.',
     singleInstance: false,
     params: [
       {
@@ -234,7 +234,7 @@ export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
   HIGHPASS: {
     type: 'HIGHPASS',
     displayName: 'HIGHPASS FILTER',
-    description: '24dB/oct resonant highpass filter attenuating lower frequencies.',
+    description: '24dB/oct highpass filter: removes frequencies below the cutoff.',
     singleInstance: false,
     params: [
       {

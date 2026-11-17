@@ -226,6 +226,11 @@ export function serializeToConfigJson(pack: PackConfig): string {
         row: p.trigger.row
       };
     }
+    // Without a trigger the trigger button plays nothing: point it at the SAMPLE row.
+    if (!presetObj.trigger) {
+      const sampleIdx = presetObj.list.findIndex((item: any) => item.effect === 'SAMPLE');
+      if (sampleIdx >= 0) presetObj.trigger = { row: sampleIdx };
+    }
 
     return presetObj;
   });
