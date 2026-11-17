@@ -2416,8 +2416,8 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 3, 'Connect, save and import failures must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 3, 'Import, and copying an edited official pack on save/export, must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 4, 'Connect, save, import and share-link failures must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 4, 'Import, copying an edited official pack on save/export, and a copied share link must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 

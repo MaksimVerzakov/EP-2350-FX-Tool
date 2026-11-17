@@ -4,7 +4,7 @@ import { PackConfig, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
-import { decodeHashPayload } from './utils/presetUrl';
+import { buildPackShareUrl, decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
 import {
@@ -586,6 +586,27 @@ export const App: React.FC = () => {
     }
   };
 
+  /** Copy a #pack= link for the open YOUR PACKS entry, pointing at the address the app runs on. */
+  const handleSharePack = async () => {
+    const url = buildPackShareUrl(window.location.origin + window.location.pathname, pack);
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('success', 'Link copied', `Anyone with the link can open ${pack.name || 'this pack'}.`);
+      return;
+    } catch {
+      // Clipboard blocked: fall back to the system share sheet where there is one.
+    }
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title: pack.name, url });
+        return;
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+    }
+    showToast('error', 'Could not copy the link', 'Your browser blocked the clipboard. Try again from the address bar of an https page.');
+  };
+
   const handleExportJson = () => {
     if (keepEditedPackAsCopy()) {
       showToast('success', 'Exported', 'A copy of this pack is now in YOUR PACKS.');
@@ -631,6 +652,7 @@ export const App: React.FC = () => {
           userPacks={userPacks.map((p) => ({ id: p.id, name: p.pack.name }))}
           onSelectUserPack={selectUserPack}
           onDeleteUserPack={handleDeleteUserPack}
+          onSharePack={selection?.kind === 'user' ? handleSharePack : undefined}
           deviceConnector={
             <DeviceConnector
               theme={theme}

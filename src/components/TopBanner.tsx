@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Download, Upload, ChevronDown, Check, Plus, Usb, Trash2 } from 'lucide-react';
+import { Download, Upload, ChevronDown, Check, Plus, Usb, Trash2, Share2 } from 'lucide-react';
 import { OFFICIAL_TE_PACKS, OfficialPackPreset } from '../constants/defaultPresets';
 import { ThemeMode } from '../types/config';
 import type { PackSelection } from '../utils/userPacks';
@@ -26,6 +26,8 @@ interface TopBannerProps {
   userPacks?: { id: string; name: string }[];
   onSelectUserPack?: (id: string) => void;
   onDeleteUserPack?: (id: string) => void;
+  /** Shown only for YOUR PACKS entries: copies a share link for the open pack. */
+  onSharePack?: () => void;
   /** Device connector block rendered to the left of the Export/Import block. */
   deviceConnector?: React.ReactNode;
 }
@@ -47,6 +49,7 @@ export const TopBanner: React.FC<TopBannerProps> = ({
   userPacks = [],
   onSelectUserPack,
   onDeleteUserPack,
+  onSharePack,
   deviceConnector
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -387,6 +390,19 @@ export const TopBanner: React.FC<TopBannerProps> = ({
                   placeholder="PACK NAME"
                   maxLength={24}
                 />
+                {onSharePack && (
+                  <Tooltip label="Copy a share link for this pack">
+                    <button
+                      type="button"
+                      onClick={onSharePack}
+                      className="h-full px-1.5 text-white border-l border-white/20 flex items-center justify-center transition-colors cursor-pointer shrink-0 bg-te-ink-raised hover:bg-te-accent"
+                      aria-label="Share this pack"
+                      data-testid="share-pack-button"
+                    >
+                      <Share2 className="w-3 h-3" />
+                    </button>
+                  </Tooltip>
+                )}
                 <button
                   type="button"
                   onClick={() => setDropdownOpen((prev) => !prev)}
