@@ -15,6 +15,7 @@ import { PresetLedger } from './components/PresetLedger';
 import { McpPanel } from './components/McpPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
+import { Toast, useToast } from './components/Toast';
 
 const safeGetLocalStorage = (key: string): string | null => {
   try {
@@ -49,6 +50,7 @@ export const App: React.FC = () => {
     return savedTheme === 'ting' ? 'ting' : 'fx';
   });
 
+  const { toast, show: showToast, dismiss: dismissToast } = useToast();
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
@@ -322,7 +324,7 @@ export const App: React.FC = () => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes('no port selected') && !msg.toLowerCase().includes('cancel')) {
-        alert(`Device connection error: ${msg}`);
+        showToast('error', 'Connection failed', msg);
       }
       await ep2350Serial.disconnect().catch(() => undefined);
     } finally {
@@ -355,7 +357,7 @@ export const App: React.FC = () => {
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`Failed to save to the mic: ${msg}`);
+      showToast('error', 'Save to mic failed', msg);
       return false;
     }
   };
@@ -385,9 +387,9 @@ export const App: React.FC = () => {
       setPack(parsed.pack);
       setActiveSlot(0);
       setIsDevicePack(false);
-      alert('config.json successfully loaded into EP-2350 tool!');
+      showToast('success', 'Imported', 'config.json loaded. Its presets are now in the editor.');
     } else {
-      alert(`Import error: ${parsed.error}`);
+      showToast('error', 'Import failed', parsed.error ?? 'This file is not a valid EP-2350 config.json.');
     }
   };
 
@@ -522,6 +524,7 @@ export const App: React.FC = () => {
       </div>
       </div>
 
+      <Toast toast={toast} onDismiss={dismissToast} />
       {isMultiTabBlocked && <MultiTabBanner theme={theme} />}
     </div>
   );
