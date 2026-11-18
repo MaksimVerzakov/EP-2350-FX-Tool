@@ -354,3 +354,157 @@ export class SsbFrequencyShiftKernel {
     }
   }
 }
+
+/**
+ * REVERB: a Freeverb-style room plus a dispersive spring, mixed by `spring`.
+ *
+ * Room: 8 parallel feedback combs with a one-pole lowpass in the loop (damping), then 4 series
+ * allpass diffusers; the right channel uses slightly longer lines for width. Each comb's feedback
+ * is set from the target decay time (RT60 = max(0.1 s, 6 s * time), as the knob reads), and `time`
+ * never changes a delay length, so moving it does not bend the pitch.
+ *
+ * Spring: a chain of first-order allpasses with a negative coefficient delays low frequencies more
+ * than high ones (a descending chirp, the spring "boing"), inside a feedback loop whose round trip
+ * repeats it. It is band-limited like a spring tank.
+ *
+ * Self-contained (no outside references) so its source can run inside the AudioWorklet too.
+ * process() writes the wet signal only; the engine mixes dry and wet.
+ */
+export class ReverbKernel {
+  sr: number;
+  combL: Float32Array[];
+  combR: Float32Array[];
+  combIdx: Int32Array;
+  combStore: Float32Array;
+  combFb: Float32Array;
+  apL: Float32Array[];
+  apR: Float32Array[];
+  apIdx: Int32Array;
+  damp: number;
+  springAp: Float32Array;
+  springLoop: Float32Array;
+  springIdx: number;
+  springFb: number;
+  springLp: number;
+  springHpX: number;
+  springHpY: number;
+  spring: number;
+  time: number;
+
+  constructor(sampleRate: number) {
+    const sr = sampleRate > 0 ? sampleRate : 48000;
+    this.sr = sr;
+    const scale = sr / 44100;
+    const combTunings = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+    const apTunings = [556, 441, 341, 225];
+    const spread = 23;
+    this.combL = combTunings.map((t) => new Float32Array(Math.round(t * scale)));
+    this.combR = combTunings.map((t) => new Float32Array(Math.round((t + spread) * scale)));
+    this.combIdx = new Int32Array(16);
+    this.combStore = new Float32Array(16);
+    this.combFb = new Float32Array(16);
+    this.apL = apTunings.map((t) => new Float32Array(Math.round(t * scale)));
+    this.apR = apTunings.map((t) => new Float32Array(Math.round((t + spread) * scale)));
+    this.apIdx = new Int32Array(8);
+    this.damp = 0.25;
+    this.springAp = new Float32Array(2 * 100); // 100 first-order allpass stages: [x1, y1] each
+    this.springLoop = new Float32Array(Math.round(0.042 * sr)); // 42 ms round trip
+    this.springIdx = 0;
+    this.springFb = 0;
+    this.springLp = 0;
+    this.springHpX = 0;
+    this.springHpY = 0;
+    this.spring = 0;
+    this.time = 0.5;
+    this.setParams(0.5, 0);
+  }
+
+  /** time 0..1 (decay 0.1..6 s), spring 0..1 (room to spring). */
+  setParams(time: number, spring: number) {
+    const t = Math.max(0, Math.min(1, Number.isFinite(time) ? time : 0.5));
+    this.time = t;
+    this.spring = Math.max(0, Math.min(1, Number.isFinite(spring) ? spring : 0));
+    const rt60 = Math.max(0.1, 6 * t);
+    const lines = this.combL.concat(this.combR);
+    // The damping lowpass and the diffusers take away about a fifth of the decay; aim long by that
+    const loopRt = rt60 * 1.23;
+    for (let i = 0; i < 16; i++) {
+      // Feedback for -60 dB after loopRt seconds: g = 10^(-3 * delay / (sr * loopRt))
+      this.combFb[i] = Math.pow(10, (-3 * lines[i].length) / (this.sr * loopRt));
+    }
+    // Longer rooms are a little brighter; short ones are damped more
+    this.damp = 0.35 - 0.2 * t;
+    // The spring rings for at most half the room's time, as small tanks do
+    this.springFb = Math.min(0.85, Math.pow(10, (-3 * this.springLoop.length) / (this.sr * Math.max(0.1, rt60 * 0.5))));
+  }
+
+  process(input: Float32Array, outL: Float32Array, outR: Float32Array) {
+    const n = outL.length;
+    const room = 1 - this.spring;
+    const springAmt = this.spring;
+    const damp = this.damp;
+    const ap = this.springAp;
+    const loop = this.springLoop;
+    const hpA = Math.exp((-2 * Math.PI * 120) / this.sr); // spring input high-pass ~120 Hz
+    const lpA = Math.exp((-2 * Math.PI * 4500) / this.sr); // spring tank bandwidth ~4.5 kHz
+    for (let i = 0; i < n; i++) {
+      const x = (input ? input[i] : 0) || 0;
+      let l = 0;
+      let r = 0;
+      if (room > 0) {
+        const inGain = x * 0.015; // Freeverb fixed input gain
+        for (let c = 0; c < 8; c++) {
+          let buf = this.combL[c];
+          let k = this.combIdx[c];
+          let y = buf[k];
+          this.combStore[c] = y * (1 - damp) + this.combStore[c] * damp;
+          buf[k] = inGain + this.combStore[c] * this.combFb[c];
+          this.combIdx[c] = k + 1 >= buf.length ? 0 : k + 1;
+          l += y;
+          buf = this.combR[c];
+          k = this.combIdx[8 + c];
+          y = buf[k];
+          this.combStore[8 + c] = y * (1 - damp) + this.combStore[8 + c] * damp;
+          buf[k] = inGain + this.combStore[8 + c] * this.combFb[8 + c];
+          this.combIdx[8 + c] = k + 1 >= buf.length ? 0 : k + 1;
+          r += y;
+        }
+        for (let a = 0; a < 4; a++) {
+          let buf = this.apL[a];
+          let k = this.apIdx[a];
+          let b = buf[k];
+          buf[k] = l + b * 0.5;
+          l = b - l;
+          this.apIdx[a] = k + 1 >= buf.length ? 0 : k + 1;
+          buf = this.apR[a];
+          k = this.apIdx[4 + a];
+          b = buf[k];
+          buf[k] = r + b * 0.5;
+          r = b - r;
+          this.apIdx[4 + a] = k + 1 >= buf.length ? 0 : k + 1;
+        }
+      }
+      let s = 0;
+      if (springAmt > 0) {
+        // High-pass the input, add the loop's return, then disperse through the allpass chain
+        const hp = hpA * (this.springHpY + x - this.springHpX);
+        this.springHpX = x;
+        this.springHpY = hp;
+        let v = hp * 0.5 + loop[this.springIdx] * this.springFb;
+        for (let st = 0; st < 200; st += 2) {
+          // H(z) = (a + z^-1) / (1 + a z^-1), a = -0.65: low frequencies are delayed most
+          const y = -0.65 * v + ap[st] + 0.65 * ap[st + 1];
+          ap[st] = v;
+          ap[st + 1] = y;
+          v = y;
+        }
+        this.springLp = (1 - lpA) * v + lpA * this.springLp;
+        s = this.springLp;
+        loop[this.springIdx] = s;
+        this.springIdx = this.springIdx + 1 >= loop.length ? 0 : this.springIdx + 1;
+      }
+      outL[i] = l * room + s * springAmt;
+      outR[i] = r * room + s * springAmt;
+    }
+  }
+}
