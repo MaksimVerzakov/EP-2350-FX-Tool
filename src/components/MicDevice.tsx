@@ -328,7 +328,7 @@ export const MicDevice: React.FC<MicDeviceProps> = ({
               className="cursor-pointer"
               aria-label="Push lever indicator arrow"
             >
-              <title>Push or release lever to control effect</title>
+              <title>Squeeze the handle to open the mic (released, the mic is off; samples still play). How far you squeeze also drives the handle modulation.</title>
               <text
                 x="259"
                 y="120"

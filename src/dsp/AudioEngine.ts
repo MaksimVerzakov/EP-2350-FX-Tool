@@ -1,6 +1,7 @@
 import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import { busLanes } from '../utils/busRouting';
+import { buildStereoDelay } from './stereoDelay';
 import {
   NoiseGateKernel,
   PitchShiftKernel,
@@ -9,7 +10,6 @@ import {
   computeLfoWave,
   cutoffToHz,
   makeDistortionCurve,
-  makeSoftClipCurve,
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
@@ -262,6 +262,10 @@ export const filterQ = (q: number) => Math.max(0.1, q * 10);
 /** Playback rate of a triggered sample: SAMPLE.speed times the SAMPLE.pitch ratio (tape-style). */
 export const samplePlaybackRate = (speed: number, semitones: number) =>
   Math.max(0.01, Math.min(16, speed * Math.pow(2, semitones / 12)));
+/** Any squeeze opens the mic; at rest (0) it is closed. */
+export const isHandleSqueezed = (handlePos: number) => handlePos > 0.005;
+const MIC_GATE_OPEN_S = 0.008;
+const MIC_GATE_CLOSE_S = 0.02;
 const DUCK_ATTACK_S = 0.01;
 const DUCK_RELEASE_S = 0.12;
 
@@ -291,6 +295,8 @@ export class DspAudioEngine {
   private inputNoiseGate: (AudioNode & { onaudioprocess?: any }) | null = null;
   /** Turns the mic down while a sample with `duck` plays. Samples bypass it. */
   private duckGain: GainNode | null = null;
+  /** The mic only opens while the handle is squeezed, as on the EP-2350. Samples bypass it. */
+  private micGate: GainNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
@@ -452,11 +458,19 @@ export class DspAudioEngine {
       this.duckGain = ctx.createGain();
       this.duckGain.gain.value = 1.0;
     }
+    if (!this.micGate) {
+      this.micGate = ctx.createGain();
+      this.micGate.gain.value = isHandleSqueezed(this.modState.handlePos) ? 1.0 : 0.0;
+    }
     try {
       this.duckGain.disconnect();
     } catch {}
+    try {
+      this.micGate.disconnect();
+    } catch {}
     this.inputCompressor.connect(this.inputNoiseGate);
-    this.inputNoiseGate.connect(this.duckGain);
+    this.inputNoiseGate.connect(this.micGate);
+    this.micGate.connect(this.duckGain);
     this.duckGain.connect(this.sourceHub);
     return this.inputCompressor;
   }
@@ -654,7 +668,23 @@ export class DspAudioEngine {
 
   public updateModulation(mod: Partial<ModulationState>) {
     this.modState = { ...this.modState, ...mod };
+    if (typeof mod.handlePos === 'number') this.updateMicGate();
     this.applyLiveModulation();
+  }
+
+  public getMicGate(): GainNode | null {
+    return this.micGate;
+  }
+
+  /** Open the mic while the handle is squeezed, close it when released (short ramps, no clicks). */
+  private updateMicGate() {
+    if (!this.ctx || !this.micGate) return;
+    const open = isHandleSqueezed(this.modState.handlePos);
+    const param = this.micGate.gain;
+    const now = this.ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.setTargetAtTime(open ? 1 : 0, now, open ? MIC_GATE_OPEN_S : MIC_GATE_CLOSE_S);
   }
 
   public triggerShake(impulse: number = 1.0) {
@@ -963,6 +993,12 @@ export class DspAudioEngine {
       } catch (e) {}
       this.duckGain = null;
     }
+    if (this.micGate) {
+      try {
+        this.micGate.disconnect();
+      } catch (e) {}
+      this.micGate = null;
+    }
     if (this.sourceHub) {
       try {
         this.sourceHub.disconnect();
@@ -1156,44 +1192,9 @@ export class DspAudioEngine {
       }
 
       case 'DELAY': {
-        // Stereo/Dub Delay with up to 1.2s delay line, HP + LP damping in loop, and tape saturation for self-oscillation
-        const input = ctx.createGain();
-        const output = ctx.createGain();
-        const delayNode = ctx.createDelay(2.0);
-        const feedbackGain = ctx.createGain();
-
-        // Soft limiter inside feedback loop so echo > 1.0 (SPACE ECHO) self-oscillates warmly without clipping
-        const tapeLimiter = ctx.createWaveShaper();
-        tapeLimiter.curve = makeSoftClipCurve() as any;
-
-        const lpFilter = ctx.createBiquadFilter();
-        lpFilter.type = 'lowpass';
-        const hpFilter = ctx.createBiquadFilter();
-        hpFilter.type = 'highpass';
-        const dryGain = ctx.createGain();
-        const wetGain = ctx.createGain();
-        const wetPanner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-
-        // Connect delay loop: input -> delay -> hp -> lp -> tapeLimiter -> feedback -> delay
-        input.connect(dryGain);
-        dryGain.connect(output);
-
-        input.connect(delayNode);
-        delayNode.connect(hpFilter);
-        hpFilter.connect(lpFilter);
-        lpFilter.connect(tapeLimiter);
-        tapeLimiter.connect(feedbackGain);
-        feedbackGain.connect(delayNode);
-
-        tapeLimiter.connect(wetGain);
-        wetGain.connect(wetPanner);
-        wetPanner.connect(output);
-
-        return {
-          input,
-          output,
-          nodeRefs: { delayNode, feedbackGain, lpFilter, hpFilter, dryGain, wetGain, wetPanner, rowIdx }
-        };
+        // Two echo lines (left/right) with cross-feed between them; see stereoDelay.ts
+        const delay = buildStereoDelay(ctx);
+        return { input: delay.input, output: delay.output, nodeRefs: { delay, rowIdx } };
       }
 
       case 'REVERB': {
@@ -1408,18 +1409,19 @@ export class DspAudioEngine {
         }
 
         case 'DELAY': {
-          const crossFeed = mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0);
-          const echo = mod('echo', toRatio(params.echo, 0.4) + crossFeed * 0.15, 0.0, 1.18);
-          setParam(nodeRefs.feedbackGain?.gain, echo, 0.02);
-          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1), 0.03);
-          setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.lpFilter?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.02);
-          setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
-          if (nodeRefs.wetPanner && 'pan' in nodeRefs.wetPanner) {
-            const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
-            setParam(nodeRefs.wetPanner.pan, (bal - 0.5) * 2, 0.015);
-          }
+          nodeRefs.delay?.apply(
+            {
+              time: mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1),
+              echo: mod('echo', toRatio(params.echo, 0.4), 0.0, 1.18),
+              crossFeed: mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0),
+              lowpass: mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0),
+              highpass: mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0),
+              wet: mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0),
+              dry: mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0),
+              balance: mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0)
+            },
+            setParam
+          );
           break;
         }
 
