@@ -119,7 +119,7 @@ const {
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
 const { buildStereoDelay } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/stereoDelay.mjs')).href);
-const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate } = await import(
+const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate, isHandleSqueezed } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
@@ -911,7 +911,8 @@ assert.ok(inputComp, 'Engine must instantiate hardware pre-chain inputCompressor
 assert.ok(inputGate, 'Engine must instantiate hardware pre-chain inputNoiseGate');
 assert.ok(engine.sourceNode.connections.includes(inputComp), 'sourceNode must feed into inputCompressor');
 assert.ok(inputComp.connections.includes(inputGate), 'inputCompressor must feed into inputNoiseGate');
-assert.ok(inputGate.connections.includes(engine.getDuckGain()), 'inputNoiseGate must feed into the duck gain');
+assert.ok(inputGate.connections.includes(engine.getMicGate()), 'inputNoiseGate must feed into the handle mic gate');
+assert.ok(engine.getMicGate().connections.includes(engine.getDuckGain()), 'The mic gate must feed into the duck gain');
 assert.ok(engine.getDuckGain().connections.includes(engine.sourceHub), 'duck gain must feed into sourceHub');
 
 const distNode = engine.activeNodes.find((n) => n.effectType === 'DIST');
@@ -3150,4 +3151,40 @@ console.log('✓ Suite 26: REVERB kernel (decay matches the knob, no pitch bend,
 }
 console.log('✓ Suite 27: Stereo DELAY with cross-feed (dual mono at 0, ping-pong at 1, constant loop gain) verified');
 
-console.log('\n=== ALL 27 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 28: The mic opens only while the handle is squeezed (samples still play)
+// -----------------------------------------------------------------------------
+{
+  assert.strictEqual(isHandleSqueezed(0), false, 'Released: mic closed');
+  assert.strictEqual(isHandleSqueezed(0.01), true, 'Any squeeze opens it');
+  assert.strictEqual(isHandleSqueezed(1), true);
+
+  const gateEngine = new DspAudioEngine();
+  await gateEngine.init();
+  gateEngine.updatePreset({ id: 'g', pos: 0, list: [{ id: 's', effect: 'SAMPLE' }] });
+  gateEngine.updateModulation({ handlePos: 1 });
+  await gateEngine.start();
+  const gate = gateEngine.getMicGate();
+  assert.strictEqual(gate.gain.value, 1, 'Squeezed by default: the voice passes');
+
+  gateEngine.updateModulation({ handlePos: 0 });
+  assert.strictEqual(gate.gain.value, 0, 'Releasing the handle closes the mic');
+  gateEngine.updateModulation({ handlePos: 0.4 });
+  assert.strictEqual(gate.gain.value, 1, 'Squeezing again opens it');
+
+  // A sample plays with the handle released: it enters after the gate
+  gateEngine.updateModulation({ handlePos: 0 });
+  await gateEngine.triggerSample(true, 'hold');
+  assert.ok(gateEngine.sampleSourceNode, 'The sample plays');
+  assert.ok(!gate.connections.includes(gateEngine.sampleSourceNode) && !gateEngine.sampleSourceNode.connections.includes(gate), 'Samples bypass the mic gate');
+  gateEngine.stop();
+  assert.strictEqual(gateEngine.getMicGate(), null, 'stop() tears the gate down');
+
+  // Restarting while released keeps the mic closed
+  await gateEngine.start();
+  assert.strictEqual(gateEngine.getMicGate().gain.value, 0);
+  gateEngine.stop();
+}
+console.log('✓ Suite 28: Mic opens only while the handle is squeezed; samples bypass it verified');
+
+console.log('\n=== ALL 28 PRODUCTION TEST SUITES PASSED (100%) ===');
