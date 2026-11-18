@@ -1,4 +1,37 @@
 import { isPercentParam } from '../constants/effectsRegistry';
+import type { DeviceDisk } from './samples';
+
+const DSK_START_MARKER = '__DSK_START__';
+const DSK_END_MARKER = '__DSK_END__';
+const LD_MARKER = '__LD_OK__:';
+/** Raw bytes per REPL line when sending a file (base64 makes it 4/3 longer). */
+export const SERIAL_FILE_CHUNK_BYTES = 768;
+
+/** Python helper run once per load: spl.load_wav with duck (firmware 1.0.9+), else without; ROM on failure. */
+const LIVE_SAMPLE_LOADER = [
+  'def _ep_ld(p, f, m, d):',
+  '    import spl',
+  "    g = open(f, 'rb')",
+  '    try:',
+  '        try:',
+  '            ok = spl.load_wav(p, g, m, d)',
+  '        except TypeError:',
+  '            ok = spl.load_wav(p, g, m)',
+  '    finally:',
+  '        g.close()',
+  '    if not ok:',
+  '        spl.rom(p)',
+  '    return bool(ok)'
+].join('\n');
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
 
 export const EP2350_USB_VID = 0x2367;
 export const EP2350_USB_PID = 0x0620;
@@ -399,6 +432,94 @@ export class Ep2350SerialClient {
     if (activeSlot !== undefined && Number.isInteger(activeSlot) && activeSlot >= -1 && activeSlot <= 3) {
       await this.loadPreset(activeSlot);
     }
+  }
+
+  /** Free space and files on the mic's disk (`os.statvfs` / `os.listdir` of /fat). */
+  async readDiskInfo(): Promise<DeviceDisk> {
+    this.pausePolling(3000);
+    // Split marker literals so the echoed command never contains the contiguous markers
+    const cmd =
+      'import os, json; _s = os.statvfs("/fat"); print("__DSK_" + "START__" + json.dumps({"b": _s[0], "t": _s[2], "f": _s[3], "files": [[_n, os.stat("/fat/" + _n)[6]] for _n in os.listdir("/fat")]}) + "__DSK_" + "END__")';
+    const raw = await this.evalReplRaw(cmd, 6000, DSK_END_MARKER);
+    const start = raw.indexOf(DSK_START_MARKER);
+    const end = raw.indexOf(DSK_END_MARKER, start + DSK_START_MARKER.length);
+    if (start === -1 || end === -1) throw new Error("Could not read the mic's disk.");
+    const data = JSON.parse(raw.slice(start + DSK_START_MARKER.length, end)) as {
+      b: number;
+      t: number;
+      f: number;
+      files: Array<[string, number]>;
+    };
+    return {
+      blockSize: data.b,
+      totalBlocks: data.t,
+      freeBlocks: data.f,
+      files: data.files.map(([name, size]) => ({ name, size }))
+    };
+  }
+
+  /**
+   * Write `bytes` to /fat/<name> over the REPL, as base64 chunks into a temporary file that is
+   * renamed when complete, so an interrupted transfer never leaves a half-written file under the
+   * real name. The old file is removed first, so no extra room is needed.
+   */
+  async writeFile(name: string, bytes: Uint8Array, onProgress?: (sent: number, total: number) => void): Promise<void> {
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name) || name.startsWith('.')) {
+      throw new Error(`Unsafe file name: ${name}`);
+    }
+    const path = JSON.stringify(`/fat/${name}`);
+    const tmp = JSON.stringify(`/fat/${name}.part`);
+    this.pausePolling(60000);
+    this.clearPendingParams();
+    await this.evalRepl(
+      `import os, binascii; _ls = os.listdir("/fat"); (os.remove(${path}) if ${JSON.stringify(name)} in _ls else None); (os.remove(${tmp}) if ${JSON.stringify(`${name}.part`)} in _ls else None); _w = open(${tmp}, "wb")`
+    );
+    let ok = false;
+    try {
+      for (let i = 0; i < bytes.length; i += SERIAL_FILE_CHUNK_BYTES) {
+        const chunk = bytes.subarray(i, Math.min(bytes.length, i + SERIAL_FILE_CHUNK_BYTES));
+        this.pausePolling(60000);
+        await this.evalRepl(`_w.write(binascii.a2b_base64("${toBase64(chunk)}"))`, 8000);
+        onProgress?.(Math.min(bytes.length, i + SERIAL_FILE_CHUNK_BYTES), bytes.length);
+      }
+      ok = true;
+    } finally {
+      await this.evalRepl('_w.close()').catch(() => undefined);
+      if (!ok) await this.evalRepl(`import os; os.remove(${tmp})`).catch(() => undefined);
+    }
+    await this.evalRepl(`import os; os.rename(${tmp}, ${path}); os.sync()`);
+  }
+
+  /**
+   * Load samples into the mic's slots now, the way the firmware does on start (spl.load_wav with
+   * playmode and duck, falling back to the 3-argument form of firmware before 1.0.9; spl.rom for
+   * factory slots). It does not remount the disk, so the computer sees no unsafe eject.
+   * Returns, per slot given, whether its WAV loaded.
+   */
+  async loadSamplesLive(
+    slots: Array<{ pos: number; file?: string; playmode?: string; duck?: number }>
+  ): Promise<boolean[]> {
+    this.pausePolling(15000);
+    await this.evalRepl(`exec(${JSON.stringify(LIVE_SAMPLE_LOADER)})`);
+    const results: boolean[] = [];
+    for (const s of slots) {
+      if (!Number.isInteger(s.pos) || s.pos < 0 || s.pos > 3) throw new Error(`Invalid sample slot: ${s.pos}`);
+      if (!s.file) {
+        await this.evalRepl(`import spl; spl.rom(${s.pos})`);
+        results.push(true);
+        continue;
+      }
+      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(s.file)) throw new Error(`Unsafe file name: ${s.file}`);
+      const mode = ['oneshot', 'hold', 'startstop'].includes(s.playmode ?? '') ? s.playmode! : 'oneshot';
+      const duck = Number.isFinite(s.duck) ? Math.max(0, Math.min(1, s.duck!)) : 0;
+      const out = await this.evalReplRaw(
+        `print("__LD_" + "OK__:" + str(_ep_ld(${s.pos}, ${JSON.stringify(`/fat/${s.file}`)}, ${JSON.stringify(mode)}, ${duck})))`,
+        8000,
+        LD_MARKER
+      );
+      results.push(out.includes(`${LD_MARKER}True`));
+    }
+    return results;
   }
 
   private startSlotPolling(): void {

@@ -9,8 +9,16 @@ import { serializeToConfigJson } from './serializer';
  * file leaves that slot on its factory sound. So a slot is custom only when `samples` lists it.
  */
 
-/** The fx-mic disk holds about 1 MB for config.json and every WAV. */
-export const DISK_BUDGET_BYTES = 1024 * 1024;
+/**
+ * The fx-mic disk is FAT with 4 KB clusters, 250 of them (os.statvfs('/fat') on the mic reports
+ * block 4096, 250 blocks): 1,024,000 bytes, and every file takes whole clusters.
+ */
+export const DISK_CLUSTER_BYTES = 4096;
+export const DISK_CLUSTERS = 250;
+export const DISK_BUDGET_BYTES = DISK_CLUSTER_BYTES * DISK_CLUSTERS;
+
+/** Space a file of `bytes` takes on the disk: whole 4 KB clusters (an empty file takes none). */
+export const onDiskBytes = (bytes: number) => Math.ceil(Math.max(0, bytes) / DISK_CLUSTER_BYTES) * DISK_CLUSTER_BYTES;
 export const SAMPLE_SLOTS = 4;
 export const MAX_SAMPLE_RATE = 96000;
 
@@ -166,6 +174,7 @@ export function clearSampleSlot(pack: PackConfig, pos: number): PackConfig {
   return rest.length > 0 ? { ...pack, samples: rest } : { ...pack, useBuiltInSamples: true, samples: [] };
 }
 
+/** Sizes are what the files take on the disk, in whole clusters. */
 export interface DiskUsage {
   configBytes: number;
   sampleBytes: number;
@@ -178,9 +187,9 @@ export interface DiskUsage {
 
 /** What config.json plus the loaded WAVs take on the disk. `fileSizes` maps file name to bytes. */
 export function diskUsage(pack: PackConfig, fileSizes: Record<string, number>): DiskUsage {
-  const configBytes = new TextEncoder().encode(serializeToConfigJson(pack)).byteLength;
+  const configBytes = onDiskBytes(new TextEncoder().encode(serializeToConfigJson(pack)).byteLength);
   const files = [...new Set(customSampleSlots(pack).map((s) => s.file))];
-  const sampleBytes = files.reduce((n, f) => n + (fileSizes[f] ?? 0), 0);
+  const sampleBytes = files.reduce((n, f) => n + onDiskBytes(fileSizes[f] ?? 0), 0);
   const totalBytes = configBytes + sampleBytes;
   return {
     configBytes,
@@ -252,4 +261,40 @@ export function takenSampleNames(pack: PackConfig, pos: number, otherPacks: Pack
     .filter((s) => s.pos !== pos)
     .map((s) => s.file);
   return [...own, ...referencedSampleFiles(otherPacks)];
+}
+
+/** The mic's disk as `os.statvfs('/fat')` and `os.listdir('/fat')` report it over USB. */
+export interface DeviceDisk {
+  blockSize: number;
+  totalBlocks: number;
+  freeBlocks: number;
+  files: Array<{ name: string; size: number }>;
+}
+
+export interface DeviceWritePlan {
+  fits: boolean;
+  /** Space the written files take, minus what the files they replace free up. */
+  neededBytes: number;
+  freeBytes: number;
+  shortBytes: number;
+  /** Files on the disk that the pack does not write, largest first: what to delete to make room. */
+  otherFiles: Array<{ name: string; size: number }>;
+}
+
+/** Will `writes` (file name and size, config.json included) fit on the mic's disk as it is now? */
+export function planDeviceWrite(disk: DeviceDisk, writes: Array<{ name: string; size: number }>): DeviceWritePlan {
+  const block = disk.blockSize > 0 ? disk.blockSize : DISK_CLUSTER_BYTES;
+  const blocks = (n: number) => Math.ceil(Math.max(0, n) / block) * block;
+  const writing = new Set(writes.map((w) => w.name.toLowerCase()));
+  const replaced = disk.files.filter((f) => writing.has(f.name.toLowerCase()));
+  const neededBytes =
+    writes.reduce((n, w) => n + blocks(w.size), 0) - replaced.reduce((n, f) => n + blocks(f.size), 0);
+  const freeBytes = disk.freeBlocks * block;
+  return {
+    fits: neededBytes <= freeBytes,
+    neededBytes,
+    freeBytes,
+    shortBytes: Math.max(0, neededBytes - freeBytes),
+    otherFiles: disk.files.filter((f) => !writing.has(f.name.toLowerCase())).sort((a, b) => b.size - a.size)
+  };
 }

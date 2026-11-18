@@ -90,10 +90,14 @@ function ladder(src: FitSource): Step[] {
   return steps;
 }
 
-/** Plan encodings so the files take at most `availableBytes`, changing as little as needed. */
-export function planFit(sources: FitSource[], availableBytes: number): FitPlan {
+/**
+ * Plan encodings so the files take at most `availableBytes`, changing as little as needed. With
+ * `clusterBytes`, each file counts as whole clusters, as on the mic's FAT disk.
+ */
+export function planFit(sources: FitSource[], availableBytes: number, clusterBytes = 1): FitPlan {
   const state = sources.map((src) => ({ src, enc: nativeEncoding(src), steps: ladder(src), at: 0, notes: [] as string[] }));
-  const total = () => state.reduce((n, s) => n + encodedBytes(s.src, s.enc), 0);
+  const onDisk = (bytes: number) => Math.ceil(bytes / clusterBytes) * clusterBytes;
+  const total = () => state.reduce((n, s) => n + onDisk(encodedBytes(s.src, s.enc)), 0);
   let guard = state.length * 32;
   while (total() > availableBytes && guard-- > 0) {
     const open = state.filter((s) => s.at < s.steps.length);
