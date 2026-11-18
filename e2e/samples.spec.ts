@@ -267,8 +267,9 @@ test.describe('fitting the disk', () => {
 
     // The export holds the fitted files: valid WAVs that fit with config.json
     const files = readZip((await exportDownload(page)).bytes);
-    const total = Object.values(files).reduce((n, f) => n + f.length, 0);
-    expect(total).toBeLessThanOrEqual(1024 * 1024);
+    // As on the mic's FAT disk: 250 clusters of 4 KB, every file in whole clusters
+    const onDisk = Object.values(files).reduce((n, f) => n + Math.ceil(f.length / 4096) * 4096, 0);
+    expect(onDisk).toBeLessThanOrEqual(250 * 4096);
     for (const name of ['a.wav', 'b.wav']) {
       expect(files[name].toString('ascii', 0, 4)).toBe('RIFF');
       expect([8, 16]).toContain(files[name].readUInt16LE(34));

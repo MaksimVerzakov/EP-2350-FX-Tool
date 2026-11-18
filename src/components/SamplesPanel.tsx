@@ -292,7 +292,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
           data-testid="sample-disk"
           title={
             usage.fits
-              ? "The mic's disk holds about 1 MB for config.json and all four WAVs."
+              ? "The mic's disk holds 1,000 KB (250 blocks of 4 KB) for config.json and all four WAVs; every file takes whole blocks."
               : `${formatBytes(usage.totalBytes - usage.budgetBytes)} over: shorten a sample, make it mono or lower its sample rate.`
           }
         >

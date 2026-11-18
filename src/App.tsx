@@ -9,6 +9,7 @@ import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
 import {
   DISK_BUDGET_BYTES,
+  DISK_CLUSTER_BYTES,
   SAMPLE_SLOTS,
   assignSampleFile,
   clearSampleSlot,
@@ -516,7 +517,7 @@ export const App: React.FC = () => {
           sound: lib[f].sound ?? { start: 0, end: o.frames }
         };
       });
-      const plan = planFit(sources, DISK_BUDGET_BYTES - diskUsage(p, {}).configBytes);
+      const plan = planFit(sources, DISK_BUDGET_BYTES - diskUsage(p, {}).configBytes, DISK_CLUSTER_BYTES);
       const updates: Record<string, LoadedSample> = {};
       for (const src of sources) {
         const entry = lib[src.file];

@@ -2727,15 +2727,19 @@ console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duc
   assert.strictEqual(S.sanitizeSampleFileName('Horn.wav', taken), 'horn-2.wav');
   assert.deepStrictEqual(S.takenSampleNames(packA, 0, []), ['kick.wav']);
 
-  // 23d. Disk budget: config.json plus the WAVs the pack names
+  // 23d. Disk budget: config.json plus the WAVs the pack names, in whole 4 KB clusters of a 250-cluster disk
+  assert.strictEqual(S.DISK_BUDGET_BYTES, 1_024_000, '250 clusters of 4 KB (os.statvfs on the mic)');
+  assert.deepStrictEqual([0, 1, 4096, 4097, 600_000].map(S.onDiskBytes), [0, 4096, 4096, 8192, 602_112]);
   const withTwo = S.assignSampleFile(S.assignSampleFile(base, 0, 'a.wav'), 1, 'b.wav');
   const u = S.diskUsage(withTwo, { 'a.wav': 600_000, 'unused.wav': 999_999 });
-  assert.strictEqual(u.configBytes, new TextEncoder().encode(serializeToConfigJson(withTwo)).byteLength);
-  assert.strictEqual(u.sampleBytes, 600_000, 'Only files the pack names count');
+  assert.strictEqual(u.configBytes, 4096, 'A small config.json still takes a whole cluster');
+  assert.strictEqual(u.sampleBytes, 602_112, 'Only files the pack names count, in whole clusters');
   assert.deepStrictEqual(u.missingFiles, ['b.wav']);
   assert.strictEqual(u.fits, true);
-  assert.strictEqual(S.diskUsage(withTwo, { 'a.wav': 600_000, 'b.wav': 600_000 }).fits, false, 'Over 1 MB does not fit');
-  assert.strictEqual(S.DISK_BUDGET_BYTES, 1048576);
+  assert.strictEqual(S.diskUsage(withTwo, { 'a.wav': 600_000, 'b.wav': 600_000 }).fits, false, 'Over the disk does not fit');
+  // Bytes alone would fit (1,019,904 + config), clusters do not: that is the case the old count missed
+  const edge = S.diskUsage(withTwo, { 'a.wav': 509_953, 'b.wav': 509_953 });
+  assert.ok(509_953 * 2 + 1000 < S.DISK_BUDGET_BYTES && !edge.fits, 'Cluster rounding can tip a pack over');
 
   // 23e. Zip: stored entries a standard unzip can read
   assert.strictEqual(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'CRC-32 check value');
@@ -2841,6 +2845,11 @@ console.log('✓ Suite 23: Custom samples (WAV checks, slots, disk budget, zip e
   const none = F.planFit([huge], 1_000_000);
   assert.strictEqual(none.fits, false);
   assert.deepStrictEqual(none.encodings['huge.wav'], { channels: 1, sampleRate: 8000, bits: 8, isFloat: false }, 'It goes all the way down first');
+
+  // 24e2. With 4 KB clusters every file counts as whole clusters
+  const tiny = (f) => src(f, { frames: 100, channels: 1, sound: { start: 0, end: 100 } }); // 244 bytes each
+  assert.strictEqual(F.planFit([tiny('1.wav'), tiny('2.wav')], 8192, 4096).totalBytes, 8192);
+  assert.strictEqual(F.planFit([tiny('1.wav'), tiny('2.wav'), tiny('3.wav')], 8192, 4096).fits, false, 'Three files need three clusters');
 
   // 24f. Silence detection with padding
   const quietLoud = new Float32Array(1000);
