@@ -190,8 +190,27 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
           </div>
         </div>
 
-        {/* Controls: playmode switch and duck knob, disabled for factory sounds */}
+        {/* Controls: duck knob, then the playmode switch; disabled for factory sounds */}
         <div className="flex flex-wrap items-start gap-x-6 gap-y-2 pt-1.5" onClick={(e) => e.stopPropagation()}>
+          <Knob
+            label="DUCK MIC"
+            value={typeof slot?.duck === 'number' ? slot.duck : 0}
+            min={0}
+            max={1}
+            step={0.05}
+            displayScale={(v) => (v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`)}
+            onChange={(v) => onUpdateSlot(pos, { duck: v })}
+            onReset={() => onUpdateSlot(pos, { duck: undefined })}
+            accentColor={themeColor('accent', isTing)}
+            size={36}
+            inactive={!isFactory && typeof slot?.duck !== 'number'}
+            disabled={isFactory}
+            hint={
+              isFactory
+                ? factoryHint
+                : 'Turns the mic down while this sample plays. Needs firmware 1.0.9 or newer.'
+            }
+          />
           <div
             className={`flex flex-col items-center gap-[7px] pt-0.5 ${isFactory ? 'opacity-35' : ''}`}
             title={isFactory ? factoryHint : `Playmode: ${PLAYMODES[modeIdx].title}`}
@@ -228,25 +247,6 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               </button>
             </div>
           </div>
-          <Knob
-            label="DUCK MIC"
-            value={typeof slot?.duck === 'number' ? slot.duck : 0}
-            min={0}
-            max={1}
-            step={0.05}
-            displayScale={(v) => (v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`)}
-            onChange={(v) => onUpdateSlot(pos, { duck: v })}
-            onReset={() => onUpdateSlot(pos, { duck: undefined })}
-            accentColor={themeColor('accent', isTing)}
-            size={36}
-            inactive={!isFactory && typeof slot?.duck !== 'number'}
-            disabled={isFactory}
-            hint={
-              isFactory
-                ? factoryHint
-                : 'Turns the mic down while this sample plays. Needs firmware 1.0.9 or newer.'
-            }
-          />
           {note && (
             <p
               className={`flex-1 min-w-[180px] self-center font-mono text-te-xs leading-snug ${
