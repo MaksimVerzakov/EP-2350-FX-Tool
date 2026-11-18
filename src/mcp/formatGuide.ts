@@ -38,7 +38,9 @@ function effectSection(meta: EffectMeta): string {
     const normalized = p.unit !== '%' && p.unit !== '' && Math.abs(p.max) <= 1 && Math.abs(p.min) <= 1;
     const unit = p.unit === '%' || normalized ? '' : p.unit ? ` ${p.unit}` : '';
     const ends = normalized && p.displayScale ? ` (${p.displayScale(p.min)} to ${p.displayScale(p.max)})` : '';
-    return `| \`${p.name}\` | ${p.label.toLowerCase()} | ${r.min} .. ${r.max}${unit}${ends} | ${r.def} | ${configDepth(meta.type, p.name)} |`;
+    // No firmware versions here (models mistake them for facts about the user's mic); validate_pack warns instead
+    const meaning = `${p.label.toLowerCase()}${p.optional ? ' (optional: leave out to keep the mic default)' : ''}`;
+    return `| \`${p.name}\` | ${meaning} | ${r.min} .. ${r.max}${unit}${ends} | ${r.def} | ${configDepth(meta.type, p.name)} |`;
   });
   return [
     head,

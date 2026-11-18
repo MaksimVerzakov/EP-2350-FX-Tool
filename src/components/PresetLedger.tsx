@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
-import { AnyEffect, EffectType, PresetConfig, LfoShape, ThemeMode } from '../types/config';
+import { AnyEffect, EffectType, ParamDef, PresetConfig, LfoShape, ThemeMode } from '../types/config';
 import { EFFECTS_REGISTRY, getModDepthConfig, MAX_EFFECTS_PER_PRESET } from '../constants/effectsRegistry';
 import { Knob } from './Knob';
 import {
@@ -48,6 +48,13 @@ interface PresetLedgerProps {
 // Teenage Engineering EP Sidekick 4-Knob Discipline (Orange, Cream, Slate Gray, Black)
 // From EP-136 hardware overview: GAIN (Orange), HIGH (Cream), MID (Slate Gray), LOW (Black)
 // For effects with 5 knobs (like REVERB), knob 5 repeats color 1 (#f15a22).
+/** Reset a knob: optional parameters are removed (the mic keeps its own default), others go back to their default. */
+const resetParam = (effect: AnyEffect, param: ParamDef): AnyEffect => {
+  if (!param.optional) return { ...effect, [param.name]: param.defaultVal };
+  const { [param.name]: _removed, ...rest } = effect;
+  return rest as AnyEffect;
+};
+
 const EP_SIDEKICK_KNOB_COLORS = ['#f15a22', '#e4e3df', '#989fa5', '#231f20'];
 // Original EP-2350 Ting 4-Knob Palette (Orange, Warm Sand, Warm Stone, Deep Forest Green)
 const TING_KNOB_COLORS = ['#f15a22', '#dbd0b9', '#b2aca1', '#00503a'];
@@ -271,8 +278,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
       newEffect.BUS = 2;
     } // Bus 1 omits BUS property by default
 
+    // Optional parameters stay out of config.json until the user sets them
     meta.params.forEach((p) => {
-      newEffect[p.name] = p.defaultVal;
+      if (!p.optional) newEffect[p.name] = p.defaultVal;
     });
 
     let newList = [...preset.list];
@@ -840,7 +848,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   unit={param.unit}
                   displayScale={param.displayScale}
                   onChange={(v) => handleUpdateEffect(globalIdx, { ...effect, [param.name]: v })}
-                  onReset={() => handleUpdateEffect(globalIdx, { ...effect, [param.name]: param.defaultVal })}
+                  onReset={() => handleUpdateEffect(globalIdx, resetParam(effect, param))}
+                  inactive={param.optional && typeof effect[param.name] !== 'number'}
+                  hint={param.minFirmware ? `Needs firmware ${param.minFirmware} or newer.` : undefined}
                   accentColor={encoderColor}
                   size={36}
                   isModulated={isParamModulated}
@@ -884,7 +894,9 @@ export const PresetLedger: React.FC<PresetLedgerProps> = ({
                   unit={param.unit}
                   displayScale={param.displayScale}
                   onChange={(v) => handleUpdateEffect(globalIdx, { ...effect, [param.name]: v })}
-                  onReset={() => handleUpdateEffect(globalIdx, { ...effect, [param.name]: param.defaultVal })}
+                  onReset={() => handleUpdateEffect(globalIdx, resetParam(effect, param))}
+                  inactive={param.optional && typeof effect[param.name] !== 'number'}
+                  hint={param.minFirmware ? `Needs firmware ${param.minFirmware} or newer.` : undefined}
                   accentColor={encoderColor}
                   size={36}
                   isModulated={isParamModulated}

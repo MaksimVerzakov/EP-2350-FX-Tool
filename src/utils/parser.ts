@@ -41,12 +41,18 @@ export function parseConfigJson(rawJson: string): { pack?: PackConfig; error?: s
 
     let samples: SampleSlotConfig[] = [];
     if (Array.isArray(data.samples)) {
-      samples = data.samples.slice(0, MAX_SAMPLES).map((s: any, idx: number) => ({
-        id: `imported-s-${idx}-${Date.now()}`,
-        pos: typeof s?.pos === 'number' ? s.pos : idx,
-        file: typeof s?.file === 'string' ? s.file : `${idx + 1}.wav`,
-        playmode: ['oneshot', 'hold', 'startstop'].includes(s?.playmode) ? s.playmode : 'oneshot'
-      }));
+      samples = data.samples.slice(0, MAX_SAMPLES).map((s: any, idx: number) => {
+        const slot: SampleSlotConfig = {
+          id: `imported-s-${idx}-${Date.now()}`,
+          pos: typeof s?.pos === 'number' ? s.pos : idx,
+          file: typeof s?.file === 'string' ? s.file : `${idx + 1}.wav`,
+          playmode: ['oneshot', 'hold', 'startstop'].includes(s?.playmode) ? s.playmode : 'oneshot'
+        };
+        if (typeof s?.duck === 'number' && Number.isFinite(s.duck)) {
+          slot.duck = Math.max(0, Math.min(1, s.duck));
+        }
+        return slot;
+      });
     } else {
       // Default 4 built-in sample slots
       samples = [

@@ -386,9 +386,9 @@ export const App: React.FC = () => {
   const handleSampleTrigger = useCallback(
     (down: boolean) => {
       const slotCfg = pack.samples.find((s) => s.pos === activeSampleSlot) || pack.samples[activeSampleSlot];
-      audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot');
+      audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot', pack.useBuiltInSamples ? 0 : slotCfg?.duck ?? 0);
     },
-    [pack.samples, activeSampleSlot]
+    [pack.samples, pack.useBuiltInSamples, activeSampleSlot]
   );
 
   // Squeeze handle modulation
