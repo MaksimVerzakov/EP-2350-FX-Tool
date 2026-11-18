@@ -112,7 +112,8 @@ const {
   hann,
   makeDistortionCurve,
   makeSoftClipCurve,
-  resolveModDepth
+  resolveModDepth,
+  ReverbKernel
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
@@ -978,9 +979,10 @@ assert.strictEqual(
   1.0,
   'Audition voice sourceNode.playbackRate must stay 1.0x when SAMPLE.speed changes live'
 );
-assert.ok(
-  Math.abs(reverbNode.nodeRefs.combSum.gain.value - (0.28 + 0.01 * 0.55) * 0.5) < 1e-6,
-  'REVERB combSum.gain must apply 0.5 attenuation matching offlineRenderer to prevent comb buildup'
+assert.deepStrictEqual(
+  reverbNode.nodeRefs.reverb.getParams(),
+  { time: 0.9, spring: 0.01 },
+  'REVERB time and spring-mix (1% = 0.01) must reach the reverb kernel'
 );
 
 // Verify Handle & Shake modulation on DIST.amount and RING.mix
@@ -2998,4 +3000,103 @@ console.log('✓ Suite 24: Fitter (silence, bit depth, mono, sample rate, 8-bit,
 }
 console.log('✓ Suite 25: Sending samples to the mic over USB (disk check, transfer, live load) verified');
 
-console.log('\n=== ALL 25 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 26: REVERB kernel (room decay, diffusion, spring dispersion, stability)
+// -----------------------------------------------------------------------------
+{
+  const sr = 48000;
+  const render = (time, spring, secs, input) => {
+    const k = new ReverbKernel(sr);
+    k.setParams(time, spring);
+    const n = Math.round(sr * secs);
+    const L = new Float32Array(n);
+    const R = new Float32Array(n);
+    const inp = input ?? new Float32Array(n);
+    if (!input) inp[0] = 1;
+    for (let i = 0; i < n; i += 128) k.process(inp.subarray(i, i + 128), L.subarray(i, i + 128), R.subarray(i, i + 128));
+    return { L, R, k };
+  };
+  /** Schroeder backward integration: T60 from the -5..-25 dB slope. */
+  const rt60 = (x) => {
+    const e = new Float64Array(x.length);
+    let acc = 0;
+    for (let i = x.length - 1; i >= 0; i--) e[i] = acc += x[i] * x[i];
+    const db = (i) => 10 * Math.log10(e[i] / e[0]);
+    let a = 0;
+    while (db(a) > -5) a++;
+    let b = a;
+    while (b < x.length - 1 && db(b) > -25) b++;
+    return ((b - a) / sr) * 3;
+  };
+  const energy = (x) => x.reduce((a, v) => a + v * v, 0);
+  const bandpass = (x, f, q = 2) => {
+    const w = (2 * Math.PI * f) / sr, al = Math.sin(w) / (2 * q), a0 = 1 + al, a1 = -2 * Math.cos(w), a2 = 1 - al;
+    const y = new Float32Array(x.length);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) {
+      const v = (al * x[i] - al * x2 - a1 * y1 - a2 * y2) / a0;
+      x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+    }
+    return y;
+  };
+  const arrivalMs = (y, n) => {
+    let a = 0, b = 0;
+    for (let i = 0; i < n; i++) { a += i * y[i] * y[i]; b += y[i] * y[i]; }
+    return (a / b / sr) * 1000;
+  };
+
+  // 26a. The decay matches the knob (0..1 reads 0.0 s..6.0 s), within 15%
+  for (const t of [0.2, 0.5, 1]) {
+    const target = Math.max(0.1, 6 * t);
+    const measured = rt60(render(t, 0, target * 1.3 + 0.5).L);
+    assert.ok(Math.abs(measured - target) / target < 0.15, `time ${t}: RT60 ${measured.toFixed(2)} s should be about ${target} s`);
+  }
+
+  // 26b. time changes the decay, never a delay length (no pitch bending while it moves)
+  const k = new ReverbKernel(sr);
+  const lengths = () => [...k.combL, ...k.combR, ...k.apL, ...k.apR].map((b) => b.length).join(',');
+  const before = lengths();
+  k.setParams(0.1, 0);
+  k.setParams(1, 1);
+  assert.strictEqual(lengths(), before);
+  assert.ok(k.combFb.every((g) => g > 0 && g < 1), 'Comb feedback stays below 1');
+
+  // 26c. Diffuse and wide: dense tail, left and right differ
+  const room = render(0.5, 0, 1);
+  const tail = room.L.subarray(Math.round(0.05 * sr), Math.round(0.1 * sr));
+  const peak = Math.max(...tail.map(Math.abs));
+  assert.ok(tail.filter((v) => Math.abs(v) > peak * 0.01).length / tail.length > 0.5, 'Dense tail after 50 ms (no flutter of a few echoes)');
+  let diff = 0;
+  for (let i = 0; i < room.L.length; i++) diff += (room.L[i] - room.R[i]) ** 2;
+  assert.ok(diff / energy(room.L) > 0.5, 'Left and right are decorrelated');
+
+  // 26d. Spring: low frequencies arrive later than high ones (the descending chirp); the room has no such spread
+  const spr = render(0.5, 1, 0.5).L;
+  const win = Math.round(0.04 * sr);
+  const sLow = arrivalMs(bandpass(spr, 300), win), sHigh = arrivalMs(bandpass(spr, 3000), win);
+  assert.ok(sLow - sHigh > 3, `Spring 300 Hz should arrive >3 ms after 3 kHz (got ${sLow.toFixed(1)} vs ${sHigh.toFixed(1)} ms)`);
+  const rLow = arrivalMs(bandpass(room.L, 300), win), rHigh = arrivalMs(bandpass(room.L, 3000), win);
+  assert.ok(Math.abs(rLow - rHigh) < 2, 'The room does not chirp');
+
+  // 26e. Room and spring are about as loud, so spring-mix crossfades rather than jumps
+  const ratioDb = 10 * Math.log10(energy(spr) / energy(render(0.5, 0, 0.5).L));
+  assert.ok(Math.abs(ratioDb) < 3, `Room and spring within 3 dB (got ${ratioDb.toFixed(1)} dB)`);
+  assert.strictEqual(energy(render(0.5, 0, 0.3).L.subarray(0, 10)), 0, 'Silent until the first reflection');
+
+  // 26f. Stable: 5 s of full-scale noise at the longest time, half spring, stays finite and bounded
+  const noise = Float32Array.from({ length: sr * 5 }, (_, i) => Math.sin(i * 12.9898) * 43758.5453 % 1);
+  const loud = render(1, 0.5, 5, noise);
+  assert.ok(loud.L.every(Number.isFinite) && loud.R.every(Number.isFinite), 'No NaN or Infinity');
+  assert.ok(loud.L.reduce((m, v) => Math.max(m, Math.abs(v)), 0) < 2, 'Output stays bounded');
+
+  // 26g. Out-of-range and missing values are clamped
+  const c = new ReverbKernel(0);
+  assert.strictEqual(c.sr, 48000);
+  c.setParams(7, -1);
+  assert.deepStrictEqual([c.time, c.spring], [1, 0]);
+  c.setParams(NaN, NaN);
+  assert.deepStrictEqual([c.time, c.spring], [0.5, 0]);
+}
+console.log('✓ Suite 26: REVERB kernel (decay matches the knob, no pitch bend, diffuse stereo room, spring chirp, stable) verified');
+
+console.log('\n=== ALL 26 PRODUCTION TEST SUITES PASSED (100%) ===');

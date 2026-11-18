@@ -4,6 +4,7 @@ import { busLanes } from '../utils/busRouting';
 import {
   NoiseGateKernel,
   PitchShiftKernel,
+  ReverbKernel,
   SsbFrequencyShiftKernel,
   computeLfoWave,
   cutoffToHz,
@@ -24,7 +25,7 @@ export const BUNDLED_SAMPLES = [
   { pos: 3, name: 'ALERT', file: 'alert.wav', url: sampleSlot3Url }
 ] as const;
 
-const WORKLET_PROCESSOR_SOURCE = `
+export const WORKLET_PROCESSOR_SOURCE = `
 class Ep2350PitchShiftProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -222,6 +223,34 @@ class Ep2350NoiseGateProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('ep2350-noisegate', Ep2350NoiseGateProcessor);
+
+// REVERB runs the same kernel class as the ScriptProcessor fallback and the tests (src/dsp/math.ts)
+const ReverbKernel = (${ReverbKernel.toString()});
+
+class Ep2350ReverbProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const p = (options && options.processorOptions) || {};
+    this.kernel = new ReverbKernel(sampleRate);
+    this.kernel.setParams(typeof p.time === 'number' ? p.time : 0.5, typeof p.spring === 'number' ? p.spring : 0);
+    this.port.onmessage = (e) => {
+      const d = e.data || {};
+      this.kernel.setParams(
+        typeof d.time === 'number' ? d.time : this.kernel.time,
+        typeof d.spring === 'number' ? d.spring : this.kernel.spring
+      );
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0];
+    if (!out || !out[0]) return true;
+    const input = inputs[0] && inputs[0][0];
+    this.kernel.process(input, out[0], out[1] || out[0]);
+    return true;
+  }
+}
+
+registerProcessor('ep2350-reverb', Ep2350ReverbProcessor);
 `;
 
 export type InputMode = 'sample' | 'mic';
@@ -775,6 +804,12 @@ export class DspAudioEngine {
           nodeRefs.pitchShifter.processor.disconnect();
         } catch (e) {}
       }
+      if (nodeRefs.reverb?.processor) {
+        try {
+          nodeRefs.reverb.processor.onaudioprocess = null;
+          nodeRefs.reverb.processor.disconnect();
+        } catch (e) {}
+      }
       if (nodeRefs.ssbShifter?.processor) {
         try {
           nodeRefs.ssbShifter.processor.onaudioprocess = null;
@@ -820,6 +855,47 @@ export class DspAudioEngine {
         kernel.setPitch(currentPitch);
       },
       getPitch: () => currentPitch
+    };
+  }
+
+  /**
+   * REVERB in an AudioWorkletNode (stereo wet out), or a ScriptProcessor running the same kernel
+   * where worklets are unavailable. Parameters are only sent when they change.
+   */
+  private createReverb(ctx: AudioContext, initialTime: number, initialSpring: number) {
+    let current = { time: initialTime, spring: initialSpring };
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const node = new AudioWorkletNode(ctx, 'ep2350-reverb', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        processorOptions: current
+      });
+      return {
+        processor: node as AudioNode & { onaudioprocess?: any },
+        setParams: (time: number, spring: number) => {
+          if (time === current.time && spring === current.spring) return;
+          current = { time, spring };
+          node.port.postMessage(current);
+        },
+        getParams: () => current
+      };
+    }
+    const processor = ctx.createScriptProcessor(512, 1, 2);
+    const kernel = new ReverbKernel(ctx.sampleRate);
+    kernel.setParams(initialTime, initialSpring);
+    processor.onaudioprocess = (e: AudioProcessingEvent) => {
+      const out = e.outputBuffer;
+      kernel.process(e.inputBuffer.getChannelData(0), out.getChannelData(0), out.getChannelData(out.numberOfChannels > 1 ? 1 : 0));
+    };
+    return {
+      processor,
+      setParams: (time: number, spring: number) => {
+        if (time === current.time && spring === current.spring) return;
+        current = { time, spring };
+        kernel.setParams(time, spring);
+      },
+      getParams: () => current
     };
   }
 
@@ -1121,54 +1197,25 @@ export class DspAudioEngine {
       }
 
       case 'REVERB': {
-        // Algorithmic Reverb & Spring Tank with live-modulatable decay time and spring-mix
+        // Room (Freeverb-style combs + allpass diffusers) and dispersive spring, in ReverbKernel.
+        // input -> dry -> output; input -> high-pass -> reverb (stereo wet) -> wet -> output
         const input = ctx.createGain();
         const output = ctx.createGain();
         const dryGain = ctx.createGain();
         const wetGain = ctx.createGain();
         const hpFilter = ctx.createBiquadFilter();
         hpFilter.type = 'highpass';
-
-        const combTimes = [0.029, 0.037, 0.043, 0.051];
-        const combBaseGains = [0.82, 0.78, 0.74, 0.7];
-        const combSum = ctx.createGain();
-        const combFeedbackGains: GainNode[] = [];
-        const combDelays: DelayNode[] = [];
-
-        combTimes.forEach(() => {
-          const delay = ctx.createDelay(0.5);
-          const fb = ctx.createGain();
-
-          hpFilter.connect(delay);
-          delay.connect(fb);
-          fb.connect(delay);
-          delay.connect(combSum);
-
-          combDelays.push(delay);
-          combFeedbackGains.push(fb);
-        });
+        const time = typeof fx.time === 'number' ? fx.time : 0.5;
+        const reverb = this.createReverb(ctx, time, 0);
 
         input.connect(dryGain);
         dryGain.connect(output);
         input.connect(hpFilter);
-        combSum.connect(wetGain);
+        hpFilter.connect(reverb.processor);
+        reverb.processor.connect(wetGain);
         wetGain.connect(output);
 
-        return {
-          input,
-          output,
-          nodeRefs: {
-            dryGain,
-            wetGain,
-            hpFilter,
-            combSum,
-            combFeedbackGains,
-            combDelays,
-            combTimes,
-            combBaseGains,
-            rowIdx
-          }
-        };
+        return { input, output, nodeRefs: { dryGain, wetGain, hpFilter, reverb, rowIdx } };
       }
 
       case 'RING': {
@@ -1380,20 +1427,10 @@ export class DspAudioEngine {
           setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
           setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
           setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
-          const timeScale = mod('time', typeof params.time === 'number' ? params.time : 0.5, 0.0, 1.0);
-          if (nodeRefs.combFeedbackGains && nodeRefs.combBaseGains) {
-            nodeRefs.combFeedbackGains.forEach((fb: GainNode, idx: number) => {
-              const g = Math.min(0.96, nodeRefs.combBaseGains[idx] * (0.6 + timeScale * 0.36));
-              setParam(fb.gain, g, 0.02);
-            });
-          }
-          if (nodeRefs.combDelays && nodeRefs.combTimes) {
-            nodeRefs.combDelays.forEach((delay: DelayNode, idx: number) => {
-              setParam(delay.delayTime, nodeRefs.combTimes[idx] * (0.6 + timeScale * 0.8), 0.02);
-            });
-          }
+          // time sets the decay (0.1..6 s) without changing any delay length, so it never bends the pitch
+          const time = mod('time', typeof params.time === 'number' ? params.time : 0.5, 0.0, 1.0);
           const spring = mod('spring-mix', toRatio(params['spring-mix'], 0.0), 0.0, 1.0);
-          setParam(nodeRefs.combSum?.gain, (0.28 + spring * 0.55) * 0.5, 0.02);
+          nodeRefs.reverb?.setParams(time, spring);
           break;
         }
 
