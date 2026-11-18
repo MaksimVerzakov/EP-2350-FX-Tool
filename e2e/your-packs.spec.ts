@@ -103,6 +103,31 @@ test.describe('YOUR PACKS', () => {
     await expect(page.getByPlaceholder('PACK NAME')).toHaveValue('BROKEN RADIO PACK');
   });
 
+  test('SHARE copies a link that opens the pack in a fresh browser', async ({ page, context, browser }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto('/');
+
+    // Official packs can't be shared from here
+    await expect(page.getByTestId('share-pack-button')).toHaveCount(0);
+
+    await openPackList(page);
+    await newPackButton(page).click();
+    await page.getByPlaceholder('PACK NAME').fill('SHARE ME');
+    await page.getByPlaceholder('PRESET NAME').fill('MY TAKE');
+
+    await page.getByRole('button', { name: 'Share this pack' }).click();
+    await expect(page.getByText('Link copied')).toBeVisible();
+    const link = await page.evaluate(() => navigator.clipboard.readText());
+    expect(link).toContain('/#pack=');
+
+    const fresh = await browser.newContext();
+    const other = await fresh.newPage();
+    await other.goto(link);
+    await expect(other.getByPlaceholder('PACK NAME')).toHaveValue('SHARE ME');
+    await expect(other.getByPlaceholder('PRESET NAME')).toHaveValue('MY TAKE');
+    await fresh.close();
+  });
+
   test('the pack saved by an older version becomes the first of YOUR PACKS', async ({ page }) => {
     await page.addInitScript((cfg) => {
       if (!localStorage.getItem('ep2350_user_packs')) localStorage.setItem('ep2350_pack_config', cfg);

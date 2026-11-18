@@ -2438,8 +2438,8 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 7, 'Connect, save (incl. not enough space on the mic), import and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 6, 'Import, export copy, save to the mic, sending samples, converting a WAV and fitting the disk must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 8, 'Connect, save (incl. not enough space on the mic), import, share-link and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 7, 'Import, export copy, save to the mic, sending samples, converting a WAV, fitting the disk and a copied share link must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
