@@ -113,7 +113,7 @@ const {
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
-const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
+const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
@@ -730,7 +730,11 @@ function createMockAudioParam(initial = 0) {
     value: initial,
     setTargetAtTime(val) {
       this.value = val;
-    }
+    },
+    setValueAtTime(val) {
+      this.value = val;
+    },
+    cancelScheduledValues() {}
   };
 }
 
@@ -893,7 +897,8 @@ assert.ok(inputComp, 'Engine must instantiate hardware pre-chain inputCompressor
 assert.ok(inputGate, 'Engine must instantiate hardware pre-chain inputNoiseGate');
 assert.ok(engine.sourceNode.connections.includes(inputComp), 'sourceNode must feed into inputCompressor');
 assert.ok(inputComp.connections.includes(inputGate), 'inputCompressor must feed into inputNoiseGate');
-assert.ok(inputGate.connections.includes(engine.sourceHub), 'inputNoiseGate must feed into sourceHub');
+assert.ok(inputGate.connections.includes(engine.getDuckGain()), 'inputNoiseGate must feed into the duck gain');
+assert.ok(engine.getDuckGain().connections.includes(engine.sourceHub), 'duck gain must feed into sourceHub');
 
 const distNode = engine.activeNodes.find((n) => n.effectType === 'DIST');
 const delayNode = engine.activeNodes.find((n) => n.effectType === 'DELAY');
@@ -1009,7 +1014,8 @@ assert.ok(Math.abs(lpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.5)) < 1
 assert.ok(Math.abs(hpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.2)) < 1e-3, 'HIGHPASS 20% cutoff must map to log Hz');
 assert.strictEqual(harmonyNode.nodeRefs.pitchShifter.getPitch(), 1.25, 'HARMONY pitchShifter must initialize to 1.25x');
 assert.strictEqual(ssbNode.nodeRefs.ssbShifter.getFrequency(), -650, 'SSB -500Hz + 0.5*(-300Hz) shake must equal -650Hz');
-assert.strictEqual(sampleNode2.nodeRefs.pitchShifter.getPitch(), 2.0, 'SAMPLE +12 semitones must set pitchShifter to 2.0x');
+assert.strictEqual(sampleNode2.nodeRefs.lastRate, 2.0, 'SAMPLE +12 semitones must double the playback rate (tape-style)');
+assert.strictEqual(sampleNode2.nodeRefs.pitchShifter, undefined, 'SAMPLE pitch must not use a time-preserving pitch shifter');
 // At currentTime=0.25, effectiveLfoSpeed = 2.0 + 1.0*4.0 = 6.0 -> cycles = 0.25*6.0 + 0.3 = 1.8 (phase 0.8 >= 0.5 -> square = -1)
 assert.strictEqual(balanceNode.nodeRefs.chopperGain.gain.value, 0.18, 'Square LFO < 0 on BALANCE must engage 0.18 chopper gate');
 
@@ -2503,4 +2509,119 @@ console.log('✓ Suite 20: In-app messages and tooltips verified');
 }
 console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate, same-name conflicts) verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 22: Firmware 1.0.9+ fields: optional filter Q and sample duck
+// -----------------------------------------------------------------------------
+{
+  // 22a. Registry: Q is optional on LOWPASS/HIGHPASS and needs firmware 1.0.9
+  for (const type of ['LOWPASS', 'HIGHPASS']) {
+    const q = EFFECTS_REGISTRY[type].params.find((p) => p.name === 'Q');
+    assert.ok(q, `${type} must define Q`);
+    assert.strictEqual(q.optional, true, `${type}.Q must be optional`);
+    assert.strictEqual(q.minFirmware, '1.0.9', `${type}.Q needs firmware 1.0.9`);
+    assert.deepStrictEqual([q.min, q.max], [0, 1]);
+  }
+  assert.ok(
+    Object.values(EFFECTS_REGISTRY).every((m) => m.params.filter((p) => p.optional).every((p) => p.name === 'Q')),
+    'Only filter Q is optional for now'
+  );
+
+  // 22b. Round trip: Q and duck survive import/export; leaving them out writes nothing
+  const cfg = {
+    name: 'FW TEST',
+    samples: [
+      { pos: 0, file: '1.wav', playmode: 'oneshot', duck: 0.75 },
+      { pos: 1, file: '2.wav', playmode: 'hold' }
+    ],
+    presets: [
+      {
+        pos: 0,
+        name: 'Q',
+        list: [
+          { effect: 'LOWPASS', cutoff: 0.5, Q: 0.6 },
+          { effect: 'HIGHPASS', cutoff: 0.2 },
+          { effect: 'SAMPLE' }
+        ]
+      }
+    ]
+  };
+  const parsedFw = parseConfigJson(JSON.stringify(cfg));
+  assert.ok(!parsedFw.error, parsedFw.error);
+  assert.strictEqual(parsedFw.pack.samples[0].duck, 0.75, 'duck must be imported');
+  assert.strictEqual(parsedFw.pack.samples[1].duck, undefined, 'missing duck stays missing');
+  const outFw = JSON.parse(serializeToConfigJson(parsedFw.pack));
+  assert.strictEqual(outFw.samples[0].duck, 0.75, 'duck must be exported');
+  assert.ok(!('duck' in outFw.samples[1]), 'duck is not written when unset');
+  assert.strictEqual(outFw.presets[0].list[0].Q, 0.6, 'LOWPASS Q must be exported');
+  assert.ok(!('Q' in outFw.presets[0].list[1]), 'Q is not written when unset');
+  const clamped = parseConfigJson(JSON.stringify({ ...cfg, samples: [{ pos: 0, file: '1.wav', duck: 3 }] }));
+  assert.strictEqual(clamped.pack.samples[0].duck, 1, 'imported duck is clamped to 0..1');
+
+  // 22c. Validator: firmware warnings, duck checks, clearer number error
+  const res = validatePresetInput({ configJson: JSON.stringify(cfg) });
+  assert.strictEqual(res.isValid, true, JSON.stringify(res.errors));
+  const fwPaths = res.warnings.filter((w) => w.code === 'needs_firmware').map((w) => w.path);
+  assert.ok(fwPaths.includes('presets[0].list[0].Q'), 'Q gets a firmware warning');
+  assert.ok(fwPaths.includes('samples[0].duck'), 'duck gets a firmware warning');
+  const badDuck = validatePresetInput({
+    configJson: JSON.stringify({ ...cfg, samples: [{ pos: 0, file: '1.wav', duck: 'yes' }, { pos: 1, file: '2.wav', duck: 1.5 }] })
+  });
+  assert.strictEqual(badDuck.isValid, false);
+  assert.ok(badDuck.errors.some((e) => e.code === 'duck_not_number' && e.path === 'samples[0].duck'));
+  assert.ok(badDuck.errors.some((e) => e.code === 'out_of_range' && e.path === 'samples[1].duck'));
+  const badNum = validatePresetInput({
+    configJson: JSON.stringify({ ...cfg, presets: [{ pos: 0, list: [{ effect: 'LOWPASS', cutoff: '0.5' }, { effect: 'SAMPLE' }] }] })
+  });
+  const numErr = badNum.errors.find((e) => e.code === 'param_not_number');
+  assert.ok(numErr && /stops config\.json from loading/.test(numErr.message), 'number error explains the firmware consequence');
+
+  // 22d. Engine: filter Q follows the row (and its default when unset)
+  const fwEngine = new DspAudioEngine();
+  await fwEngine.init();
+  fwEngine.updatePreset({
+    id: 'fw',
+    pos: 0,
+    list: [
+      { id: 'a', effect: 'LOWPASS', cutoff: 0.5, Q: 0.6 },
+      { id: 'b', effect: 'HIGHPASS', cutoff: 0.1 },
+      { id: 'c', effect: 'SAMPLE' }
+    ],
+    handle: { row: 0, param: 'Q', depth: 30 }
+  });
+  fwEngine.updateModulation({ handlePos: 0 });
+  await fwEngine.start();
+  const [lp, hp] = fwEngine.activeNodes.filter((n) => n.effectType === 'LOWPASS' || n.effectType === 'HIGHPASS');
+  assert.ok(Math.abs(lp.nodeRefs.filter.Q.value - 6) < 1e-6, 'LOWPASS Q 0.6 -> biquad Q 6');
+  assert.ok(Math.abs(hp.nodeRefs.filter.Q.value - 2) < 1e-6, 'Unset Q keeps the previous fixed resonance (2.0)');
+  fwEngine.updateModulation({ handlePos: 1 });
+  assert.ok(Math.abs(lp.nodeRefs.filter.Q.value - 9) < 1e-6, 'The handle can modulate filter Q');
+
+  // 22e. Engine: duck turns the mic down while the sample plays, and back up when it stops
+  const duck = fwEngine.getDuckGain();
+  assert.strictEqual(duck.gain.value, 1, 'Mic is not ducked at rest');
+  await fwEngine.triggerSample(true, 'hold', 0.75);
+  assert.ok(Math.abs(duck.gain.value - 0.25) < 1e-6, 'duck 0.75 leaves the mic at 25%');
+  assert.ok(!duck.connections.includes(fwEngine.sampleSourceNode), 'The sample itself bypasses the duck');
+  await fwEngine.triggerSample(false, 'hold');
+  assert.strictEqual(duck.gain.value, 1, 'Releasing a hold sample restores the mic');
+  await fwEngine.triggerSample(true, 'oneshot');
+  assert.strictEqual(duck.gain.value, 1, 'A sample without duck leaves the mic alone');
+  fwEngine.stop();
+
+  // 22f. SAMPLE pitch is tape-style (confirmed on the device: it changes the sample's length)
+  assert.strictEqual(samplePlaybackRate(1, 12), 2, '+12 st doubles the rate');
+  assert.strictEqual(samplePlaybackRate(1, -12), 0.5, '-12 st halves the rate');
+  assert.ok(Math.abs(samplePlaybackRate(1.5, 7) - 1.5 * Math.pow(2, 7 / 12)) < 1e-12, 'speed and pitch multiply');
+  assert.strictEqual(samplePlaybackRate(4, 24), 16, 'rate is clamped at 16x');
+  const tapeEngine = new DspAudioEngine();
+  await tapeEngine.init();
+  tapeEngine.updatePreset({ id: 't', pos: 0, list: [{ id: 's', effect: 'SAMPLE', speed: 1, pitch: 12 }], shake: { row: 0, param: 'pitch', depth: -12 } });
+  await tapeEngine.triggerSample(true, 'hold');
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 2, 'Triggered sample plays at speed x 2^(pitch/12)');
+  tapeEngine.updateModulation({ shakeAmount: 1 });
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 1, 'Modulating pitch changes the playback rate live');
+  tapeEngine.stop();
+}
+console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duck) and tape-style SAMPLE pitch verified');
+
+console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');

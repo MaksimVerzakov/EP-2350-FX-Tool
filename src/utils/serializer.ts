@@ -105,11 +105,18 @@ export function serializeToConfigJson(pack: PackConfig): string {
 
   // 1. Samples: if using factory sounds, completely delete the samples array
   if (!pack.useBuiltInSamples && pack.samples && pack.samples.length > 0) {
-    rootObj.samples = pack.samples.map((s) => ({
-      pos: s.pos,
-      file: s.file,
-      playmode: s.playmode
-    }));
+    rootObj.samples = pack.samples.map((s) => {
+      const entry: any = {
+        pos: s.pos,
+        file: s.file,
+        playmode: s.playmode
+      };
+      // duck (firmware 1.0.9+) is only written when set, so older firmware never sees it
+      if (typeof s.duck === 'number' && Number.isFinite(s.duck)) {
+        entry.duck = Math.round(Math.max(0, Math.min(1, s.duck)) * 1000) / 1000;
+      }
+      return entry;
+    });
   }
 
   // 2. Presets

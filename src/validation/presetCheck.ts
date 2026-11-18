@@ -241,8 +241,23 @@ export function checkPreset(raw: unknown, scale: PresetScale, prefix = ''): Pres
       }
       const r = paramRange(p, scale);
       if (!isNum(value)) {
-        add('error', 'param_not_number', `${rowPath}.${key}`, `${meta.type} ${key} must be a number, got ${JSON.stringify(value)}.`, `Use a number in ${r.text}.`);
+        add(
+          'error',
+          'param_not_number',
+          `${rowPath}.${key}`,
+          `${meta.type} ${key} must be a number, got ${JSON.stringify(value)}. The mic converts every effect parameter to a number while loading, and one it cannot convert stops config.json from loading.`,
+          `Use a number in ${r.text}.`
+        );
         continue;
+      }
+      if (p.minFirmware) {
+        add(
+          'warning',
+          'needs_firmware',
+          `${rowPath}.${key}`,
+          `${meta.type} ${key} needs EP-2350 firmware ${p.minFirmware} or newer; older firmware does not know it.`,
+          `Update the mic to the latest firmware, or remove "${key}" to keep the mic's own default.`
+        );
       }
       if (value < r.min || value > r.max) {
         add(

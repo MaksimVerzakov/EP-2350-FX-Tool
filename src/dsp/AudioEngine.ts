@@ -226,6 +226,16 @@ registerProcessor('ep2350-noisegate', Ep2350NoiseGateProcessor);
 
 export type InputMode = 'sample' | 'mic';
 
+/** Filter Q when a LOWPASS/HIGHPASS row leaves `Q` out (maps to biquad Q 2.0). */
+export const FILTER_DEFAULT_Q = 0.2;
+/** config.json Q (0..1) to biquad Q, the same scale as EQUALISER. */
+export const filterQ = (q: number) => Math.max(0.1, q * 10);
+/** Playback rate of a triggered sample: SAMPLE.speed times the SAMPLE.pitch ratio (tape-style). */
+export const samplePlaybackRate = (speed: number, semitones: number) =>
+  Math.max(0.01, Math.min(16, speed * Math.pow(2, semitones / 12)));
+const DUCK_ATTACK_S = 0.01;
+const DUCK_RELEASE_S = 0.12;
+
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
   shakeAmount: number; // 0.0 to 1.0 (transient decay)
@@ -248,6 +258,8 @@ export class DspAudioEngine {
   private sourceNode: AudioBufferSourceNode | null = null;
   private inputCompressor: DynamicsCompressorNode | null = null;
   private inputNoiseGate: (AudioNode & { onaudioprocess?: any }) | null = null;
+  /** Turns the mic down while a sample with `duck` plays. Samples bypass it. */
+  private duckGain: GainNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
@@ -405,8 +417,16 @@ export class DspAudioEngine {
     try {
       this.inputNoiseGate.disconnect();
     } catch {}
+    if (!this.duckGain) {
+      this.duckGain = ctx.createGain();
+      this.duckGain.gain.value = 1.0;
+    }
+    try {
+      this.duckGain.disconnect();
+    } catch {}
     this.inputCompressor.connect(this.inputNoiseGate);
-    this.inputNoiseGate.connect(this.sourceHub);
+    this.inputNoiseGate.connect(this.duckGain);
+    this.duckGain.connect(this.sourceHub);
     return this.inputCompressor;
   }
 
@@ -428,6 +448,7 @@ export class DspAudioEngine {
 
   public stopSample() {
     this.isSamplePlaying = false;
+    this.setDuck(0);
     if (this.sampleSourceNode) {
       try {
         this.sampleSourceNode.onended = null;
@@ -441,7 +462,22 @@ export class DspAudioEngine {
     }
   }
 
-  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot') {
+  public getDuckGain(): GainNode | null {
+    return this.duckGain;
+  }
+
+  /** Duck the mic by `amount` (0 = untouched, 1 = silent): fast attack, slower release. */
+  private setDuck(amount: number) {
+    if (!this.ctx || !this.duckGain) return;
+    const target = 1 - Math.max(0, Math.min(1, amount));
+    const param = this.duckGain.gain;
+    const now = this.ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.setTargetAtTime(target, now, target < param.value ? DUCK_ATTACK_S : DUCK_RELEASE_S);
+  }
+
+  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot', duck: number = 0) {
     if (!down) {
       if (playmode === 'hold') {
         this.stopSample();
@@ -481,7 +517,7 @@ export class DspAudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = sampleBuf;
     src.loop = playmode === 'hold' || playmode === 'startstop';
-    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastSpeed ?? 1.0;
+    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastRate ?? 1.0;
 
     this.sampleSourceNode = src;
     this.isSamplePlaying = true;
@@ -489,6 +525,7 @@ export class DspAudioEngine {
       if (this.sampleSourceNode === src) {
         this.isSamplePlaying = false;
         this.sampleSourceNode = null;
+        this.setDuck(0);
         if (!this.isRunning) {
           this.stopModulationLoop();
         }
@@ -497,6 +534,7 @@ export class DspAudioEngine {
 
     src.connect(targetInput);
     this.applyLiveModulation(true);
+    if (typeof duck === 'number' && duck > 0) this.setDuck(duck);
     src.start(0);
     this.startModulationLoop();
   }
@@ -785,6 +823,12 @@ export class DspAudioEngine {
       } catch (e) {}
       this.inputNoiseGate = null;
     }
+    if (this.duckGain) {
+      try {
+        this.duckGain.disconnect();
+      } catch (e) {}
+      this.duckGain = null;
+    }
     if (this.sourceHub) {
       try {
         this.sourceHub.disconnect();
@@ -937,7 +981,7 @@ export class DspAudioEngine {
       case 'HIGHPASS': {
         const filter = ctx.createBiquadFilter();
         filter.type = fx.effect === 'LOWPASS' ? 'lowpass' : 'highpass';
-        filter.Q.value = 2.0;
+        filter.Q.value = filterQ(FILTER_DEFAULT_Q);
         return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
       }
 
@@ -1122,28 +1166,24 @@ export class DspAudioEngine {
       }
 
       case 'SAMPLE': {
-        // Main vocal audition stream passes cleanly through SAMPLE (input -> output)
-        // Triggered hardware samples enter via sampleInput -> pitchShifter -> gain -> panner -> output
+        // Main vocal audition stream passes cleanly through SAMPLE (input -> output).
+        // Triggered samples enter via sampleInput -> gain -> panner -> output. SAMPLE.pitch is
+        // tape-style like on the mic: it changes the playback rate, so it also changes the length.
         const input = ctx.createGain();
         const output = ctx.createGain();
         const sampleInput = ctx.createGain();
         const gain = ctx.createGain();
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
 
-        const semitones = typeof fx.pitch === 'number' ? fx.pitch : 0;
-        const pitchRatio = Math.pow(2, semitones / 12);
-        const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
-
         input.connect(output);
-        sampleInput.connect(pitchShifter.processor);
-        pitchShifter.processor.connect(gain);
+        sampleInput.connect(gain);
         gain.connect(panner);
         panner.connect(output);
 
         return {
           input,
           output,
-          nodeRefs: { sampleInput, gain, panner, pitchShifter, lastSpeed: 1.0, rowIdx }
+          nodeRefs: { sampleInput, gain, panner, lastSpeed: 1.0, lastRate: 1.0, rowIdx }
         };
       }
 
@@ -1231,6 +1271,9 @@ export class DspAudioEngine {
         case 'HIGHPASS': {
           const baseCutoff = toCutoffRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
           setParam(nodeRefs.filter?.frequency, cutoffToHz(mod('cutoff', baseCutoff, 0.0, 1.0)), 0.015);
+          // Q is optional (firmware 1.0.9+); left out, it keeps the preview's fixed resonance (0.2 -> 2.0)
+          const q = mod('Q', typeof params.Q === 'number' ? params.Q : FILTER_DEFAULT_Q, 0.0, 1.0);
+          setParam(nodeRefs.filter?.Q, filterQ(q), 0.015);
           break;
         }
 
@@ -1322,11 +1365,13 @@ export class DspAudioEngine {
 
         case 'SAMPLE': {
           const moddedSemitones = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 0, -24, 24);
-          nodeRefs.pitchShifter?.setPitch(Math.pow(2, moddedSemitones / 12));
           const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
+          // Confirmed on the device: pitch changes the sample's length, so it multiplies the rate
+          const rate = samplePlaybackRate(moddedSpeed, moddedSemitones);
           nodeRefs.lastSpeed = moddedSpeed;
+          nodeRefs.lastRate = rate;
           if (this.sampleSourceNode) {
-            this.sampleSourceNode.playbackRate.value = moddedSpeed;
+            this.sampleSourceNode.playbackRate.value = rate;
           }
           setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);
           if (nodeRefs.panner && 'pan' in nodeRefs.panner) {

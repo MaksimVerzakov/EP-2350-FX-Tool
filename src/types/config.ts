@@ -60,6 +60,7 @@ export interface HarmonyEffect extends BaseEffect {
 export interface FilterEffect extends BaseEffect {
   effect: 'LOWPASS' | 'HIGHPASS';
   cutoff?: number; // 0.0 - 1.0
+  Q?: number; // 0.0 - 1.0, optional (firmware 1.0.9+)
 }
 
 export interface SampleEffect extends BaseEffect {
@@ -151,6 +152,8 @@ export interface SampleSlotConfig {
   pos: number; // 0, 1, 2, 3
   file: string;
   playmode: PlayMode;
+  /** How far the mic is turned down while this sample plays, 0..1 (firmware 1.0.9+). Absent = no ducking. */
+  duck?: number;
 }
 
 export interface PackConfig {
@@ -169,6 +172,13 @@ export interface ParamDef {
   defaultVal: number;
   unit: string;
   displayScale?: (val: number) => string;
+  /**
+   * Optional parameters are not written to new rows: left out, the mic keeps its own default.
+   * Resetting the knob removes the value again.
+   */
+  optional?: boolean;
+  /** Lowest firmware that reads this parameter, e.g. '1.0.9'. */
+  minFirmware?: string;
 }
 
 export interface EffectMeta {

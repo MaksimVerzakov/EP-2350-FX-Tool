@@ -14,6 +14,10 @@ interface KnobProps {
   size?: number;
   isModulated?: boolean;
   modulationSource?: string;
+  /** Optional parameter left out of config.json: drawn dimmed, the mic uses its own default. */
+  inactive?: boolean;
+  /** Extra line for the hover title, e.g. firmware requirements. */
+  hint?: string;
 }
 
 export const Knob: React.FC<KnobProps> = ({
@@ -29,7 +33,9 @@ export const Knob: React.FC<KnobProps> = ({
   accentColor = '#f15a22',
   size = 36,
   isModulated = false,
-  modulationSource
+  modulationSource,
+  inactive = false,
+  hint
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -199,8 +205,15 @@ export const Knob: React.FC<KnobProps> = ({
 
   return (
     <div
-      className="flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5"
-      title={`${label}: ${formatVal(value)} (Drag dial or type in box)`}
+      className={`flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5 transition-opacity ${
+        inactive ? 'opacity-45 hover:opacity-80' : ''
+      }`}
+      data-inactive={inactive ? 'true' : undefined}
+      title={
+        inactive
+          ? `${label}: not set, the mic uses its own default. Turn the dial to set it.${hint ? ` ${hint}` : ''}`
+          : `${label}: ${formatVal(value)} (Drag dial or type in box)${hint ? `. ${hint}` : ''}`
+      }
     >
       {/* Parameter Label + Mod Indicator */}
       <div className="flex items-center justify-between w-full mb-0.5 px-0.5">
