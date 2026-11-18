@@ -1,4 +1,5 @@
 import type { WavInfo } from './samples';
+import type { FitEncoding } from './fitter';
 
 /**
  * Keeps loaded WAVs across reloads in IndexedDB (localStorage is too small for audio), by file
@@ -7,8 +8,15 @@ import type { WavInfo } from './samples';
  */
 
 export interface StoredSample {
+  /** The file as it goes on the disk (fitted when the pack needed room). */
   bytes: Uint8Array;
   info: WavInfo;
+  /** The file as loaded, when `bytes` is a fitted copy; the fitter always starts from it. */
+  original?: { bytes: Uint8Array; info: WavInfo };
+  /** Frames of the original that hold sound. */
+  sound?: { start: number; end: number };
+  encoding?: FitEncoding;
+  notes?: string[];
 }
 
 const DB_NAME = 'ep2350_samples';
@@ -64,8 +72,24 @@ export async function loadStoredSamples(): Promise<Record<string, StoredSample>>
       req.onsuccess = () => {
         const cursor = req.result;
         if (!cursor) return resolve();
-        const v = cursor.value as { bytes?: ArrayBuffer; info?: WavInfo };
-        if (v?.bytes instanceof ArrayBuffer && v.info) out[String(cursor.key)] = { bytes: new Uint8Array(v.bytes), info: v.info };
+        const v = cursor.value as {
+          bytes?: ArrayBuffer;
+          info?: WavInfo;
+          original?: { bytes?: ArrayBuffer; info?: WavInfo };
+          sound?: StoredSample['sound'];
+          encoding?: FitEncoding;
+          notes?: string[];
+        };
+        if (v?.bytes instanceof ArrayBuffer && v.info) {
+          const entry: StoredSample = { bytes: new Uint8Array(v.bytes), info: v.info };
+          if (v.original?.bytes instanceof ArrayBuffer && v.original.info) {
+            entry.original = { bytes: new Uint8Array(v.original.bytes), info: v.original.info };
+          }
+          if (v.sound) entry.sound = v.sound;
+          if (v.encoding) entry.encoding = v.encoding;
+          if (Array.isArray(v.notes)) entry.notes = v.notes;
+          out[String(cursor.key)] = entry;
+        }
         cursor.continue();
       };
       req.onerror = () => resolve();
@@ -79,7 +103,9 @@ export async function loadStoredSamples(): Promise<Record<string, StoredSample>>
 export async function storeSample(name: string, sample: StoredSample): Promise<void> {
   // Store a plain ArrayBuffer copy: structured clone of a view would keep its whole backing buffer
   const bytes = sample.bytes.slice().buffer;
-  await run('readwrite', (s) => s.put({ bytes, info: sample.info, savedAt: Date.now() }, name));
+  const original = sample.original ? { bytes: sample.original.bytes.slice().buffer, info: sample.original.info } : undefined;
+  const { sound, encoding, notes } = sample;
+  await run('readwrite', (s) => s.put({ bytes, info: sample.info, original, sound, encoding, notes, savedAt: Date.now() }, name));
 }
 
 /** Delete stored WAVs whose names are not in `keep`. */

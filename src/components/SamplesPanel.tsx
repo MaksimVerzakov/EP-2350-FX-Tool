@@ -4,18 +4,16 @@ import type { PackConfig, PlayMode, ThemeMode } from '../types/config';
 import { themeColor } from '../theme/tokens';
 import { Knob } from './Knob';
 import { Tooltip } from './Tooltip';
+import type { StoredSample } from '../utils/sampleStore';
 import {
-  type WavInfo,
   SAMPLE_SLOTS,
   customSampleAt,
   diskUsage,
   formatBytes
 } from '../utils/samples';
 
-export interface LoadedSample {
-  bytes: Uint8Array;
-  info: WavInfo;
-}
+/** A WAV loaded in this browser: the file for the disk, and its original when it was fitted. */
+export type LoadedSample = StoredSample;
 
 interface SamplesPanelProps {
   pack: PackConfig;
@@ -123,7 +121,12 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               {isFactory ? 'Factory sound' : slot!.file}
             </span>
             {loaded && (
-              <span className="font-mono text-te-xs font-bold text-te-muted shrink-0" data-testid="sample-size">
+              <span
+                className="font-mono text-te-xs font-bold text-te-muted shrink-0"
+                data-testid="sample-size"
+                data-fitted={loaded.notes?.length ? 'true' : undefined}
+                title={loaded.notes?.length ? `Made smaller to fit the disk: ${loaded.notes.join(', ')}` : undefined}
+              >
                 {formatBytes(loaded.bytes.byteLength)}
               </span>
             )}

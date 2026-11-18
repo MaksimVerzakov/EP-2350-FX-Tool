@@ -448,6 +448,33 @@ export class DspAudioEngine {
     return (this.ctx as AudioContext).decodeAudioData(copy);
   }
 
+  /**
+   * Render `buffer` (decoded from a file at `srcRate`) for the mic: trimmed to `enc.trim` (frames of
+   * the original file), mixed to `enc.channels` and resampled to `enc.sampleRate`.
+   */
+  public async renderForDevice(
+    buffer: AudioBuffer,
+    srcRate: number,
+    enc: { trim?: { start: number; end: number }; channels: number; sampleRate: number }
+  ): Promise<{ channels: Float32Array[]; sampleRate: number }> {
+    const w = typeof window !== 'undefined' ? (window as any) : undefined;
+    const Offline = w?.OfflineAudioContext || w?.webkitOfflineAudioContext;
+    if (!Offline) throw new Error('This browser cannot re-encode audio.');
+    const startSec = enc.trim ? enc.trim.start / srcRate : 0;
+    const durSec = enc.trim ? (enc.trim.end - enc.trim.start) / srcRate : buffer.duration;
+    const frames = Math.max(1, Math.round(durSec * enc.sampleRate));
+    const off = new Offline(enc.channels, frames, enc.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buffer;
+    src.connect(off.destination); // a mono destination mixes stereo down to (L + R) / 2
+    src.start(0, startSec, durSec);
+    const out: AudioBuffer = await off.startRendering();
+    return {
+      channels: Array.from({ length: out.numberOfChannels }, (_, c) => out.getChannelData(c)),
+      sampleRate: enc.sampleRate
+    };
+  }
+
   /** Play `buffer` from sample slot `slot` (null: back to the bundled demo sound). */
   public setCustomSample(slot: number, buffer: AudioBuffer | null) {
     if (slot < 0 || slot > 3) return;
