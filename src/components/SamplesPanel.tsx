@@ -63,6 +63,9 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
 
   const btnClass =
     'te-btn-3d te-btn-3d--pressable h-[22px] px-2 flex items-center justify-center gap-1 font-mono text-te-xs font-bold tracking-wider uppercase cursor-pointer bg-te-control text-te-ink hover:brightness-105';
+  // Same look as the mic's PLAY button (AudioPlayerCompact)
+  const playBtnClass =
+    'te-btn-3d te-btn-3d--pressable te-btn-3d--dark h-[22px] px-2 flex items-center justify-center gap-1.5 font-mono text-te-xs font-bold tracking-widest uppercase cursor-pointer bg-te-ink hover:bg-te-ink-hover text-white';
   const arrowClass =
     'te-btn-3d te-btn-3d--pressable w-[22px] h-[22px] flex items-center justify-center cursor-pointer z-10 hover:brightness-105 bg-te-control text-te-ink disabled:opacity-35 disabled:pointer-events-none';
   const fieldLabel = 'text-te-xs font-te-bold tracking-wider text-te-muted uppercase leading-none';
@@ -160,7 +163,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
             </button>
             <button
               type="button"
-              className={btnClass}
+              className={playBtnClass}
               title="Play this slot through the current preset"
               aria-label={`Play slot ${pos + 1}`}
               onPointerDown={(e) => {
@@ -172,7 +175,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
                 if (e.buttons) onPlaySlot(pos, false);
               }}
             >
-              <Play className="w-3 h-3" />
+              <Play className="w-2.5 h-2.5 fill-current text-white" />
               PLAY
             </button>
             <input
