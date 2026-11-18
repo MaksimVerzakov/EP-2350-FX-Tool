@@ -432,12 +432,20 @@ export class DspAudioEngine {
     return this.inputCompressor;
   }
 
-  /** Decode a WAV file for auditioning. */
+  /**
+   * Decode a WAV file for auditioning. Before the first click the page may not start audio, so an
+   * OfflineAudioContext decodes instead; an AudioBuffer plays in any context.
+   */
   public async decodeSampleFile(bytes: Uint8Array): Promise<AudioBuffer> {
+    // decodeAudioData detaches its input, so hand it a copy
+    const copy = bytes.slice().buffer;
+    if (this.ctx) return this.ctx.decodeAudioData(copy);
+    const w = typeof window !== 'undefined' ? (window as any) : undefined;
+    const Offline = w?.OfflineAudioContext || w?.webkitOfflineAudioContext;
+    if (Offline) return new Offline(1, 1, 48000).decodeAudioData(copy);
     await this.init();
     if (!this.ctx) throw new Error('Audio is not available in this browser.');
-    // decodeAudioData detaches its input, so hand it a copy
-    return this.ctx.decodeAudioData(bytes.slice().buffer);
+    return (this.ctx as AudioContext).decodeAudioData(copy);
   }
 
   /** Play `buffer` from sample slot `slot` (null: back to the bundled demo sound). */

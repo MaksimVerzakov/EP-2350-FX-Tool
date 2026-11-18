@@ -234,3 +234,22 @@ export function deviceChannels(channels: Float32Array[]): Float32Array[] {
   for (const c of channels) for (let i = 0; i < frames; i++) mono[i] += c[i] / channels.length;
   return [mono];
 }
+
+/** Every WAV file name the given packs' custom slots refer to. */
+export function referencedSampleFiles(packs: PackConfig[]): Set<string> {
+  const names = new Set<string>();
+  for (const p of packs) for (const s of customSampleSlots(p)) names.add(s.file);
+  return names;
+}
+
+/**
+ * Names a WAV loaded into slot `pos` of `pack` must not take: the pack's other slots and every
+ * other pack's files. Loaded WAVs are stored by name, so reusing one would replace another
+ * pack's sound.
+ */
+export function takenSampleNames(pack: PackConfig, pos: number, otherPacks: PackConfig[]): string[] {
+  const own = customSampleSlots(pack)
+    .filter((s) => s.pos !== pos)
+    .map((s) => s.file);
+  return [...own, ...referencedSampleFiles(otherPacks)];
+}
