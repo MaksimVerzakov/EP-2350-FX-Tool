@@ -9,8 +9,7 @@ import {
   SAMPLE_SLOTS,
   customSampleAt,
   diskUsage,
-  formatBytes,
-  wavDeviceIssues
+  formatBytes
 } from '../utils/samples';
 
 export interface LoadedSample {
@@ -73,7 +72,6 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
   const renderSlot = (pos: number) => {
     const slot = customSampleAt(pack, pos);
     const loaded = slot ? library[slot.file] : undefined;
-    const issues = loaded ? wavDeviceIssues(loaded.info) : [];
     const state = !slot ? 'factory' : loaded ? 'custom' : 'missing';
     const isFactory = state === 'factory';
     // What the preview plays a factory slot with; the mic's factory sounds take no settings
@@ -86,10 +84,11 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
     const stepMode = (dir: 1 | -1) =>
       onUpdateSlot(pos, { playmode: PLAYMODES[(modeIdx + dir + PLAYMODES.length) % PLAYMODES.length].id });
     const factoryHint = 'Factory sounds take no settings: load a WAV to set them.';
+    // WAVs the mic cannot take are converted on load, so the only note left is a file not loaded here
     const note =
       state === 'missing'
         ? 'Not loaded in this browser: the mic plays it if the file is on its disk, otherwise the factory sound.'
-        : issues[0];
+        : undefined;
 
     return (
       <section
@@ -249,11 +248,8 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
           </div>
           {note && (
             <p
-              className={`flex-1 min-w-[180px] self-center font-mono text-te-xs leading-snug ${
-                state === 'missing' ? 'text-te-muted' : 'text-te-accent-deep'
-              }`}
-              role={state === 'missing' ? undefined : 'alert'}
-              data-testid={state === 'missing' ? 'sample-missing' : 'sample-issue'}
+              className="flex-1 min-w-[180px] self-center font-mono text-te-xs leading-snug text-te-muted"
+              data-testid="sample-missing"
             >
               {note}
             </p>
@@ -289,7 +285,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
 
         {/* 2. DISK strip: same grey strip and height as the FX board's bus selector */}
         <div
-          className="bg-te-strip border-b border-te-ink flex items-center justify-between gap-4 px-4 py-2 shrink-0"
+          className="bg-te-strip border-b border-te-ink flex items-center justify-center gap-3 px-4 py-2 shrink-0"
           data-testid="sample-disk"
           title={
             usage.fits
@@ -297,7 +293,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               : `${formatBytes(usage.totalBytes - usage.budgetBytes)} over: shorten a sample, make it mono or lower its sample rate.`
           }
         >
-          <span className="w-[96px] font-mono text-te-xs font-bold tracking-wider uppercase text-te-ink">DISK</span>
+          <span className="font-mono text-te-xs font-bold tracking-wider uppercase text-te-ink">DISK</span>
           <div className="h-[39px] flex items-center justify-center">
             <div
               className="bg-te-ink border border-te-ink-deep px-[6px] py-[5px] flex flex-col gap-[3px]"
@@ -327,7 +323,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
           </div>
           <Tooltip label={`config.json ${formatBytes(usage.configBytes)} + WAVs ${formatBytes(usage.sampleBytes)}`}>
             <span
-              className={`w-[96px] text-right font-mono text-te-xs font-bold tracking-wider whitespace-nowrap ${
+              className={`font-mono text-te-xs font-bold tracking-wider whitespace-nowrap ${
                 usage.fits ? 'text-te-ink' : 'text-te-accent-deep'
               }`}
               data-testid="sample-disk-total"

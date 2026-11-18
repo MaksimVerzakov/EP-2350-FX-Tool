@@ -191,3 +191,46 @@ export function diskUsage(pack: PackConfig, fileSizes: Record<string, number>): 
     missingFiles: files.filter((f) => !(f in fileSizes))
   };
 }
+
+/** Encode channels (1 or 2) as a 16-bit PCM WAV, a format every EP-2350 firmware plays. */
+export function encodeWav16(channels: Float32Array[], sampleRate: number): Uint8Array {
+  const ch = channels.length;
+  const frames = Math.min(...channels.map((c) => c.length));
+  const dataLen = frames * ch * 2;
+  const out = new Uint8Array(44 + dataLen);
+  const v = new DataView(out.buffer);
+  const str = (o: number, t: string) => {
+    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + dataLen, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * ch * 2, true);
+  v.setUint16(32, ch * 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, dataLen, true);
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < ch; c++) {
+      const x = Math.max(-1, Math.min(1, channels[c][i] || 0));
+      v.setInt16(o, x < 0 ? Math.round(x * 32768) : Math.round(x * 32767), true);
+      o += 2;
+    }
+  }
+  return out;
+}
+
+/** Channels the mic can take: mono and stereo stay as they are, more channels are mixed to mono. */
+export function deviceChannels(channels: Float32Array[]): Float32Array[] {
+  if (channels.length <= 2) return channels;
+  const frames = Math.min(...channels.map((c) => c.length));
+  const mono = new Float32Array(frames);
+  for (const c of channels) for (let i = 0; i < frames; i++) mono[i] += c[i] / channels.length;
+  return [mono];
+}

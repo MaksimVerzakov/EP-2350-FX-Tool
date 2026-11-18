@@ -13,7 +13,11 @@ import {
   clearSampleSlot,
   customSampleAt,
   customSampleSlots,
+  describeWav,
+  deviceChannels,
+  encodeWav16,
   inspectWav,
+  type WavInfo,
   sanitizeSampleFileName,
   updateSampleSlot,
   wavDeviceIssues
@@ -579,7 +583,7 @@ export const App: React.FC = () => {
 
   const handleLoadSampleFile = async (pos: number, file: File) => {
     let bytes: Uint8Array;
-    let info;
+    let info: WavInfo;
     try {
       bytes = new Uint8Array(await file.arrayBuffer());
       info = inspectWav(bytes);
@@ -587,23 +591,38 @@ export const App: React.FC = () => {
       showToast('error', 'Not a WAV file', `${file.name}: ${err instanceof Error ? err.message : String(err)} The mic only plays WAV files.`);
       return;
     }
+    let decoded: AudioBuffer | null = null;
+    try {
+      decoded = await audioEngine.decodeSampleFile(bytes);
+    } catch {
+      decoded = null;
+    }
+    // A WAV the mic cannot take (over 96 kHz, compressed, 32-bit integer, 3+ channels) is converted
+    // to 16-bit PCM at the browser's rate, keeping mono or stereo
+    let converted = false;
+    if (wavDeviceIssues(info).length > 0) {
+      if (!decoded) {
+        showToast('error', 'Cannot convert this WAV', `${file.name}: the mic cannot play it and this browser cannot convert it.`);
+        return;
+      }
+      const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded!.getChannelData(c));
+      bytes = encodeWav16(deviceChannels(channels), decoded.sampleRate);
+      info = inspectWav(bytes);
+      decoded = await audioEngine.decodeSampleFile(bytes).catch(() => decoded);
+      converted = true;
+    }
     // Read the pack after the awaits: another WAV may have been loaded meanwhile
     const others = customSampleSlots(packRef.current)
       .filter((s) => s.pos !== pos)
       .map((s) => s.file);
     const name = sanitizeSampleFileName(file.name, others);
+    if (decoded) decodedSamplesRef.current.set(name, decoded);
+    else decodedSamplesRef.current.delete(name);
     setSampleLibrary((lib) => ({ ...lib, [name]: { bytes, info } }));
     commitPackEdit(assignSampleFile(packRef.current, pos, name));
-    try {
-      decodedSamplesRef.current.set(name, await audioEngine.decodeSampleFile(bytes));
-      setSampleLibrary((lib) => ({ ...lib })); // re-run the engine sync now the audio is decoded
-    } catch {
-      decodedSamplesRef.current.delete(name);
-    }
-    const issues = wavDeviceIssues(info);
-    if (issues.length > 0) {
-      showToast('error', 'The mic cannot play this WAV', issues[0]);
-    } else if (!decodedSamplesRef.current.has(name)) {
+    if (converted) {
+      showToast('success', 'Converted for the mic', `${name} is now ${describeWav(info)}.`);
+    } else if (!decoded) {
       showToast('error', 'No preview', `This browser cannot play ${name}, but it is in the pack.`);
     }
   };

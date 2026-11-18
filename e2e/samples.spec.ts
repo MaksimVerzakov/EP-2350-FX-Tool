@@ -151,14 +151,22 @@ test('a loaded WAV gets its slot, settings and a place in the exported zip', asy
   expect(JSON.parse(plain.bytes.toString('utf8'))).not.toHaveProperty('samples');
 });
 
-test('files the mic cannot play are refused or flagged', async ({ page }) => {
+test('non-WAV files are refused; WAVs the mic cannot play are converted automatically', async ({ page }) => {
   await openSamples(page);
   await page.getByTestId('sample-file-1').setInputFiles({ name: 'song.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3 not a wav') });
   await expect(page.getByText('Not a WAV file').first()).toBeVisible();
   await expect(page.getByTestId('sample-slot-1')).toHaveAttribute('data-state', 'factory');
 
-  await page.getByTestId('sample-file-2').setInputFiles({ name: 'hires.wav', mimeType: 'audio/wav', buffer: makeWav({ rate: 192000, secs: 0.1 }) });
+  // 192 kHz is over the mic's 96 kHz: it is re-saved as 16-bit PCM at the browser's rate, with no warning
+  await page.getByTestId('sample-file-2').setInputFiles({ name: 'hires.wav', mimeType: 'audio/wav', buffer: makeWav({ rate: 192000, secs: 0.2 }) });
   const slot = page.getByTestId('sample-slot-2');
   await expect(slot).toHaveAttribute('data-state', 'custom');
-  await expect(slot.getByTestId('sample-issue')).toContainText('up to 96 kHz');
+  await expect(page.getByText('Converted for the mic').first()).toBeVisible();
+  await expect(slot.getByRole('alert')).toHaveCount(0);
+  const zipped = await exportDownload(page);
+  const wav = readZip(zipped.bytes)['hires.wav'];
+  const rate = wav.readUInt32LE(24);
+  expect(rate).toBeLessThanOrEqual(96000);
+  expect([wav.readUInt16LE(20), wav.readUInt16LE(22), wav.readUInt16LE(34)]).toEqual([1, 1, 16]);
+  expect(wav.readUInt32LE(40) / 2 / rate).toBeCloseTo(0.2, 2); // same length
 });

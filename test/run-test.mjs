@@ -2426,8 +2426,8 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 6, 'Connect, save, import and sample-load failures (not a WAV, the mic cannot play it, no preview) must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 3, 'Import, and copying an edited official pack on save/export, must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 6, 'Connect, save, import and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 4, 'Import, copying an edited official pack on save/export, and converting a WAV for the mic must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
@@ -2670,6 +2670,19 @@ console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duc
   assert.match(bad({ formatTag: 2 }), /Compressed WAV/);
   assert.match(bad({ frames: 0 }), /no audio/);
   assert.throws(() => S.inspectWav(new TextEncoder().encode('ID3 not a wav file')), /Not a WAV/);
+
+  // 23a2. Auto-fix encoder: 16-bit PCM, mono/stereo kept, 3+ channels mixed to mono
+  const tone = Float32Array.from({ length: 480 }, (_, i) => Math.sin(i / 10) * 0.5);
+  const enc = S.inspectWav(S.encodeWav16([tone], 48000));
+  assert.deepStrictEqual([enc.channels, enc.sampleRate, enc.bitsPerSample, enc.formatTag, enc.frames], [1, 48000, 16, 1, 480]);
+  assert.deepStrictEqual(S.wavDeviceIssues(enc), [], 'Converted WAVs are always playable');
+  assert.strictEqual(S.inspectWav(S.encodeWav16([tone, tone], 44100)).channels, 2, 'Stereo stays stereo');
+  const quad = S.deviceChannels([tone, tone, tone, tone]);
+  assert.strictEqual(quad.length, 1, '4 channels are mixed to mono');
+  assert.ok(Math.abs(quad[0][7] - tone[7]) < 1e-6, 'Mixdown averages the channels');
+  assert.strictEqual(S.deviceChannels([tone, tone]).length, 2);
+  const clip = new DataView(S.encodeWav16([Float32Array.of(2, -2)], 8000).buffer);
+  assert.deepStrictEqual([clip.getInt16(44, true), clip.getInt16(46, true)], [32767, -32768], 'Samples are clipped to 16-bit');
 
   // 23b. Disk-safe, unique file names
   assert.strictEqual(S.sanitizeSampleFileName('My Shout!.WAV'), 'my-shout.wav');
