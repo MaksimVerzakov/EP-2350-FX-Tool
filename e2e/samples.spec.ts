@@ -170,3 +170,21 @@ test('non-WAV files are refused; WAVs the mic cannot play are converted automati
   expect([wav.readUInt16LE(20), wav.readUInt16LE(22), wav.readUInt16LE(34)]).toEqual([1, 1, 16]);
   expect(wav.readUInt32LE(40) / 2 / rate).toBeCloseTo(0.2, 2); // same length
 });
+
+test('the DISK LED screen is centred in its strip on desktop and phone', async ({ page }) => {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 }]) {
+    await page.setViewportSize(viewport);
+    await openSamples(page);
+    if (viewport.width < 400) {
+      // Labels of different widths must not push the screen off centre
+      // A long size label (about 1 MB used) must not push the screen off centre either
+      await page.getByTestId('sample-file-0').setInputFiles({ name: 'a.wav', mimeType: 'audio/wav', buffer: makeWav({ channels: 2, secs: 5.8 }) });
+      await expect(page.getByTestId('sample-slot-0')).toHaveAttribute('data-state', 'custom');
+    }
+    const strip = await page.getByTestId('sample-disk').boundingBox();
+    const meter = await page.getByRole('meter', { name: 'Disk space used' }).boundingBox();
+    expect(Math.abs(meter!.x + meter!.width / 2 - (strip!.x + strip!.width / 2))).toBeLessThanOrEqual(1);
+    const total = await page.getByTestId('sample-disk-total').boundingBox();
+    expect(total!.x + total!.width).toBeLessThanOrEqual(strip!.x + strip!.width); // still inside the strip
+  }
+});

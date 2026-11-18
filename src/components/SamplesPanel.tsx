@@ -285,7 +285,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
 
         {/* 2. DISK strip: same grey strip and height as the FX board's bus selector */}
         <div
-          className="bg-te-strip border-b border-te-ink flex items-center justify-center gap-3 px-4 py-2 shrink-0"
+          className="bg-te-strip border-b border-te-ink grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:gap-3 px-4 py-2 shrink-0"
           data-testid="sample-disk"
           title={
             usage.fits
@@ -293,7 +293,8 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               : `${formatBytes(usage.totalBytes - usage.budgetBytes)} over: shorten a sample, make it mono or lower its sample rate.`
           }
         >
-          <span className="font-mono text-te-xs font-bold tracking-wider uppercase text-te-ink">DISK</span>
+          {/* Equal side columns keep the LED screen centred whatever the label widths */}
+          <span className="justify-self-end font-mono text-te-xs font-bold tracking-wider uppercase text-te-ink">DISK</span>
           <div className="h-[39px] flex items-center justify-center">
             <div
               className="bg-te-ink border border-te-ink-deep px-[6px] py-[5px] flex flex-col gap-[3px]"
@@ -321,6 +322,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               ))}
             </div>
           </div>
+          <div className="justify-self-start">
           <Tooltip label={`config.json ${formatBytes(usage.configBytes)} + WAVs ${formatBytes(usage.sampleBytes)}`}>
             <span
               className={`font-mono text-te-xs font-bold tracking-wider whitespace-nowrap ${
@@ -331,6 +333,7 @@ export const SamplesPanel: React.FC<SamplesPanelProps> = ({
               {formatBytes(usage.totalBytes)} / 1 MB
             </span>
           </Tooltip>
+          </div>
         </div>
 
         {/* 3. Slots, full width like effect cards */}
