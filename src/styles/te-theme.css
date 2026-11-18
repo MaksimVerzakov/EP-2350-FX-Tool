@@ -526,14 +526,16 @@ html[data-theme='ting'] .te-bevel-frame::after {
   --te-btn-bevel: #b83d10;
 }
 
+/* The bevel colour lives on the button, not its ::before/::after edges: set on the edges it would
+   beat the --dark/--orange variants below, giving dark Ting buttons light grey edges. */
 html[data-theme='ting'] .te-btn-3d {
   border-color: #00503a;
+  --te-btn-bevel: #cbc0a7;
 }
 
 html[data-theme='ting'] .te-btn-3d::before,
 html[data-theme='ting'] .te-btn-3d::after {
   border-color: #00503a;
-  --te-btn-bevel: #cbc0a7;
 }
 
 html[data-theme='ting'] .te-btn-3d--dark {
