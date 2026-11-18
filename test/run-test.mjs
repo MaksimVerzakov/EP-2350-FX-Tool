@@ -113,7 +113,7 @@ const {
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
-const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
+const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
@@ -1014,7 +1014,8 @@ assert.ok(Math.abs(lpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.5)) < 1
 assert.ok(Math.abs(hpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.2)) < 1e-3, 'HIGHPASS 20% cutoff must map to log Hz');
 assert.strictEqual(harmonyNode.nodeRefs.pitchShifter.getPitch(), 1.25, 'HARMONY pitchShifter must initialize to 1.25x');
 assert.strictEqual(ssbNode.nodeRefs.ssbShifter.getFrequency(), -650, 'SSB -500Hz + 0.5*(-300Hz) shake must equal -650Hz');
-assert.strictEqual(sampleNode2.nodeRefs.pitchShifter.getPitch(), 2.0, 'SAMPLE +12 semitones must set pitchShifter to 2.0x');
+assert.strictEqual(sampleNode2.nodeRefs.lastRate, 2.0, 'SAMPLE +12 semitones must double the playback rate (tape-style)');
+assert.strictEqual(sampleNode2.nodeRefs.pitchShifter, undefined, 'SAMPLE pitch must not use a time-preserving pitch shifter');
 // At currentTime=0.25, effectiveLfoSpeed = 2.0 + 1.0*4.0 = 6.0 -> cycles = 0.25*6.0 + 0.3 = 1.8 (phase 0.8 >= 0.5 -> square = -1)
 assert.strictEqual(balanceNode.nodeRefs.chopperGain.gain.value, 0.18, 'Square LFO < 0 on BALANCE must engage 0.18 chopper gate');
 
@@ -2606,7 +2607,21 @@ console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate, sa
   await fwEngine.triggerSample(true, 'oneshot');
   assert.strictEqual(duck.gain.value, 1, 'A sample without duck leaves the mic alone');
   fwEngine.stop();
+
+  // 22f. SAMPLE pitch is tape-style (confirmed on the device: it changes the sample's length)
+  assert.strictEqual(samplePlaybackRate(1, 12), 2, '+12 st doubles the rate');
+  assert.strictEqual(samplePlaybackRate(1, -12), 0.5, '-12 st halves the rate');
+  assert.ok(Math.abs(samplePlaybackRate(1.5, 7) - 1.5 * Math.pow(2, 7 / 12)) < 1e-12, 'speed and pitch multiply');
+  assert.strictEqual(samplePlaybackRate(4, 24), 16, 'rate is clamped at 16x');
+  const tapeEngine = new DspAudioEngine();
+  await tapeEngine.init();
+  tapeEngine.updatePreset({ id: 't', pos: 0, list: [{ id: 's', effect: 'SAMPLE', speed: 1, pitch: 12 }], shake: { row: 0, param: 'pitch', depth: -12 } });
+  await tapeEngine.triggerSample(true, 'hold');
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 2, 'Triggered sample plays at speed x 2^(pitch/12)');
+  tapeEngine.updateModulation({ shakeAmount: 1 });
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 1, 'Modulating pitch changes the playback rate live');
+  tapeEngine.stop();
 }
-console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duck) verified');
+console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duck) and tape-style SAMPLE pitch verified');
 
 console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');

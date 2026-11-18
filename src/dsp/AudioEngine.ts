@@ -230,6 +230,9 @@ export type InputMode = 'sample' | 'mic';
 export const FILTER_DEFAULT_Q = 0.2;
 /** config.json Q (0..1) to biquad Q, the same scale as EQUALISER. */
 export const filterQ = (q: number) => Math.max(0.1, q * 10);
+/** Playback rate of a triggered sample: SAMPLE.speed times the SAMPLE.pitch ratio (tape-style). */
+export const samplePlaybackRate = (speed: number, semitones: number) =>
+  Math.max(0.01, Math.min(16, speed * Math.pow(2, semitones / 12)));
 const DUCK_ATTACK_S = 0.01;
 const DUCK_RELEASE_S = 0.12;
 
@@ -514,7 +517,7 @@ export class DspAudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = sampleBuf;
     src.loop = playmode === 'hold' || playmode === 'startstop';
-    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastSpeed ?? 1.0;
+    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastRate ?? 1.0;
 
     this.sampleSourceNode = src;
     this.isSamplePlaying = true;
@@ -1163,28 +1166,24 @@ export class DspAudioEngine {
       }
 
       case 'SAMPLE': {
-        // Main vocal audition stream passes cleanly through SAMPLE (input -> output)
-        // Triggered hardware samples enter via sampleInput -> pitchShifter -> gain -> panner -> output
+        // Main vocal audition stream passes cleanly through SAMPLE (input -> output).
+        // Triggered samples enter via sampleInput -> gain -> panner -> output. SAMPLE.pitch is
+        // tape-style like on the mic: it changes the playback rate, so it also changes the length.
         const input = ctx.createGain();
         const output = ctx.createGain();
         const sampleInput = ctx.createGain();
         const gain = ctx.createGain();
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
 
-        const semitones = typeof fx.pitch === 'number' ? fx.pitch : 0;
-        const pitchRatio = Math.pow(2, semitones / 12);
-        const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
-
         input.connect(output);
-        sampleInput.connect(pitchShifter.processor);
-        pitchShifter.processor.connect(gain);
+        sampleInput.connect(gain);
         gain.connect(panner);
         panner.connect(output);
 
         return {
           input,
           output,
-          nodeRefs: { sampleInput, gain, panner, pitchShifter, lastSpeed: 1.0, rowIdx }
+          nodeRefs: { sampleInput, gain, panner, lastSpeed: 1.0, lastRate: 1.0, rowIdx }
         };
       }
 
@@ -1366,11 +1365,13 @@ export class DspAudioEngine {
 
         case 'SAMPLE': {
           const moddedSemitones = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 0, -24, 24);
-          nodeRefs.pitchShifter?.setPitch(Math.pow(2, moddedSemitones / 12));
           const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
+          // Confirmed on the device: pitch changes the sample's length, so it multiplies the rate
+          const rate = samplePlaybackRate(moddedSpeed, moddedSemitones);
           nodeRefs.lastSpeed = moddedSpeed;
+          nodeRefs.lastRate = rate;
           if (this.sampleSourceNode) {
-            this.sampleSourceNode.playbackRate.value = moddedSpeed;
+            this.sampleSourceNode.playbackRate.value = rate;
           }
           setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);
           if (nodeRefs.panner && 'pan' in nodeRefs.panner) {

@@ -163,7 +163,7 @@ Check every preset against this list before calling \`validate_pack\`.
 - REVERB \`time\` 0..1 is 0 to 6 seconds of decay. DELAY \`time\` is in seconds, up to 1.1.
 - EQUALISER \`GAIN\` -1..1 is -15 dB to +15 dB. \`Q\` 0..1 goes from wide to narrow.
 - HARMONY \`pitch\` is a ratio, not semitones: 2 = octave up, 1.5 = fifth up, 1.26 = major third up, 0.75 = fourth down, 0.67 = fifth down, 0.5 = octave down.
-- SAMPLE \`pitch\` is in semitones (-24..24) and \`speed\` is a playback rate (1 = normal).
+- SAMPLE \`pitch\` is in semitones (-24..24) and \`speed\` is a playback rate (1 = normal). Both work like tape speed and multiply: \`pitch\` 12 plays the sample an octave up in half the time.
 - BALANCE and \`balance\`: 0 = left, 0.5 = centre, 1 = right.
 
 ## Buses
