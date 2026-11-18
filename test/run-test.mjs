@@ -2715,6 +2715,16 @@ console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duc
   assert.strictEqual(p.useBuiltInSamples, true, 'No custom slot left: back to factory sounds');
   assert.ok(!('samples' in JSON.parse(serializeToConfigJson(p))), 'Factory packs write no samples block');
 
+  // 23c2. Names across packs: WAVs are stored by name, so a new one avoids other packs' files
+  const packA = S.assignSampleFile(S.assignSampleFile(base, 0, 'horn.wav'), 1, 'kick.wav');
+  const packB = S.assignSampleFile(base, 3, 'snare.wav');
+  assert.deepStrictEqual([...S.referencedSampleFiles([packA, packB, base])].sort(), ['horn.wav', 'kick.wav', 'snare.wav']);
+  assert.deepStrictEqual(S.referencedSampleFiles([{ ...packA, useBuiltInSamples: true }]).size, 0, 'Factory packs use no files');
+  const taken = S.takenSampleNames(packB, 3, [packA]);
+  assert.deepStrictEqual(taken.sort(), ['horn.wav', 'kick.wav'], "A slot's own file is free to reuse, other packs' are not");
+  assert.strictEqual(S.sanitizeSampleFileName('Horn.wav', taken), 'horn-2.wav');
+  assert.deepStrictEqual(S.takenSampleNames(packA, 0, []), ['kick.wav']);
+
   // 23d. Disk budget: config.json plus the WAVs the pack names
   const withTwo = S.assignSampleFile(S.assignSampleFile(base, 0, 'a.wav'), 1, 'b.wav');
   const u = S.diskUsage(withTwo, { 'a.wav': 600_000, 'unused.wav': 999_999 });

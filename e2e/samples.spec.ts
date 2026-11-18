@@ -188,3 +188,64 @@ test('the DISK LED screen is centred in its strip on desktop and phone', async (
     expect(total!.x + total!.width).toBeLessThanOrEqual(strip!.x + strip!.width); // still inside the strip
   }
 });
+
+const storedSampleNames = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const req = indexedDB.open('ep2350_samples', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('files');
+        req.onsuccess = () => {
+          const keys = req.result.transaction('files', 'readonly').objectStore('files').getAllKeys();
+          keys.onsuccess = () => resolve(keys.result.map(String).sort());
+        };
+      })
+  );
+
+test.describe('loaded WAVs are kept across reloads', () => {
+  test('a WAV survives a reload, plays and exports', async ({ page }) => {
+    await openSamples(page);
+    const wav = makeWav({ secs: 0.4 });
+    await page.getByTestId('sample-file-1').setInputFiles({ name: 'keep me.wav', mimeType: 'audio/wav', buffer: wav });
+    await expect(page.getByTestId('sample-slot-1')).toHaveAttribute('data-state', 'custom');
+    await expect.poll(() => storedSampleNames(page)).toEqual(['keep-me.wav']);
+
+    await page.reload();
+    await page.getByRole('button', { name: 'SAMPLES', exact: true }).click();
+    const slot = page.getByTestId('sample-slot-1');
+    await expect(slot).toHaveAttribute('data-state', 'custom');
+    await expect(slot.getByTestId('sample-name')).toHaveText('keep-me.wav');
+    await expect(slot.getByTestId('sample-size')).toHaveText('34 KB');
+    await expect(slot.getByTestId('sample-missing')).toHaveCount(0);
+    await slot.getByRole('button', { name: 'Play slot 2' }).click();
+
+    const files = readZip((await exportDownload(page)).bytes);
+    expect(files['keep-me.wav'].equals(wav)).toBe(true);
+  });
+
+  test("the same file name in another pack does not replace the first pack's sound", async ({ page }) => {
+    await openSamples(page);
+    const first = makeWav({ secs: 0.3 });
+    await page.getByTestId('sample-file-0').setInputFiles({ name: 'horn.wav', mimeType: 'audio/wav', buffer: first });
+    await expect(page.getByTestId('sample-slot-0').getByTestId('sample-name')).toHaveText('horn.wav');
+
+    // A second pack loads a different horn.wav
+    await page.getByLabel('Select default pack').click();
+    await page.getByRole('button', { name: /START AN EMPTY/ }).click();
+    await page.getByTestId('sample-file-0').setInputFiles({ name: 'horn.wav', mimeType: 'audio/wav', buffer: makeWav({ secs: 0.6 }) });
+    await expect(page.getByTestId('sample-slot-0').getByTestId('sample-name')).toHaveText('horn-2.wav');
+    await expect.poll(() => storedSampleNames(page)).toEqual(['horn-2.wav', 'horn.wav']);
+  });
+
+  test('WAVs no pack uses are deleted from storage on the next start', async ({ page }) => {
+    await openSamples(page);
+    await page.getByTestId('sample-file-0').setInputFiles({ name: 'gone.wav', mimeType: 'audio/wav', buffer: makeWav() });
+    await page.getByTestId('sample-file-1').setInputFiles({ name: 'stay.wav', mimeType: 'audio/wav', buffer: makeWav() });
+    await expect.poll(() => storedSampleNames(page)).toEqual(['gone.wav', 'stay.wav']);
+    await page.getByTestId('sample-slot-0').getByRole('button', { name: 'FACTORY', exact: true }).click();
+    await expect(page.getByTestId('sample-slot-0')).toHaveAttribute('data-state', 'factory');
+
+    await page.reload();
+    await expect.poll(() => storedSampleNames(page)).toEqual(['stay.wav']);
+  });
+});

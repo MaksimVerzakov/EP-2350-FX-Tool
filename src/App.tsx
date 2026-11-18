@@ -17,12 +17,15 @@ import {
   deviceChannels,
   encodeWav16,
   inspectWav,
+  referencedSampleFiles,
+  takenSampleNames,
   type WavInfo,
   sanitizeSampleFileName,
   updateSampleSlot,
   wavDeviceIssues
 } from './utils/samples';
 import { createZip } from './utils/zip';
+import { loadStoredSamples, pruneStoredSamples, storeSample } from './utils/sampleStore';
 import {
   type KeyValueStore,
   type PackSelection,
@@ -439,6 +442,40 @@ export const App: React.FC = () => {
     }
   }, [pack, sampleLibrary]);
 
+  // Bring back the WAVs loaded in earlier sessions (stored in IndexedDB) that a pack still uses
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await loadStoredSamples();
+      const used = referencedSampleFiles([packRef.current, ...userPacksRef.current.map((u) => u.pack)]);
+      const restored: Record<string, LoadedSample> = {};
+      for (const [name, sample] of Object.entries(stored)) {
+        if (!used.has(name)) continue;
+        restored[name] = sample;
+        if (!decodedSamplesRef.current.has(name)) {
+          try {
+            decodedSamplesRef.current.set(name, await audioEngine.decodeSampleFile(sample.bytes));
+          } catch {
+            // Still exported with the pack; there is just no preview
+          }
+        }
+      }
+      // A WAV loaded in this session wins over the stored copy of the same name
+      if (!cancelled && Object.keys(restored).length > 0) setSampleLibrary((lib) => ({ ...restored, ...lib }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Drop stored WAVs no pack uses any more (leader tab only, so a second tab cannot delete in-use files)
+  const hasPrunedSamplesRef = useRef(false);
+  useEffect(() => {
+    if (!isTabLeader || hasPrunedSamplesRef.current) return;
+    hasPrunedSamplesRef.current = true;
+    void pruneStoredSamples(referencedSampleFiles([packRef.current, ...userPacksRef.current.map((u) => u.pack)]));
+  }, [isTabLeader]);
+
   // Squeeze handle modulation
   const handleHandleChange = useCallback((val: number) => {
     setHandlePos(val);
@@ -612,14 +649,17 @@ export const App: React.FC = () => {
       converted = true;
     }
     // Read the pack after the awaits: another WAV may have been loaded meanwhile
-    const others = customSampleSlots(packRef.current)
-      .filter((s) => s.pos !== pos)
-      .map((s) => s.file);
-    const name = sanitizeSampleFileName(file.name, others);
+    // Avoid this pack's other slots and every other pack's files: WAVs are stored by name
+    const sel = selectionRef.current;
+    const otherPacks = userPacksRef.current
+      .filter((u) => !(sel?.kind === 'user' && u.id === sel.id))
+      .map((u) => u.pack);
+    const name = sanitizeSampleFileName(file.name, takenSampleNames(packRef.current, pos, otherPacks));
     if (decoded) decodedSamplesRef.current.set(name, decoded);
     else decodedSamplesRef.current.delete(name);
     setSampleLibrary((lib) => ({ ...lib, [name]: { bytes, info } }));
     commitPackEdit(assignSampleFile(packRef.current, pos, name));
+    void storeSample(name, { bytes, info });
     if (converted) {
       showToast('success', 'Converted for the mic', `${name} is now ${describeWav(info)}.`);
     } else if (!decoded) {
