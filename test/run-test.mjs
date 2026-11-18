@@ -32,6 +32,7 @@ function buildSourceModulesForTest() {
     'src/utils/busRouting.ts',
     'src/utils/samples.ts',
     'src/utils/zip.ts',
+    'src/utils/fitter.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
@@ -126,6 +127,7 @@ const { validatePresetInput } = await import(
 );
 const samplesLib = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/samples.mjs')).href);
 const { createZip, crc32 } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/zip.mjs')).href);
+const fitter = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/fitter.mjs')).href);
 
 // Clean up on exit
 process.on('exit', () => {
@@ -2427,7 +2429,7 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
   assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 6, 'Connect, save, import and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 4, 'Import, copying an edited official pack on save/export, and converting a WAV for the mic must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 5, 'Import, copying an edited official pack on save/export, converting a WAV and fitting the disk must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
@@ -2780,4 +2782,89 @@ console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duc
 }
 console.log('✓ Suite 23: Custom samples (WAV checks, slots, disk budget, zip export, engine slots) verified');
 
-console.log('\n=== ALL 23 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 24: Fitter (four sounds into the ~1 MB disk)
+// -----------------------------------------------------------------------------
+{
+  const F = fitter;
+  const src = (file, o = {}) => ({
+    file,
+    frames: 44100 * 3,
+    channels: 2,
+    sampleRate: 44100,
+    bitsPerSample: 16,
+    isFloat: false,
+    sound: { start: 0, end: 44100 * 3 },
+    ...o
+  });
+  const stereo3s = src('a.wav'); // 3 s stereo 16-bit 44.1 kHz = 529,244 bytes
+  assert.strictEqual(F.encodedBytes(stereo3s, F.nativeEncoding(stereo3s)), 44 + 44100 * 3 * 4);
+
+  // 24a. Everything fits: nothing changes
+  const roomy = F.planFit([stereo3s], 1_000_000);
+  assert.strictEqual(roomy.fits, true);
+  assert.ok(F.isNative(stereo3s, roomy.encodings['a.wav']));
+  assert.deepStrictEqual(roomy.notes['a.wav'], []);
+
+  // 24b. Concessions go cheapest first: silence, then mono, then the rate
+  const padded = src('p.wav', { sound: { start: 22050, end: 44100 * 2 } }); // 0.5 s silence before, 1 s after
+  const p1 = F.planFit([padded], 400_000);
+  assert.deepStrictEqual(p1.notes['p.wav'], ['trimmed 1.50 s of silence'], 'Trimming alone is enough');
+  assert.deepStrictEqual(p1.encodings['p.wav'].trim, { start: 22050, end: 88200 });
+  const p2 = F.planFit([padded], 150_000);
+  assert.deepStrictEqual(p2.notes['p.wav'], ['trimmed 1.50 s of silence', 'stereo → mono']);
+  const p3 = F.planFit([padded], 60_000);
+  assert.deepStrictEqual(p3.notes['p.wav'].slice(0, 3), ['trimmed 1.50 s of silence', 'stereo → mono', '44.1 kHz → 32 kHz'], '48 kHz is skipped: it would not save anything');
+  assert.ok(p3.fits && p3.totalBytes <= 60_000);
+
+  // 24c. 24-bit and float come down to 16-bit before anything audible
+  const hi = src('h.wav', { bitsPerSample: 24 });
+  assert.deepStrictEqual(F.planFit([hi], 600_000).notes['h.wav'], ['24-bit → 16-bit']);
+  const flt = src('f.wav', { bitsPerSample: 32, isFloat: true, channels: 1 });
+  const fp = F.planFit([flt], 300_000);
+  assert.deepStrictEqual(fp.notes['f.wav'], ['32-bit float → 16-bit']);
+  assert.deepStrictEqual([fp.encodings['f.wav'].bits, fp.encodings['f.wav'].isFloat], [16, false]);
+  // Any re-encode is 16-bit at most, even when the first step is a trim
+  const hiPad = src('hp.wav', { bitsPerSample: 24, sound: { start: 44100, end: 88200 } });
+  assert.strictEqual(F.planFit([hiPad], 500_000).encodings['hp.wav'].bits, 16);
+
+  // 24d. The largest file gives first, so small sounds keep their quality
+  const big = src('big.wav', { frames: 44100 * 4, sound: { start: 0, end: 44100 * 4 } });
+  const small = src('small.wav', { frames: 22050, sound: { start: 0, end: 22050 } });
+  const shared = F.planFit([big, small], 700_000);
+  assert.ok(shared.fits);
+  assert.deepStrictEqual(shared.notes['small.wav'], [], 'The small file is untouched');
+  assert.deepStrictEqual(shared.notes['big.wav'], ['stereo → mono']);
+
+  // 24e. When nothing is left to give, it says it does not fit
+  const huge = src('huge.wav', { frames: 44100 * 600, channels: 1, sound: { start: 0, end: 44100 * 600 } });
+  const none = F.planFit([huge], 1_000_000);
+  assert.strictEqual(none.fits, false);
+  assert.deepStrictEqual(none.encodings['huge.wav'], { channels: 1, sampleRate: 8000, bits: 8, isFloat: false }, 'It goes all the way down first');
+
+  // 24f. Silence detection with padding
+  const quietLoud = new Float32Array(1000);
+  quietLoud.fill(0.0001);
+  for (let i = 300; i < 600; i++) quietLoud[i] = 0.5;
+  assert.deepStrictEqual(F.findSound([quietLoud], 1000, -50, 0.01), { start: 290, end: 610 });
+  assert.deepStrictEqual(F.findSound([new Float32Array(500)], 1000), { start: 0, end: 500 }, 'All silence is kept as it is');
+  const right = new Float32Array(100);
+  right[50] = 0.9;
+  assert.deepStrictEqual(F.findSound([new Float32Array(100), right], 1000, -50, 0), { start: 50, end: 51 }, 'Either channel counts');
+
+  // 24g. 8-bit WAV is unsigned with 128 as silence; the header matches
+  const w8 = F.encodeWavPcm([Float32Array.of(0, 1, -1)], 8000, 8);
+  assert.deepStrictEqual([...w8.subarray(44)], [128, 255, 0]);
+  const info8 = samplesLib.inspectWav(w8);
+  assert.deepStrictEqual([info8.bitsPerSample, info8.sampleRate, info8.frames], [8, 8000, 3]);
+  assert.deepStrictEqual(samplesLib.wavDeviceIssues(info8), [], '8-bit files are playable');
+
+  // 24h. Same plan, no re-render
+  const e1 = p2.encodings['p.wav'];
+  assert.ok(F.sameEncoding(e1, { ...e1, trim: { ...e1.trim } }));
+  assert.ok(!F.sameEncoding(e1, { ...e1, sampleRate: 22050 }));
+  assert.ok(!F.sameEncoding(e1, undefined));
+}
+console.log('✓ Suite 24: Fitter (silence, bit depth, mono, sample rate, 8-bit, largest first) verified');
+
+console.log('\n=== ALL 24 PRODUCTION TEST SUITES PASSED (100%) ===');

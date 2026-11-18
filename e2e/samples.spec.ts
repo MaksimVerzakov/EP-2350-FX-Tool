@@ -249,3 +249,43 @@ test.describe('loaded WAVs are kept across reloads', () => {
     await expect.poll(() => storedSampleNames(page)).toEqual(['stay.wav']);
   });
 });
+
+test.describe('fitting the disk', () => {
+  test('WAVs over 1 MB are made smaller to fit, and get their quality back when room frees up', async ({ page }) => {
+    await openSamples(page);
+    const a = makeWav({ channels: 2, secs: 3.5 }); // ~617 KB each, ~1.2 MB together
+    const b = makeWav({ channels: 2, secs: 3.5 });
+    await page.getByTestId('sample-file-0').setInputFiles({ name: 'a.wav', mimeType: 'audio/wav', buffer: a });
+    await expect(page.getByTestId('sample-slot-0').getByTestId('sample-size')).toHaveText('603 KB');
+    await page.getByTestId('sample-file-1').setInputFiles({ name: 'b.wav', mimeType: 'audio/wav', buffer: b });
+
+    await expect(page.getByText('Fitted into 1 MB').first()).toBeVisible();
+    const meter = page.getByRole('meter', { name: 'Disk space used' });
+    await expect(meter).not.toHaveAttribute('data-over', 'true');
+    // One file gave something; the hover title says what
+    await expect(page.locator('[data-testid="sample-size"][data-fitted="true"]').first()).toHaveAttribute('title', /Made smaller to fit the disk: /);
+
+    // The export holds the fitted files: valid WAVs that fit with config.json
+    const files = readZip((await exportDownload(page)).bytes);
+    const total = Object.values(files).reduce((n, f) => n + f.length, 0);
+    expect(total).toBeLessThanOrEqual(1024 * 1024);
+    for (const name of ['a.wav', 'b.wav']) {
+      expect(files[name].toString('ascii', 0, 4)).toBe('RIFF');
+      expect([8, 16]).toContain(files[name].readUInt16LE(34));
+    }
+
+    // Fitted files are kept across a reload, without fitting again
+    await page.reload();
+    await page.getByRole('button', { name: 'SAMPLES', exact: true }).click();
+    await expect(page.locator('[data-testid="sample-size"][data-fitted="true"]')).not.toHaveCount(0);
+    await expect(meter).not.toHaveAttribute('data-over', 'true');
+
+    // Free a slot: the other file goes back to its original
+    await page.getByTestId('sample-slot-1').getByRole('button', { name: 'FACTORY', exact: true }).click();
+    await expect(page.getByText('back to its original quality').first()).toBeVisible();
+    await expect(page.getByTestId('sample-slot-0').getByTestId('sample-size')).toHaveText('603 KB');
+    await expect(page.locator('[data-testid="sample-size"][data-fitted="true"]')).toHaveCount(0);
+    const restored = readZip((await exportDownload(page)).bytes);
+    expect(restored['a.wav'].equals(a)).toBe(true);
+  });
+});

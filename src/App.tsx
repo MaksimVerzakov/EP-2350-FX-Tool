@@ -8,12 +8,14 @@ import { decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
 import {
+  DISK_BUDGET_BYTES,
   SAMPLE_SLOTS,
   assignSampleFile,
   clearSampleSlot,
   customSampleAt,
   customSampleSlots,
   describeWav,
+  diskUsage,
   deviceChannels,
   encodeWav16,
   inspectWav,
@@ -26,6 +28,7 @@ import {
 } from './utils/samples';
 import { createZip } from './utils/zip';
 import { loadStoredSamples, pruneStoredSamples, storeSample } from './utils/sampleStore';
+import { type FitSource, encodeWavPcm, findSound, isNative, nativeEncoding, planFit, sameEncoding } from './utils/fitter';
 import {
   type KeyValueStore,
   type PackSelection,
@@ -208,6 +211,10 @@ export const App: React.FC = () => {
   const [sampleLibrary, setSampleLibrary] = useState<Record<string, LoadedSample>>({});
   /** Decoded audio for the loaded WAVs, by file name. */
   const decodedSamplesRef = useRef(new Map<string, AudioBuffer>());
+  /** Decoded originals, by file name: the fitter always renders from these. */
+  const originalDecodedRef = useRef(new Map<string, AudioBuffer>());
+  const sampleLibraryRef = useRef(sampleLibrary);
+  sampleLibraryRef.current = sampleLibrary;
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -454,7 +461,12 @@ export const App: React.FC = () => {
         restored[name] = sample;
         if (!decodedSamplesRef.current.has(name)) {
           try {
-            decodedSamplesRef.current.set(name, await audioEngine.decodeSampleFile(sample.bytes));
+            const fitted = await audioEngine.decodeSampleFile(sample.bytes);
+            decodedSamplesRef.current.set(name, fitted);
+            originalDecodedRef.current.set(
+              name,
+              sample.original ? await audioEngine.decodeSampleFile(sample.original.bytes) : fitted
+            );
           } catch {
             // Still exported with the pack; there is just no preview
           }
@@ -475,6 +487,73 @@ export const App: React.FC = () => {
     hasPrunedSamplesRef.current = true;
     void pruneStoredSamples(referencedSampleFiles([packRef.current, ...userPacksRef.current.map((u) => u.pack)]));
   }, [isTabLeader]);
+
+  // Fit the pack's WAVs into the ~1 MB disk whenever its files change. Always from the originals,
+  // so removing a sample gives the others their quality back.
+  const fitGenRef = useRef(0);
+  const sampleFilesKey = customSampleSlots(pack)
+    .map((s) => {
+      const e = sampleLibrary[s.file];
+      return `${s.file}:${e ? (e.original ?? e).bytes.byteLength : '-'}`;
+    })
+    .join('|');
+  useEffect(() => {
+    const gen = ++fitGenRef.current;
+    void (async () => {
+      const p = packRef.current;
+      const lib = sampleLibraryRef.current;
+      const files = [...new Set(customSampleSlots(p).map((s) => s.file))].filter((f) => lib[f]);
+      if (files.length === 0) return;
+      const sources: FitSource[] = files.map((f) => {
+        const o = (lib[f].original ?? lib[f]).info;
+        return {
+          file: f,
+          frames: o.frames,
+          channels: o.channels,
+          sampleRate: o.sampleRate,
+          bitsPerSample: o.bitsPerSample,
+          isFloat: o.isFloat,
+          sound: lib[f].sound ?? { start: 0, end: o.frames }
+        };
+      });
+      const plan = planFit(sources, DISK_BUDGET_BYTES - diskUsage(p, {}).configBytes);
+      const updates: Record<string, LoadedSample> = {};
+      for (const src of sources) {
+        const entry = lib[src.file];
+        const enc = plan.encodings[src.file];
+        if (sameEncoding(entry.encoding ?? nativeEncoding(src), enc)) continue;
+        const original = entry.original ?? { bytes: entry.bytes, info: entry.info };
+        let bytes = original.bytes;
+        if (!isNative(src, enc)) {
+          const buf = originalDecodedRef.current.get(src.file);
+          if (!buf) continue;
+          try {
+            const out = await audioEngine.renderForDevice(buf, src.sampleRate, enc);
+            bytes = encodeWavPcm(out.channels, out.sampleRate, enc.bits === 8 ? 8 : 16);
+          } catch {
+            continue;
+          }
+        }
+        if (gen !== fitGenRef.current) return;
+        const fitted = isNative(src, enc)
+          ? { bytes, info: original.info, sound: entry.sound }
+          : { bytes, info: inspectWav(bytes), original, sound: entry.sound, encoding: enc, notes: plan.notes[src.file] };
+        try {
+          decodedSamplesRef.current.set(src.file, await audioEngine.decodeSampleFile(bytes));
+        } catch {
+          decodedSamplesRef.current.delete(src.file);
+        }
+        updates[src.file] = fitted;
+      }
+      if (gen !== fitGenRef.current || Object.keys(updates).length === 0) return;
+      setSampleLibrary((cur) => ({ ...cur, ...updates }));
+      for (const [f, e] of Object.entries(updates)) void storeSample(f, e);
+      const lines = Object.entries(updates).map(([f, e]) =>
+        e.notes?.length ? `${f}: ${e.notes.join(', ')}` : `${f}: back to its original quality`
+      );
+      showToast('success', plan.fits ? 'Fitted into 1 MB' : 'Still over 1 MB', `${lines.join('. ')}.`);
+    })();
+  }, [sampleFilesKey, showToast]);
 
   // Squeeze handle modulation
   const handleHandleChange = useCallback((val: number) => {
@@ -655,11 +734,23 @@ export const App: React.FC = () => {
       .filter((u) => !(sel?.kind === 'user' && u.id === sel.id))
       .map((u) => u.pack);
     const name = sanitizeSampleFileName(file.name, takenSampleNames(packRef.current, pos, otherPacks));
-    if (decoded) decodedSamplesRef.current.set(name, decoded);
-    else decodedSamplesRef.current.delete(name);
-    setSampleLibrary((lib) => ({ ...lib, [name]: { bytes, info } }));
+    let sound: LoadedSample['sound'];
+    if (decoded) {
+      decodedSamplesRef.current.set(name, decoded);
+      originalDecodedRef.current.set(name, decoded);
+      // Silence found at the decoded rate, in frames of the file
+      const d = decoded;
+      const found = findSound(Array.from({ length: d.numberOfChannels }, (_, c) => d.getChannelData(c)), d.sampleRate);
+      const k = info.sampleRate / d.sampleRate;
+      sound = { start: Math.floor(found.start * k), end: Math.min(info.frames, Math.ceil(found.end * k)) };
+    } else {
+      decodedSamplesRef.current.delete(name);
+      originalDecodedRef.current.delete(name);
+    }
+    const entry: LoadedSample = { bytes, info, sound };
+    setSampleLibrary((lib) => ({ ...lib, [name]: entry }));
     commitPackEdit(assignSampleFile(packRef.current, pos, name));
-    void storeSample(name, { bytes, info });
+    void storeSample(name, entry);
     if (converted) {
       showToast('success', 'Converted for the mic', `${name} is now ${describeWav(info)}.`);
     } else if (!decoded) {
