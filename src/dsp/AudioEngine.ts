@@ -252,6 +252,8 @@ export class DspAudioEngine {
   private lastMicError: string | null = null;
   private currentBuffer: AudioBuffer | null = null;
   private sampleBuffers: AudioBuffer[] = [];
+  /** User WAVs per slot; a slot without one plays its bundled demo sound. */
+  private customSampleBuffers: Array<AudioBuffer | null> = [null, null, null, null];
   private activeSampleSlot: number = 0;
   private sampleSourceNode: AudioBufferSourceNode | null = null;
   private isSamplePlaying: boolean = false;
@@ -430,6 +432,26 @@ export class DspAudioEngine {
     return this.inputCompressor;
   }
 
+  /** Decode a WAV file for auditioning. */
+  public async decodeSampleFile(bytes: Uint8Array): Promise<AudioBuffer> {
+    await this.init();
+    if (!this.ctx) throw new Error('Audio is not available in this browser.');
+    // decodeAudioData detaches its input, so hand it a copy
+    return this.ctx.decodeAudioData(bytes.slice().buffer);
+  }
+
+  /** Play `buffer` from sample slot `slot` (null: back to the bundled demo sound). */
+  public setCustomSample(slot: number, buffer: AudioBuffer | null) {
+    if (slot < 0 || slot > 3) return;
+    if (this.customSampleBuffers[slot] === buffer) return;
+    this.customSampleBuffers[slot] = buffer;
+    if (slot === this.activeSampleSlot) this.stopSample();
+  }
+
+  public hasCustomSample(slot: number): boolean {
+    return !!this.customSampleBuffers[slot];
+  }
+
   public setActiveSampleSlot(slot: number) {
     const clamped = Math.max(0, Math.min(3, Math.floor(slot)));
     if (clamped !== this.activeSampleSlot) {
@@ -502,7 +524,8 @@ export class DspAudioEngine {
 
     this.stopSample();
 
-    const sampleBuf = this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
+    const sampleBuf =
+      this.customSampleBuffers[this.activeSampleSlot] || this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
     if (!sampleBuf) return;
 
     const triggerRow = this.preset?.trigger?.row;

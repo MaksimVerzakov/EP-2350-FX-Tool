@@ -1,12 +1,24 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_PACK, OFFICIAL_TE_PACKS, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
-import { PackConfig, PresetConfig, ThemeMode } from './types/config';
+import { PackConfig, PlayMode, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
 import { decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
+import {
+  SAMPLE_SLOTS,
+  assignSampleFile,
+  clearSampleSlot,
+  customSampleAt,
+  customSampleSlots,
+  inspectWav,
+  sanitizeSampleFileName,
+  updateSampleSlot,
+  wavDeviceIssues
+} from './utils/samples';
+import { createZip } from './utils/zip';
 import {
   type KeyValueStore,
   type PackSelection,
@@ -29,6 +41,7 @@ import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
 import { McpPanel } from './components/McpPanel';
+import { SamplesPanel, type LoadedSample } from './components/SamplesPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
 import { PackConflictDialog } from './components/PackConflictDialog';
@@ -96,6 +109,9 @@ const getInitialPackState = (): InitialPackState => (initialPackStateCache ??= r
 export const App: React.FC = () => {
   const [initialPackState] = useState(getInitialPackState);
   const [pack, setPack] = useState<PackConfig>(initialPackState.pack);
+  /** Latest pack, for edits that finish after an await (loading a WAV). */
+  const packRef = useRef(pack);
+  packRef.current = pack;
   /** "YOUR PACKS": packs the user created, imported or opened from a link, kept in localStorage. */
   const [userPacks, setUserPacks] = useState<UserPack[]>(initialPackState.userPacks);
   const [selection, setSelection] = useState<PackSelection | null>(initialPackState.selection);
@@ -180,7 +196,11 @@ export const App: React.FC = () => {
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
-  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'mcp'>('fx');
+  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'samples' | 'mcp'>('fx');
+  /** WAV files loaded in this browser session, by disk file name (not stored across reloads yet). */
+  const [sampleLibrary, setSampleLibrary] = useState<Record<string, LoadedSample>>({});
+  /** Decoded audio for the loaded WAVs, by file name. */
+  const decodedSamplesRef = useRef(new Map<string, AudioBuffer>());
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -382,14 +402,38 @@ export const App: React.FC = () => {
     [isDeviceConnected, isDevicePack]
   );
 
-  // Trigger selected sample through active preset's SAMPLE block
-  const handleSampleTrigger = useCallback(
-    (down: boolean) => {
-      const slotCfg = pack.samples.find((s) => s.pos === activeSampleSlot) || pack.samples[activeSampleSlot];
+  // Trigger a sample slot through the active preset's SAMPLE block
+  const triggerSampleSlot = useCallback(
+    (pos: number, down: boolean) => {
+      const slotCfg = pack.useBuiltInSamples
+        ? pack.samples.find((s) => s.pos === pos) || pack.samples[pos]
+        : customSampleAt(pack, pos);
       audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot', pack.useBuiltInSamples ? 0 : slotCfg?.duck ?? 0);
     },
-    [pack.samples, pack.useBuiltInSamples, activeSampleSlot]
+    [pack]
   );
+
+  const handleSampleTrigger = useCallback(
+    (down: boolean) => triggerSampleSlot(activeSampleSlot, down),
+    [triggerSampleSlot, activeSampleSlot]
+  );
+
+  /** The SAMPLES panel's PLAY button: select the slot (as the mic's sample button would), then play it. */
+  const handlePlaySampleSlot = useCallback(
+    (pos: number, down: boolean) => {
+      if (down && pos !== activeSampleSlot) handleSelectSampleSlot(pos);
+      triggerSampleSlot(pos, down);
+    },
+    [activeSampleSlot, handleSelectSampleSlot, triggerSampleSlot]
+  );
+
+  // Custom WAVs play from their slots in the preview; other slots play the bundled demo sounds
+  useEffect(() => {
+    for (let pos = 0; pos < SAMPLE_SLOTS; pos++) {
+      const slot = customSampleAt(pack, pos);
+      audioEngine.setCustomSample(pos, (slot && decodedSamplesRef.current.get(slot.file)) || null);
+    }
+  }, [pack, sampleLibrary]);
 
   // Squeeze handle modulation
   const handleHandleChange = useCallback((val: number) => {
@@ -446,6 +490,7 @@ export const App: React.FC = () => {
 
   /** Apply an edit to the editor pack; user packs save as you go, official packs only live in memory. */
   const commitPackEdit = (nextPack: PackConfig) => {
+    packRef.current = nextPack;
     setPack(nextPack);
     if (isDevicePack) {
       setDevicePack(nextPack);
@@ -532,6 +577,45 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleLoadSampleFile = async (pos: number, file: File) => {
+    let bytes: Uint8Array;
+    let info;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+      info = inspectWav(bytes);
+    } catch (err) {
+      showToast('error', 'Not a WAV file', `${file.name}: ${err instanceof Error ? err.message : String(err)} The mic only plays WAV files.`);
+      return;
+    }
+    // Read the pack after the awaits: another WAV may have been loaded meanwhile
+    const others = customSampleSlots(packRef.current)
+      .filter((s) => s.pos !== pos)
+      .map((s) => s.file);
+    const name = sanitizeSampleFileName(file.name, others);
+    setSampleLibrary((lib) => ({ ...lib, [name]: { bytes, info } }));
+    commitPackEdit(assignSampleFile(packRef.current, pos, name));
+    try {
+      decodedSamplesRef.current.set(name, await audioEngine.decodeSampleFile(bytes));
+      setSampleLibrary((lib) => ({ ...lib })); // re-run the engine sync now the audio is decoded
+    } catch {
+      decodedSamplesRef.current.delete(name);
+    }
+    const issues = wavDeviceIssues(info);
+    if (issues.length > 0) {
+      showToast('error', 'The mic cannot play this WAV', issues[0]);
+    } else if (!decodedSamplesRef.current.has(name)) {
+      showToast('error', 'No preview', `This browser cannot play ${name}, but it is in the pack.`);
+    }
+  };
+
+  const handleClearSampleSlot = (pos: number) => {
+    commitPackEdit(clearSampleSlot(pack, pos));
+  };
+
+  const handleUpdateSampleSlot = (pos: number, patch: { playmode?: PlayMode; duck?: number | undefined }) => {
+    commitPackEdit(updateSampleSlot(pack, pos, patch));
+  };
+
   const handleSaveToDevice = async (): Promise<boolean> => {
     if (!isDeviceConnected) return false;
     try {
@@ -539,7 +623,14 @@ export const App: React.FC = () => {
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
       const copied = selection?.kind === 'official' && keepEditedPackAsCopy();
       if (selection === null) setSelection({ kind: 'device' });
-      if (copied) showToast('success', 'Saved to the mic', 'A copy of this pack is now in YOUR PACKS.');
+      if (customSampleSlots(pack).length > 0) {
+        // Saving over USB writes config.json only; the WAVs travel by disk for now
+        showToast(
+          'success',
+          'Saved to the mic',
+          'Saving over USB writes config.json only. Copy the WAVs to the fx-mic disk (EXPORT includes them), or the mic plays its factory sounds in those slots.'
+        );
+      } else if (copied) showToast('success', 'Saved to the mic', 'A copy of this pack is now in YOUR PACKS.');
       setDevicePack(pack);
       setIsDevicePack(true);
       setSavedDeviceJson(jsonStr);
@@ -591,11 +682,35 @@ export const App: React.FC = () => {
       showToast('success', 'Exported', 'A copy of this pack is now in YOUR PACKS.');
     }
     const jsonStr = serializeToConfigJson(pack);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const files = [...new Set(customSampleSlots(pack).map((s) => s.file))];
+    const loadedFiles = files.filter((f) => sampleLibrary[f]);
+    let blob: Blob;
+    let fileName: string;
+    if (loadedFiles.length > 0) {
+      // config.json plus the WAVs it names: copy everything in the zip to the root of the fx-mic disk
+      const zip = createZip([
+        { name: 'config.json', data: new TextEncoder().encode(jsonStr) },
+        ...loadedFiles.map((f) => ({ name: f, data: sampleLibrary[f].bytes }))
+      ]);
+      blob = new Blob([zip as BlobPart], { type: 'application/zip' });
+      const slug = pack.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'pack';
+      fileName = `${slug}.zip`;
+      const missing = files.filter((f) => !sampleLibrary[f]);
+      showToast(
+        'success',
+        'Exported with samples',
+        `Unzip and copy config.json and the WAVs to the root of the fx-mic disk.${
+          missing.length ? ` Not included (not loaded): ${missing.join(', ')}.` : ''
+        }`
+      );
+    } else {
+      blob = new Blob([jsonStr], { type: 'application/json' });
+      fileName = 'config.json';
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'config.json';
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -676,6 +791,7 @@ export const App: React.FC = () => {
             >
               {([
                 { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
+                { id: 'samples', label: 'SAMPLES', widthClass: 'w-[76px]', isEdge: false, title: 'Load your own WAVs into the four sample slots' },
                 { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', isEdge: true, title: 'Connect the EP-2350 tool to your AI' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
@@ -714,6 +830,18 @@ export const App: React.FC = () => {
                 presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
                 onUpdatePreset={handleUpdateActivePreset}
                 onSelectPreset={handleSelectSlot}
+                theme={theme}
+              />
+            ) : rightPanelMode === 'samples' ? (
+              <SamplesPanel
+                pack={pack}
+                library={sampleLibrary}
+                activeSampleSlot={activeSampleSlot}
+                onSelectSlot={handleSelectSampleSlot}
+                onLoadFile={(pos, file) => void handleLoadSampleFile(pos, file)}
+                onClearSlot={handleClearSampleSlot}
+                onUpdateSlot={handleUpdateSampleSlot}
+                onPlaySlot={handlePlaySampleSlot}
                 theme={theme}
               />
             ) : (

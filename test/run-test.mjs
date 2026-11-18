@@ -30,6 +30,8 @@ function buildSourceModulesForTest() {
     'src/utils/tabGuard.ts',
     'src/utils/wavCodec.ts',
     'src/utils/busRouting.ts',
+    'src/utils/samples.ts',
+    'src/utils/zip.ts',
     'src/dsp/math.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
@@ -122,6 +124,8 @@ const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await im
 const { validatePresetInput } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/validation/presetTools.mjs')).href
 );
+const samplesLib = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/samples.mjs')).href);
+const { createZip, crc32 } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/zip.mjs')).href);
 
 // Clean up on exit
 process.on('exit', () => {
@@ -2422,7 +2426,7 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 3, 'Connect, save and import failures must show an error toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 6, 'Connect, save, import and sample-load failures (not a WAV, the mic cannot play it, no preview) must show an error toast');
   assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 3, 'Import, and copying an edited official pack on save/export, must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
@@ -2624,4 +2628,133 @@ console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate, sa
 }
 console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duck) and tape-style SAMPLE pitch verified');
 
-console.log('\n=== ALL 22 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 23: Custom samples (WAV checks, slots, disk budget, zip export, engine slots)
+// -----------------------------------------------------------------------------
+{
+  const S = samplesLib;
+  /** A minimal WAV: `frames` of silence with the given format (formatTag 1 = PCM, 3 = float). */
+  const makeWav = ({ channels = 1, rate = 44100, bits = 16, formatTag = 1, frames = 441, extraChunk = false } = {}) => {
+    const dataLen = frames * channels * (bits / 8);
+    const extra = extraChunk ? 8 + 5 + 1 : 0; // odd-sized LIST chunk with its pad byte
+    const buf = new Uint8Array(44 + extra + dataLen);
+    const v = new DataView(buf.buffer);
+    const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, buf.length - 8, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, formatTag, true); v.setUint16(22, channels, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * channels * (bits / 8), true);
+    v.setUint16(32, channels * (bits / 8), true); v.setUint16(34, bits, true);
+    let o = 36;
+    if (extraChunk) { str(o, 'LIST'); v.setUint32(o + 4, 5, true); o += 8 + 5 + 1; }
+    str(o, 'data'); v.setUint32(o + 4, dataLen, true);
+    return buf;
+  };
+
+  // 23a. WAV inspection and the mic's limits
+  const mono = S.inspectWav(makeWav({ frames: 44100 }));
+  assert.deepStrictEqual(
+    [mono.channels, mono.sampleRate, mono.bitsPerSample, mono.isFloat, mono.frames, mono.durationSec],
+    [1, 44100, 16, false, 44100, 1]
+  );
+  assert.strictEqual(S.describeWav(mono), '44.1 kHz · 16-bit · mono · 1.00 s');
+  assert.deepStrictEqual(S.wavDeviceIssues(mono), []);
+  assert.strictEqual(S.inspectWav(makeWav({ extraChunk: true })).frames, 441, 'Chunks before data (odd size + pad) are skipped');
+  for (const ok of [{ bits: 8 }, { bits: 24, channels: 2 }, { bits: 32, formatTag: 3, rate: 96000 }]) {
+    assert.deepStrictEqual(S.wavDeviceIssues(S.inspectWav(makeWav(ok))), [], JSON.stringify(ok));
+  }
+  const bad = (opts) => S.wavDeviceIssues(S.inspectWav(makeWav(opts))).join(' ');
+  assert.match(bad({ rate: 192000 }), /96 kHz/);
+  assert.match(bad({ channels: 4 }), /mono or stereo/);
+  assert.match(bad({ bits: 32 }), /8, 16 or 24-bit/, '32-bit integer PCM is not supported');
+  assert.match(bad({ bits: 64, formatTag: 3 }), /32-bit float only/);
+  assert.match(bad({ formatTag: 2 }), /Compressed WAV/);
+  assert.match(bad({ frames: 0 }), /no audio/);
+  assert.throws(() => S.inspectWav(new TextEncoder().encode('ID3 not a wav file')), /Not a WAV/);
+
+  // 23b. Disk-safe, unique file names
+  assert.strictEqual(S.sanitizeSampleFileName('My Shout!.WAV'), 'my-shout.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('Café Ölé.wav'), 'cafe-ole.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('???.wav'), 'sample.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('horn.wav', ['HORN.wav', 'horn-2.wav']), 'horn-3.wav');
+  assert.ok(S.sanitizeSampleFileName('x'.repeat(80) + '.wav').length <= 28);
+
+  // 23c. Slots: a slot is custom only when samples lists it
+  const base = createEmptyPack();
+  assert.strictEqual(base.useBuiltInSamples, true);
+  assert.deepStrictEqual(S.customSampleSlots(base), [], 'Factory packs have no custom slots');
+  let p = S.assignSampleFile(base, 2, 'horn.wav');
+  assert.strictEqual(p.useBuiltInSamples, false);
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => [s.pos, s.file, s.playmode]), [[2, 'horn.wav', 'oneshot']], 'The default slot list is dropped');
+  p = S.updateSampleSlot(p, 2, { playmode: 'hold', duck: 0.5 });
+  p = S.assignSampleFile(p, 0, 'kick.wav');
+  p = S.assignSampleFile(p, 2, 'horn-2.wav');
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => [s.pos, s.file, s.playmode, s.duck]), [[0, 'kick.wav', 'oneshot', undefined], [2, 'horn-2.wav', 'hold', 0.5]], 'Replacing a file keeps playmode and duck');
+  assert.strictEqual(S.updateSampleSlot(p, 1, { playmode: 'hold' }), p, 'Factory slots have no settings');
+  const noDuck = S.updateSampleSlot(p, 2, { duck: undefined });
+  assert.ok(!('duck' in S.customSampleAt(noDuck, 2)), 'duck: undefined removes duck');
+  const exported = JSON.parse(serializeToConfigJson(p));
+  assert.deepStrictEqual(exported.samples, [{ pos: 0, file: 'kick.wav', playmode: 'oneshot' }, { pos: 2, file: 'horn-2.wav', playmode: 'hold', duck: 0.5 }]);
+  const reparsed = parseConfigJson(serializeToConfigJson(p)).pack;
+  assert.deepStrictEqual(S.customSampleSlots(reparsed).map((s) => s.file), ['kick.wav', 'horn-2.wav'], 'Custom slots survive a round trip');
+  p = S.clearSampleSlot(p, 0);
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => s.pos), [2]);
+  p = S.clearSampleSlot(p, 2);
+  assert.strictEqual(p.useBuiltInSamples, true, 'No custom slot left: back to factory sounds');
+  assert.ok(!('samples' in JSON.parse(serializeToConfigJson(p))), 'Factory packs write no samples block');
+
+  // 23d. Disk budget: config.json plus the WAVs the pack names
+  const withTwo = S.assignSampleFile(S.assignSampleFile(base, 0, 'a.wav'), 1, 'b.wav');
+  const u = S.diskUsage(withTwo, { 'a.wav': 600_000, 'unused.wav': 999_999 });
+  assert.strictEqual(u.configBytes, new TextEncoder().encode(serializeToConfigJson(withTwo)).byteLength);
+  assert.strictEqual(u.sampleBytes, 600_000, 'Only files the pack names count');
+  assert.deepStrictEqual(u.missingFiles, ['b.wav']);
+  assert.strictEqual(u.fits, true);
+  assert.strictEqual(S.diskUsage(withTwo, { 'a.wav': 600_000, 'b.wav': 600_000 }).fits, false, 'Over 1 MB does not fit');
+  assert.strictEqual(S.DISK_BUDGET_BYTES, 1048576);
+
+  // 23e. Zip: stored entries a standard unzip can read
+  assert.strictEqual(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'CRC-32 check value');
+  const wav = makeWav({ frames: 100 });
+  const cfgBytes = new TextEncoder().encode('{"name":"Z"}');
+  const zip = createZip([{ name: 'config.json', data: cfgBytes }, { name: 'a.wav', data: wav }], new Date(2026, 10, 18, 12, 30, 10));
+  const zv = new DataView(zip.buffer);
+  const eocd = zip.length - 22;
+  assert.strictEqual(zv.getUint32(eocd, true), 0x06054b50);
+  assert.strictEqual(zv.getUint16(eocd + 10, true), 2);
+  let cd = zv.getUint32(eocd + 16, true);
+  const read = [];
+  for (let i = 0; i < 2; i++) {
+    assert.strictEqual(zv.getUint32(cd, true), 0x02014b50);
+    const nameLen = zv.getUint16(cd + 28, true);
+    const name = new TextDecoder().decode(zip.subarray(cd + 46, cd + 46 + nameLen));
+    const local = zv.getUint32(cd + 42, true);
+    const size = zv.getUint32(cd + 24, true);
+    assert.strictEqual(zv.getUint32(local, true), 0x04034b50);
+    const dataStart = local + 30 + zv.getUint16(local + 26, true);
+    const data = zip.subarray(dataStart, dataStart + size);
+    assert.strictEqual(crc32(data), zv.getUint32(cd + 16, true));
+    read.push([name, data]);
+    cd += 46 + nameLen;
+  }
+  assert.deepStrictEqual(read.map(([n]) => n), ['config.json', 'a.wav']);
+  assert.deepStrictEqual([...read[1][1]], [...wav], 'WAV bytes are stored unchanged');
+
+  // 23f. Engine: a custom WAV plays from its slot, clearing it brings back the demo sound
+  const smpEngine = new DspAudioEngine();
+  await smpEngine.init();
+  smpEngine.updatePreset({ id: 's', pos: 0, list: [{ id: 'x', effect: 'SAMPLE' }] });
+  const customBuf = smpEngine.ctx.createBuffer(1, 10, 48000);
+  smpEngine.setCustomSample(1, customBuf);
+  assert.strictEqual(smpEngine.hasCustomSample(1), true);
+  smpEngine.setActiveSampleSlot(1);
+  await smpEngine.triggerSample(true, 'oneshot');
+  assert.strictEqual(smpEngine.sampleSourceNode.buffer, customBuf, 'The slot plays the custom WAV');
+  smpEngine.setCustomSample(1, null);
+  assert.strictEqual(smpEngine.isSamplePlaying, false, 'Changing the playing slot stops it');
+  await smpEngine.triggerSample(true, 'oneshot');
+  assert.notStrictEqual(smpEngine.sampleSourceNode.buffer, customBuf, 'Cleared slot plays its demo sound again');
+  smpEngine.stop();
+}
+console.log('✓ Suite 23: Custom samples (WAV checks, slots, disk budget, zip export, engine slots) verified');
+
+console.log('\n=== ALL 23 PRODUCTION TEST SUITES PASSED (100%) ===');
