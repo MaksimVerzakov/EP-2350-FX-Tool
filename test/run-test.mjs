@@ -97,7 +97,7 @@ const {
 const { serializeToConfigJson, validatePackConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/serializer.mjs')).href
 );
-const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID } = await import(
+const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID, SERIAL_FILE_CHUNK_BYTES } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/webSerial.mjs')).href
 );
 const { createMultiTabGuard } = await import(
@@ -2428,8 +2428,8 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 6, 'Connect, save, import and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 5, 'Import, copying an edited official pack on save/export, converting a WAV and fitting the disk must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 7, 'Connect, save (incl. not enough space on the mic), import and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 6, 'Import, export copy, save to the mic, sending samples, converting a WAV and fitting the disk must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
@@ -2876,4 +2876,126 @@ console.log('✓ Suite 23: Custom samples (WAV checks, slots, disk budget, zip e
 }
 console.log('✓ Suite 24: Fitter (silence, bit depth, mono, sample rate, 8-bit, largest first) verified');
 
-console.log('\n=== ALL 24 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 25: Sending samples to the mic over USB (disk check, file transfer, live load)
+// -----------------------------------------------------------------------------
+{
+  const S = samplesLib;
+
+  // 25a. Space check against the mic's real disk
+  const disk = {
+    blockSize: 4096,
+    totalBlocks: 250,
+    freeBlocks: 100,
+    files: [
+      { name: 'readme.pdf', size: 300_000 },
+      { name: 'config.json', size: 1500 },
+      { name: 'horn.wav', size: 100_000 }
+    ]
+  };
+  const ok = S.planDeviceWrite(disk, [{ name: 'horn.wav', size: 200_000 }, { name: 'config.json', size: 2000 }]);
+  assert.strictEqual(ok.neededBytes, 200_704 + 4096 - 102_400 - 4096, 'Replaced files free their clusters');
+  assert.strictEqual(ok.fits, true);
+  const tooBig = S.planDeviceWrite(disk, [{ name: 'big.wav', size: 500_000 }]);
+  assert.strictEqual(tooBig.fits, false);
+  assert.strictEqual(tooBig.shortBytes, 503_808 - 409_600);
+  assert.deepStrictEqual(tooBig.otherFiles.map((f) => f.name), ['readme.pdf', 'horn.wav', 'config.json'], 'Largest other files first');
+  assert.strictEqual(S.planDeviceWrite(disk, [{ name: 'HORN.wav', size: 100_000 }]).neededBytes, 0, 'FAT names are case-insensitive');
+
+  // 25b. A mock mic with a tiny FAT disk that understands the client's REPL commands
+  const fs = new Map([['readme.pdf', new Uint8Array(1000)], ['old.wav', new Uint8Array(10)]]);
+  const sent = [];
+  let writing = null;
+  let ctrl = null;
+  const enc = new TextEncoder();
+  const reply = (text, out = '') => ctrl.enqueue(enc.encode(`\r\n>>> ${text}${out}\r\n>>> `));
+  const port = {
+    readable: new ReadableStream({ start(c) { ctrl = c; } }),
+    writable: new WritableStream({
+      write(chunk) {
+        const text = new TextDecoder().decode(chunk);
+        sent.push(text);
+        let m;
+        if (text.includes('"__DSK_" + "START__"')) {
+          const files = [...fs].map(([n, b]) => [n, b.length]);
+          return reply(text, `__DSK_START__${JSON.stringify({ b: 4096, t: 250, f: 200, files })}__DSK_END__`);
+        }
+        if (text.includes('os.listdir("/fat")') && text.includes('os.remove')) {
+          for (const r of text.matchAll(/os\.remove\("\/fat\/([^"]+)"\) if "([^"]+)" in _ls/g)) fs.delete(r[2]);
+        }
+        if ((m = text.match(/_w = open\("\/fat\/([^"]+)", "wb"\)/))) {
+          writing = m[1];
+          fs.set(writing, new Uint8Array(0));
+        }
+        if ((m = text.match(/_w\.write\(binascii\.a2b_base64\("([^"]*)"\)\)/))) {
+          if (writing === 'fail.wav.part') {
+            return ctrl.enqueue(enc.encode(`\r\n${text}Traceback (most recent call last):\r\nOSError: 28\r\n>>> `));
+          }
+          const add = Uint8Array.from(Buffer.from(m[1], 'base64'));
+          const prev = fs.get(writing);
+          const next = new Uint8Array(prev.length + add.length);
+          next.set(prev);
+          next.set(add, prev.length);
+          fs.set(writing, next);
+        }
+        if ((m = text.match(/os\.rename\("\/fat\/([^"]+)", "\/fat\/([^"]+)"\)/))) {
+          fs.set(m[2], fs.get(m[1]));
+          fs.delete(m[1]);
+        }
+        if ((m = text.match(/^import os; os\.remove\("\/fat\/([^"]+)"\)/))) fs.delete(m[1]);
+        if ((m = text.match(/_ep_ld\((\d), "\/fat\/([^"]+)", "(\w+)", ([\d.]+)\)/))) {
+          return reply(text, `__LD_OK__:${fs.has(m[2]) ? 'True' : 'False'}`);
+        }
+        ctrl.enqueue(enc.encode(`\r\n${text}>>> `));
+      }
+    }),
+    getInfo: () => ({ usbVendorId: EP2350_USB_VID, usbProductId: EP2350_USB_PID }),
+    open: async () => {},
+    close: async () => {}
+  };
+  const prevNavigator = globalThis.navigator;
+  globalThis.navigator = { serial: { requestPort: async () => port, getPorts: async () => [port] } };
+  const mic = new Ep2350SerialClient(0, 0);
+  await mic.connect();
+
+  const info = await mic.readDiskInfo();
+  assert.deepStrictEqual([info.blockSize, info.totalBlocks, info.freeBlocks], [4096, 250, 200]);
+  assert.deepStrictEqual(info.files.map((f) => f.name).sort(), ['old.wav', 'readme.pdf']);
+
+  // 25c. File transfer: base64 chunks into name.part, renamed when complete; bytes arrive unchanged
+  const wav = Uint8Array.from({ length: 3000 }, (_, i) => (i * 37) % 256);
+  const progress = [];
+  await mic.writeFile('horn.wav', wav, (done, total) => progress.push([done, total]));
+  assert.deepStrictEqual([...fs.get('horn.wav')], [...wav], 'The file arrives byte for byte');
+  assert.ok(!fs.has('horn.wav.part'), 'The temporary file is renamed');
+  assert.strictEqual(progress.length, Math.ceil(3000 / SERIAL_FILE_CHUNK_BYTES));
+  assert.deepStrictEqual(progress.at(-1), [3000, 3000]);
+  assert.ok(sent.some((c) => c.includes('os.sync()')), 'The disk is synced after writing');
+  await mic.writeFile('old.wav', Uint8Array.of(1, 2, 3));
+  assert.deepStrictEqual([...fs.get('old.wav')], [1, 2, 3], 'An existing file is replaced');
+  await assert.rejects(() => mic.writeFile('fail.wav', wav), /OSError: 28/, 'A write error stops the transfer');
+  assert.ok(!fs.has('fail.wav') && !fs.has('fail.wav.part'), 'A failed transfer leaves no file behind');
+  await assert.rejects(() => mic.writeFile('../boot.py', wav), /Unsafe file name/);
+  await assert.rejects(() => mic.writeFile('a"b.wav', wav), /Unsafe file name/);
+
+  // 25d. Live load: custom slots via the loader (playmode + duck), factory slots back to ROM, no remount
+  const loaded = await mic.loadSamplesLive([
+    { pos: 0, file: 'horn.wav', playmode: 'hold', duck: 0.5 },
+    { pos: 1 },
+    { pos: 2, file: 'missing.wav', playmode: 'oneshot' },
+    { pos: 3, file: 'old.wav', playmode: 'weird', duck: 7 }
+  ]);
+  assert.deepStrictEqual(loaded, [true, true, false, true]);
+  assert.ok(sent.some((c) => c.startsWith('exec(') && c.includes('spl.load_wav(p, g, m, d)') && c.includes('except TypeError')), 'The loader passes duck and falls back for older firmware');
+  assert.ok(sent.some((c) => c.includes('_ep_ld(0, "/fat/horn.wav", "hold", 0.5)')));
+  assert.ok(sent.some((c) => c.includes('spl.rom(1)')), 'Factory slots get their ROM sound back');
+  assert.ok(sent.some((c) => c.includes('_ep_ld(3, "/fat/old.wav", "oneshot", 1)')), 'Unknown playmode and out-of-range duck are sanitised');
+  assert.ok(!sent.some((c) => c.includes('examine_drive')), 'Never remounts the disk (the computer would report an unsafe eject)');
+  await assert.rejects(() => mic.loadSamplesLive([{ pos: 5, file: 'x.wav' }]), /Invalid sample slot/);
+
+  await mic.disconnect();
+  globalThis.navigator = prevNavigator;
+}
+console.log('✓ Suite 25: Sending samples to the mic over USB (disk check, transfer, live load) verified');
+
+console.log('\n=== ALL 25 PRODUCTION TEST SUITES PASSED (100%) ===');

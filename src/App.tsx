@@ -19,7 +19,9 @@ import {
   diskUsage,
   deviceChannels,
   encodeWav16,
+  formatBytes,
   inspectWav,
+  planDeviceWrite,
   referencedSampleFiles,
   takenSampleNames,
   type WavInfo,
@@ -771,17 +773,47 @@ export const App: React.FC = () => {
     if (!isDeviceConnected) return false;
     try {
       const jsonStr = serializeToConfigJson(pack);
+      const custom = customSampleSlots(pack);
+      const lib = sampleLibraryRef.current;
+      const files = [...new Set(custom.map((s) => s.file))].filter((f) => lib[f]);
+      if (files.length > 0) {
+        // Check the mic's real free space first: TE's own files (readme.pdf) may take room too
+        const disk = await ep2350Serial.readDiskInfo();
+        const plan = planDeviceWrite(disk, [
+          ...files.map((f) => ({ name: f, size: lib[f].bytes.byteLength })),
+          { name: 'config.json', size: new TextEncoder().encode(jsonStr).byteLength }
+        ]);
+        if (!plan.fits) {
+          const others = plan.otherFiles.slice(0, 3).map((f) => `${f.name} (${formatBytes(f.size)})`);
+          showToast('error', 'Not enough space on the mic', `${formatBytes(plan.shortBytes)} short.${others.length ? ` Also on its disk: ${others.join(', ')}.` : ''} Delete files from the fx-mic disk or use fewer samples.`);
+          return false;
+        }
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          await ep2350Serial.writeFile(f, lib[f].bytes, (sent, total) => {
+            showToast('success', 'Sending samples to the mic', `${f} (${i + 1} of ${files.length}): ${Math.round((sent / total) * 100)}%`);
+          });
+        }
+      }
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
+      let loadedNote = '';
+      if (custom.length > 0) {
+        // Load every slot now: sent WAVs play straight away, the other slots get their factory sound
+        const slots = [0, 1, 2, 3].map((pos) => {
+          const s = custom.find((c) => c.pos === pos);
+          return s ? { pos, file: s.file, playmode: s.playmode, duck: s.duck } : { pos };
+        });
+        const results = await ep2350Serial.loadSamplesLive(slots);
+        const failed = slots.filter((s, i) => s.file && !results[i]).map((s) => s.file);
+        loadedNote = failed.length
+          ? ` The mic could not load ${failed.join(', ')}; those slots play the factory sound.`
+          : ` ${files.length} sample${files.length === 1 ? '' : 's'} sent and loaded.`;
+      }
       const copied = selection?.kind === 'official' && keepEditedPackAsCopy();
       if (selection === null) setSelection({ kind: 'device' });
-      if (customSampleSlots(pack).length > 0) {
-        // Saving over USB writes config.json only; the WAVs travel by disk for now
-        showToast(
-          'success',
-          'Saved to the mic',
-          'Saving over USB writes config.json only. Copy the WAVs to the fx-mic disk (EXPORT includes them), or the mic plays its factory sounds in those slots.'
-        );
-      } else if (copied) showToast('success', 'Saved to the mic', 'A copy of this pack is now in YOUR PACKS.');
+      if (loadedNote || copied) {
+        showToast('success', 'Saved to the mic', `${copied ? 'A copy of this pack is now in YOUR PACKS.' : ''}${loadedNote}`.trim());
+      }
       setDevicePack(pack);
       setIsDevicePack(true);
       setSavedDeviceJson(jsonStr);

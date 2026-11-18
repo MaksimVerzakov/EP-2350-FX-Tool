@@ -262,3 +262,39 @@ export function takenSampleNames(pack: PackConfig, pos: number, otherPacks: Pack
     .map((s) => s.file);
   return [...own, ...referencedSampleFiles(otherPacks)];
 }
+
+/** The mic's disk as `os.statvfs('/fat')` and `os.listdir('/fat')` report it over USB. */
+export interface DeviceDisk {
+  blockSize: number;
+  totalBlocks: number;
+  freeBlocks: number;
+  files: Array<{ name: string; size: number }>;
+}
+
+export interface DeviceWritePlan {
+  fits: boolean;
+  /** Space the written files take, minus what the files they replace free up. */
+  neededBytes: number;
+  freeBytes: number;
+  shortBytes: number;
+  /** Files on the disk that the pack does not write, largest first: what to delete to make room. */
+  otherFiles: Array<{ name: string; size: number }>;
+}
+
+/** Will `writes` (file name and size, config.json included) fit on the mic's disk as it is now? */
+export function planDeviceWrite(disk: DeviceDisk, writes: Array<{ name: string; size: number }>): DeviceWritePlan {
+  const block = disk.blockSize > 0 ? disk.blockSize : DISK_CLUSTER_BYTES;
+  const blocks = (n: number) => Math.ceil(Math.max(0, n) / block) * block;
+  const writing = new Set(writes.map((w) => w.name.toLowerCase()));
+  const replaced = disk.files.filter((f) => writing.has(f.name.toLowerCase()));
+  const neededBytes =
+    writes.reduce((n, w) => n + blocks(w.size), 0) - replaced.reduce((n, f) => n + blocks(f.size), 0);
+  const freeBytes = disk.freeBlocks * block;
+  return {
+    fits: neededBytes <= freeBytes,
+    neededBytes,
+    freeBytes,
+    shortBytes: Math.max(0, neededBytes - freeBytes),
+    otherFiles: disk.files.filter((f) => !writing.has(f.name.toLowerCase())).sort((a, b) => b.size - a.size)
+  };
+}
