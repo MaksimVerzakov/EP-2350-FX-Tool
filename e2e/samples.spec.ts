@@ -63,16 +63,31 @@ async function openSamples(page: Page) {
   await expect(page.getByTestId('samples-panel')).toBeVisible();
 }
 
-test('SAMPLES tab matches the FX board size', async ({ page }) => {
+test('SAMPLES tab matches the FX board size, with a DISK strip like the bus selector', async ({ page }) => {
   await page.goto('/');
   const ledger = await page.locator('.te-ledger-card').first().boundingBox();
+  const busStrip = await page.getByRole('group', { name: 'Bus selector' }).locator('..').boundingBox();
   await page.getByRole('button', { name: 'SAMPLES', exact: true }).click();
   await expect(page.getByRole('button', { name: 'SAMPLES', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const panel = await page.getByTestId('samples-panel').boundingBox();
   expect(Math.round(panel!.width)).toBe(Math.round(ledger!.width));
   expect(Math.round(panel!.height)).toBe(Math.round(ledger!.height));
+  const disk = await page.getByTestId('sample-disk').boundingBox();
+  expect(Math.round(disk!.height)).toBe(Math.round(busStrip!.height));
+  const meter = page.getByRole('meter', { name: 'Disk space used' });
+  await expect(meter.locator(':scope > div')).toHaveCount(2);
+  await expect(meter.locator(':scope > div').first().locator('span')).toHaveCount(12);
+  await expect(meter).toHaveAttribute('data-lit', '1'); // config.json alone lights the first LED
+  await expect(page.getByTestId('sample-disk-total')).toContainText('/ 1 MB');
+
   for (let pos = 0; pos < 4; pos++) {
-    await expect(page.getByTestId(`sample-slot-${pos}`)).toHaveAttribute('data-state', 'factory');
+    const slot = page.getByTestId(`sample-slot-${pos}`);
+    await expect(slot).toHaveAttribute('data-state', 'factory');
+    await expect(slot.getByTestId('sample-name')).toHaveText('Factory sound');
+    // Factory sounds take no settings: playmode and duck are shown but disabled
+    await expect(slot.getByRole('button', { name: 'Next playmode' })).toBeDisabled();
+    await expect(slot.locator('div[title^="DUCK MIC:"]')).toHaveAttribute('aria-disabled', 'true');
+    await expect(slot.getByRole('button', { name: 'FACTORY', exact: true })).toHaveCount(0);
   }
 });
 
@@ -80,15 +95,34 @@ test('a loaded WAV gets its slot, settings and a place in the exported zip', asy
   await openSamples(page);
   const wav = makeWav({ channels: 2, secs: 0.6 });
   const slot = page.getByTestId('sample-slot-0');
+  const loadBtn = slot.getByRole('button', { name: 'LOAD WAV' });
+  const playBtn = slot.getByRole('button', { name: 'Play slot 1' });
+  const before = [await loadBtn.boundingBox(), await playBtn.boundingBox()];
 
   await page.getByTestId('sample-file-0').setInputFiles({ name: 'Big Horn!.WAV', mimeType: 'audio/wav', buffer: wav });
   await expect(slot).toHaveAttribute('data-state', 'custom');
-  await expect(slot).toContainText('big-horn.wav');
-  await expect(slot.getByTestId('sample-info')).toContainText('44.1 kHz · 16-bit · stereo · 0.60 s');
-  await expect(page.getByTestId('sample-disk-total')).toContainText('/ 1.00 MB');
+  await expect(slot.getByTestId('sample-name')).toHaveText('big-horn.wav');
+  await expect(slot.getByTestId('sample-size')).toHaveText('103 KB');
+  await expect(page.getByRole('meter', { name: 'Disk space used' })).toHaveAttribute('data-lit', '2');
 
-  await slot.getByRole('button', { name: 'HOLD', exact: true }).click();
-  await expect(slot.getByRole('button', { name: 'HOLD', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  // FACTORY appears in the free space; LOAD WAV (same label) and PLAY stay where they were
+  await expect(slot.getByRole('button', { name: 'FACTORY', exact: true })).toBeVisible();
+  await expect(loadBtn).toHaveText(/LOAD WAV/);
+  const after = [await loadBtn.boundingBox(), await playBtn.boundingBox()];
+  for (let i = 0; i < 2; i++) {
+    expect(Math.round(after[i]!.x)).toBe(Math.round(before[i]!.x));
+    expect(Math.round(after[i]!.y)).toBe(Math.round(before[i]!.y));
+  }
+
+  await expect(slot.getByTestId('sample-playmode')).toHaveText('ONESHOT');
+  await slot.getByRole('button', { name: 'Next playmode' }).click();
+  await expect(slot.getByTestId('sample-playmode')).toHaveText('HOLD');
+  await slot.getByRole('button', { name: 'Previous playmode' }).click();
+  await slot.getByRole('button', { name: 'Previous playmode' }).click();
+  await expect(slot.getByTestId('sample-playmode')).toHaveText('START/STOP');
+  await slot.getByRole('button', { name: 'Next playmode' }).click();
+  await slot.getByRole('button', { name: 'Next playmode' }).click();
+  await expect(slot.getByTestId('sample-playmode')).toHaveText('HOLD');
 
   const duck = slot.locator('div[title^="DUCK MIC:"]');
   await expect(duck).toHaveAttribute('data-inactive', 'true');
@@ -126,5 +160,5 @@ test('files the mic cannot play are refused or flagged', async ({ page }) => {
   await page.getByTestId('sample-file-2').setInputFiles({ name: 'hires.wav', mimeType: 'audio/wav', buffer: makeWav({ rate: 192000, secs: 0.1 }) });
   const slot = page.getByTestId('sample-slot-2');
   await expect(slot).toHaveAttribute('data-state', 'custom');
-  await expect(slot.getByRole('alert')).toContainText('up to 96 kHz');
+  await expect(slot.getByTestId('sample-issue')).toContainText('up to 96 kHz');
 });

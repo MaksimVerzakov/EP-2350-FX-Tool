@@ -18,6 +18,8 @@ interface KnobProps {
   inactive?: boolean;
   /** Extra line for the hover title, e.g. firmware requirements. */
   hint?: string;
+  /** Shown but not adjustable (e.g. settings a factory sample cannot take). */
+  disabled?: boolean;
 }
 
 export const Knob: React.FC<KnobProps> = ({
@@ -35,7 +37,8 @@ export const Knob: React.FC<KnobProps> = ({
   isModulated = false,
   modulationSource,
   inactive = false,
-  hint
+  hint,
+  disabled = false
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -206,11 +209,14 @@ export const Knob: React.FC<KnobProps> = ({
   return (
     <div
       className={`flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5 transition-opacity ${
-        inactive ? 'opacity-45 hover:opacity-80' : ''
+        disabled ? 'opacity-35 pointer-events-none' : inactive ? 'opacity-45 hover:opacity-80' : ''
       }`}
       data-inactive={inactive ? 'true' : undefined}
+      aria-disabled={disabled || undefined}
       title={
-        inactive
+        disabled
+          ? `${label}: not available here.${hint ? ` ${hint}` : ''}`
+          : inactive
           ? `${label}: not set, the mic uses its own default. Turn the dial to set it.${hint ? ` ${hint}` : ''}`
           : `${label}: ${formatVal(value)} (Drag dial or type in box)${hint ? `. ${hint}` : ''}`
       }
@@ -308,6 +314,7 @@ export const Knob: React.FC<KnobProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onDoubleClick={onReset}
+          disabled={disabled}
           className="w-[52px] h-[17px] text-te-xs font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-te-edge focus:border-te-accent rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
         />
       </div>
