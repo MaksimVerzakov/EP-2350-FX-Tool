@@ -30,7 +30,11 @@ function buildSourceModulesForTest() {
     'src/utils/tabGuard.ts',
     'src/utils/wavCodec.ts',
     'src/utils/busRouting.ts',
+    'src/utils/samples.ts',
+    'src/utils/zip.ts',
+    'src/utils/fitter.ts',
     'src/dsp/math.ts',
+    'src/dsp/stereoDelay.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
     'src/validation/presetCheck.ts',
@@ -94,7 +98,7 @@ const {
 const { serializeToConfigJson, validatePackConfig } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/serializer.mjs')).href
 );
-const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID } = await import(
+const { Ep2350SerialClient, EP2350_USB_VID, EP2350_USB_PID, SERIAL_FILE_CHUNK_BYTES } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/webSerial.mjs')).href
 );
 const { createMultiTabGuard } = await import(
@@ -109,11 +113,13 @@ const {
   hann,
   makeDistortionCurve,
   makeSoftClipCurve,
-  resolveModDepth
+  resolveModDepth,
+  ReverbKernel
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
-const { DspAudioEngine, BUNDLED_SAMPLES } = await import(
+const { buildStereoDelay } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/stereoDelay.mjs')).href);
+const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate, isHandleSqueezed } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
 const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await import(
@@ -122,6 +128,9 @@ const { decodeWavBuffer, encodeWavBuffer, generateSyntheticVocalPcm } = await im
 const { validatePresetInput } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/validation/presetTools.mjs')).href
 );
+const samplesLib = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/samples.mjs')).href);
+const { createZip, crc32 } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/zip.mjs')).href);
+const fitter = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/utils/fitter.mjs')).href);
 
 // Clean up on exit
 process.on('exit', () => {
@@ -730,7 +739,11 @@ function createMockAudioParam(initial = 0) {
     value: initial,
     setTargetAtTime(val) {
       this.value = val;
-    }
+    },
+    setValueAtTime(val) {
+      this.value = val;
+    },
+    cancelScheduledValues() {}
   };
 }
 
@@ -832,6 +845,11 @@ class MockAudioContext {
     node.pan = createMockAudioParam(0.0);
     return node;
   }
+  createChannelMerger(n = 2) {
+    const node = new MockAudioNode();
+    node.numberOfInputs = n;
+    return node;
+  }
   createScriptProcessor() {
     const node = new MockAudioNode();
     node.onaudioprocess = null;
@@ -893,7 +911,9 @@ assert.ok(inputComp, 'Engine must instantiate hardware pre-chain inputCompressor
 assert.ok(inputGate, 'Engine must instantiate hardware pre-chain inputNoiseGate');
 assert.ok(engine.sourceNode.connections.includes(inputComp), 'sourceNode must feed into inputCompressor');
 assert.ok(inputComp.connections.includes(inputGate), 'inputCompressor must feed into inputNoiseGate');
-assert.ok(inputGate.connections.includes(engine.sourceHub), 'inputNoiseGate must feed into sourceHub');
+assert.ok(inputGate.connections.includes(engine.getMicGate()), 'inputNoiseGate must feed into the handle mic gate');
+assert.ok(engine.getMicGate().connections.includes(engine.getDuckGain()), 'The mic gate must feed into the duck gain');
+assert.ok(engine.getDuckGain().connections.includes(engine.sourceHub), 'duck gain must feed into sourceHub');
 
 const distNode = engine.activeNodes.find((n) => n.effectType === 'DIST');
 const delayNode = engine.activeNodes.find((n) => n.effectType === 'DELAY');
@@ -904,8 +924,8 @@ const sampleNode = engine.activeNodes.find((n) => n.effectType === 'SAMPLE');
 
 // Verify 1% UI values map to 0.01 gain ratio (not 1.0!)
 assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DIST 1% mix must set wetGain to 0.01');
-assert.ok(Math.abs(delayNode.nodeRefs.feedbackGain.gain.value - 0.01) < 1e-6, 'DELAY 1% echo must set feedbackGain to 0.01');
-assert.ok(Math.abs(delayNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DELAY 1% wet-level must set wetGain to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.delay.left.fbSame.gain.value - 0.01) < 1e-6, 'DELAY 1% echo must set the feedback to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.delay.wetGain.gain.value - 0.01) < 1e-6, 'DELAY 1% wet-level must set wetGain to 0.01');
 assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'RING 1% mix must set wetGain to 0.01');
 assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.01) < 1e-6, 'SAMPLE 1% level must set gain to 0.01');
 
@@ -925,7 +945,7 @@ engine.updatePreset(updatedPreset);
 
 assert.strictEqual(distNode.nodeRefs.lastAmount, 25, 'Live DIST.amount update must regenerate distortion curve');
 assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.6) < 1e-6, 'Live DIST.mix update must update wetGain');
-assert.strictEqual(delayNode.nodeRefs.wetPanner.pan.value, 1.0, 'Live DELAY.balance update must pan wetPanner to +1');
+assert.strictEqual(delayNode.nodeRefs.delay.wetPanner.pan.value, 1.0, 'Live DELAY.balance update must pan wetPanner to +1');
 assert.ok(Math.abs(reverbNode.nodeRefs.hpFilter.frequency.value - cutoffToHz(0.8)) < 1e-3, 'Live REVERB.highpass-cutoff must update hpFilter');
 assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.75) < 1e-6, 'Live RING.mix must update wetGain');
 assert.ok(Math.abs(eqNode.nodeRefs.eq.Q.value - 9.0) < 1e-6, 'Live EQUALISER.Q must update eq.Q');
@@ -967,9 +987,10 @@ assert.strictEqual(
   1.0,
   'Audition voice sourceNode.playbackRate must stay 1.0x when SAMPLE.speed changes live'
 );
-assert.ok(
-  Math.abs(reverbNode.nodeRefs.combSum.gain.value - (0.28 + 0.01 * 0.55) * 0.5) < 1e-6,
-  'REVERB combSum.gain must apply 0.5 attenuation matching offlineRenderer to prevent comb buildup'
+assert.deepStrictEqual(
+  reverbNode.nodeRefs.reverb.getParams(),
+  { time: 0.9, spring: 0.01 },
+  'REVERB time and spring-mix (1% = 0.01) must reach the reverb kernel'
 );
 
 // Verify Handle & Shake modulation on DIST.amount and RING.mix
@@ -1009,7 +1030,8 @@ assert.ok(Math.abs(lpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.5)) < 1
 assert.ok(Math.abs(hpNode.nodeRefs.filter.frequency.value - cutoffToHz(0.2)) < 1e-3, 'HIGHPASS 20% cutoff must map to log Hz');
 assert.strictEqual(harmonyNode.nodeRefs.pitchShifter.getPitch(), 1.25, 'HARMONY pitchShifter must initialize to 1.25x');
 assert.strictEqual(ssbNode.nodeRefs.ssbShifter.getFrequency(), -650, 'SSB -500Hz + 0.5*(-300Hz) shake must equal -650Hz');
-assert.strictEqual(sampleNode2.nodeRefs.pitchShifter.getPitch(), 2.0, 'SAMPLE +12 semitones must set pitchShifter to 2.0x');
+assert.strictEqual(sampleNode2.nodeRefs.lastRate, 2.0, 'SAMPLE +12 semitones must double the playback rate (tape-style)');
+assert.strictEqual(sampleNode2.nodeRefs.pitchShifter, undefined, 'SAMPLE pitch must not use a time-preserving pitch shifter');
 // At currentTime=0.25, effectiveLfoSpeed = 2.0 + 1.0*4.0 = 6.0 -> cycles = 0.25*6.0 + 0.3 = 1.8 (phase 0.8 >= 0.5 -> square = -1)
 assert.strictEqual(balanceNode.nodeRefs.chopperGain.gain.value, 0.18, 'Square LFO < 0 on BALANCE must engage 0.18 chopper gate');
 
@@ -2416,8 +2438,8 @@ console.log('✓ Suite 19: Design system (colour tokens) verified');
   }
   const app = fs.readFileSync(path.join(srcDir, 'App.tsx'), 'utf8');
   assert.ok(app.includes('<Toast toast={toast} onDismiss={dismissToast} />'), 'App must render the Toast');
-  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 4, 'Connect, save, import and share-link failures must show an error toast');
-  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 4, 'Import, copying an edited official pack on save/export, and a copied share link must show a confirmation toast');
+  assert.strictEqual((app.match(/showToast\('error'/g) || []).length, 8, 'Connect, save (incl. not enough space on the mic), import, share-link and sample-load failures (not a WAV, cannot convert, no preview) must show an error toast');
+  assert.strictEqual((app.match(/showToast\('success'/g) || []).length, 7, 'Import, export copy, save to the mic, sending samples, converting a WAV, fitting the disk and a copied share link must show a confirmation toast');
   const toast = fs.readFileSync(path.join(srcDir, 'components/Toast.tsx'), 'utf8');
   assert.ok(toast.includes("role={isError ? 'alert' : 'status'}"), 'Errors must be announced as alerts and confirmations as status');
 
@@ -2503,4 +2525,666 @@ console.log('✓ Suite 20: In-app messages and tooltips verified');
 }
 console.log('✓ Suite 21: YOUR PACKS storage (add, dedupe, persist, migrate, same-name conflicts) verified');
 
-console.log('\n=== ALL 21 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 22: Firmware 1.0.9+ fields: optional filter Q and sample duck
+// -----------------------------------------------------------------------------
+{
+  // 22a. Registry: Q is optional on LOWPASS/HIGHPASS and needs firmware 1.0.9
+  for (const type of ['LOWPASS', 'HIGHPASS']) {
+    const q = EFFECTS_REGISTRY[type].params.find((p) => p.name === 'Q');
+    assert.ok(q, `${type} must define Q`);
+    assert.strictEqual(q.optional, true, `${type}.Q must be optional`);
+    assert.strictEqual(q.minFirmware, '1.0.9', `${type}.Q needs firmware 1.0.9`);
+    assert.deepStrictEqual([q.min, q.max], [0, 1]);
+  }
+  assert.ok(
+    Object.values(EFFECTS_REGISTRY).every((m) => m.params.filter((p) => p.optional).every((p) => p.name === 'Q')),
+    'Only filter Q is optional for now'
+  );
+
+  // 22b. Round trip: Q and duck survive import/export; leaving them out writes nothing
+  const cfg = {
+    name: 'FW TEST',
+    samples: [
+      { pos: 0, file: '1.wav', playmode: 'oneshot', duck: 0.75 },
+      { pos: 1, file: '2.wav', playmode: 'hold' }
+    ],
+    presets: [
+      {
+        pos: 0,
+        name: 'Q',
+        list: [
+          { effect: 'LOWPASS', cutoff: 0.5, Q: 0.6 },
+          { effect: 'HIGHPASS', cutoff: 0.2 },
+          { effect: 'SAMPLE' }
+        ]
+      }
+    ]
+  };
+  const parsedFw = parseConfigJson(JSON.stringify(cfg));
+  assert.ok(!parsedFw.error, parsedFw.error);
+  assert.strictEqual(parsedFw.pack.samples[0].duck, 0.75, 'duck must be imported');
+  assert.strictEqual(parsedFw.pack.samples[1].duck, undefined, 'missing duck stays missing');
+  const outFw = JSON.parse(serializeToConfigJson(parsedFw.pack));
+  assert.strictEqual(outFw.samples[0].duck, 0.75, 'duck must be exported');
+  assert.ok(!('duck' in outFw.samples[1]), 'duck is not written when unset');
+  assert.strictEqual(outFw.presets[0].list[0].Q, 0.6, 'LOWPASS Q must be exported');
+  assert.ok(!('Q' in outFw.presets[0].list[1]), 'Q is not written when unset');
+  const clamped = parseConfigJson(JSON.stringify({ ...cfg, samples: [{ pos: 0, file: '1.wav', duck: 3 }] }));
+  assert.strictEqual(clamped.pack.samples[0].duck, 1, 'imported duck is clamped to 0..1');
+
+  // 22c. Validator: firmware warnings, duck checks, clearer number error
+  const res = validatePresetInput({ configJson: JSON.stringify(cfg) });
+  assert.strictEqual(res.isValid, true, JSON.stringify(res.errors));
+  const fwPaths = res.warnings.filter((w) => w.code === 'needs_firmware').map((w) => w.path);
+  assert.ok(fwPaths.includes('presets[0].list[0].Q'), 'Q gets a firmware warning');
+  assert.ok(fwPaths.includes('samples[0].duck'), 'duck gets a firmware warning');
+  const badDuck = validatePresetInput({
+    configJson: JSON.stringify({ ...cfg, samples: [{ pos: 0, file: '1.wav', duck: 'yes' }, { pos: 1, file: '2.wav', duck: 1.5 }] })
+  });
+  assert.strictEqual(badDuck.isValid, false);
+  assert.ok(badDuck.errors.some((e) => e.code === 'duck_not_number' && e.path === 'samples[0].duck'));
+  assert.ok(badDuck.errors.some((e) => e.code === 'out_of_range' && e.path === 'samples[1].duck'));
+  const badNum = validatePresetInput({
+    configJson: JSON.stringify({ ...cfg, presets: [{ pos: 0, list: [{ effect: 'LOWPASS', cutoff: '0.5' }, { effect: 'SAMPLE' }] }] })
+  });
+  const numErr = badNum.errors.find((e) => e.code === 'param_not_number');
+  assert.ok(numErr && /stops config\.json from loading/.test(numErr.message), 'number error explains the firmware consequence');
+
+  // 22d. Engine: filter Q follows the row (and its default when unset)
+  const fwEngine = new DspAudioEngine();
+  await fwEngine.init();
+  fwEngine.updatePreset({
+    id: 'fw',
+    pos: 0,
+    list: [
+      { id: 'a', effect: 'LOWPASS', cutoff: 0.5, Q: 0.6 },
+      { id: 'b', effect: 'HIGHPASS', cutoff: 0.1 },
+      { id: 'c', effect: 'SAMPLE' }
+    ],
+    handle: { row: 0, param: 'Q', depth: 30 }
+  });
+  fwEngine.updateModulation({ handlePos: 0 });
+  await fwEngine.start();
+  const [lp, hp] = fwEngine.activeNodes.filter((n) => n.effectType === 'LOWPASS' || n.effectType === 'HIGHPASS');
+  assert.ok(Math.abs(lp.nodeRefs.filter.Q.value - 6) < 1e-6, 'LOWPASS Q 0.6 -> biquad Q 6');
+  assert.ok(Math.abs(hp.nodeRefs.filter.Q.value - 2) < 1e-6, 'Unset Q keeps the previous fixed resonance (2.0)');
+  fwEngine.updateModulation({ handlePos: 1 });
+  assert.ok(Math.abs(lp.nodeRefs.filter.Q.value - 9) < 1e-6, 'The handle can modulate filter Q');
+
+  // 22e. Engine: duck turns the mic down while the sample plays, and back up when it stops
+  const duck = fwEngine.getDuckGain();
+  assert.strictEqual(duck.gain.value, 1, 'Mic is not ducked at rest');
+  await fwEngine.triggerSample(true, 'hold', 0.75);
+  assert.ok(Math.abs(duck.gain.value - 0.25) < 1e-6, 'duck 0.75 leaves the mic at 25%');
+  assert.ok(!duck.connections.includes(fwEngine.sampleSourceNode), 'The sample itself bypasses the duck');
+  await fwEngine.triggerSample(false, 'hold');
+  assert.strictEqual(duck.gain.value, 1, 'Releasing a hold sample restores the mic');
+  await fwEngine.triggerSample(true, 'oneshot');
+  assert.strictEqual(duck.gain.value, 1, 'A sample without duck leaves the mic alone');
+  fwEngine.stop();
+
+  // 22f. SAMPLE pitch is tape-style (confirmed on the device: it changes the sample's length)
+  assert.strictEqual(samplePlaybackRate(1, 12), 2, '+12 st doubles the rate');
+  assert.strictEqual(samplePlaybackRate(1, -12), 0.5, '-12 st halves the rate');
+  assert.ok(Math.abs(samplePlaybackRate(1.5, 7) - 1.5 * Math.pow(2, 7 / 12)) < 1e-12, 'speed and pitch multiply');
+  assert.strictEqual(samplePlaybackRate(4, 24), 16, 'rate is clamped at 16x');
+  const tapeEngine = new DspAudioEngine();
+  await tapeEngine.init();
+  tapeEngine.updatePreset({ id: 't', pos: 0, list: [{ id: 's', effect: 'SAMPLE', speed: 1, pitch: 12 }], shake: { row: 0, param: 'pitch', depth: -12 } });
+  await tapeEngine.triggerSample(true, 'hold');
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 2, 'Triggered sample plays at speed x 2^(pitch/12)');
+  tapeEngine.updateModulation({ shakeAmount: 1 });
+  assert.strictEqual(tapeEngine.sampleSourceNode.playbackRate.value, 1, 'Modulating pitch changes the playback rate live');
+  tapeEngine.stop();
+}
+console.log('✓ Suite 22: Firmware 1.0.9+ fields (optional filter Q, sample duck) and tape-style SAMPLE pitch verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 23: Custom samples (WAV checks, slots, disk budget, zip export, engine slots)
+// -----------------------------------------------------------------------------
+{
+  const S = samplesLib;
+  /** A minimal WAV: `frames` of silence with the given format (formatTag 1 = PCM, 3 = float). */
+  const makeWav = ({ channels = 1, rate = 44100, bits = 16, formatTag = 1, frames = 441, extraChunk = false } = {}) => {
+    const dataLen = frames * channels * (bits / 8);
+    const extra = extraChunk ? 8 + 5 + 1 : 0; // odd-sized LIST chunk with its pad byte
+    const buf = new Uint8Array(44 + extra + dataLen);
+    const v = new DataView(buf.buffer);
+    const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, buf.length - 8, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, formatTag, true); v.setUint16(22, channels, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * channels * (bits / 8), true);
+    v.setUint16(32, channels * (bits / 8), true); v.setUint16(34, bits, true);
+    let o = 36;
+    if (extraChunk) { str(o, 'LIST'); v.setUint32(o + 4, 5, true); o += 8 + 5 + 1; }
+    str(o, 'data'); v.setUint32(o + 4, dataLen, true);
+    return buf;
+  };
+
+  // 23a. WAV inspection and the mic's limits
+  const mono = S.inspectWav(makeWav({ frames: 44100 }));
+  assert.deepStrictEqual(
+    [mono.channels, mono.sampleRate, mono.bitsPerSample, mono.isFloat, mono.frames, mono.durationSec],
+    [1, 44100, 16, false, 44100, 1]
+  );
+  assert.strictEqual(S.describeWav(mono), '44.1 kHz · 16-bit · mono · 1.00 s');
+  assert.deepStrictEqual(S.wavDeviceIssues(mono), []);
+  assert.strictEqual(S.inspectWav(makeWav({ extraChunk: true })).frames, 441, 'Chunks before data (odd size + pad) are skipped');
+  for (const ok of [{ bits: 8 }, { bits: 24, channels: 2 }, { bits: 32, formatTag: 3, rate: 96000 }]) {
+    assert.deepStrictEqual(S.wavDeviceIssues(S.inspectWav(makeWav(ok))), [], JSON.stringify(ok));
+  }
+  const bad = (opts) => S.wavDeviceIssues(S.inspectWav(makeWav(opts))).join(' ');
+  assert.match(bad({ rate: 192000 }), /96 kHz/);
+  assert.match(bad({ channels: 4 }), /mono or stereo/);
+  assert.match(bad({ bits: 32 }), /8, 16 or 24-bit/, '32-bit integer PCM is not supported');
+  assert.match(bad({ bits: 64, formatTag: 3 }), /32-bit float only/);
+  assert.match(bad({ formatTag: 2 }), /Compressed WAV/);
+  assert.match(bad({ frames: 0 }), /no audio/);
+  assert.throws(() => S.inspectWav(new TextEncoder().encode('ID3 not a wav file')), /Not a WAV/);
+
+  // 23a2. Auto-fix encoder: 16-bit PCM, mono/stereo kept, 3+ channels mixed to mono
+  const tone = Float32Array.from({ length: 480 }, (_, i) => Math.sin(i / 10) * 0.5);
+  const enc = S.inspectWav(S.encodeWav16([tone], 48000));
+  assert.deepStrictEqual([enc.channels, enc.sampleRate, enc.bitsPerSample, enc.formatTag, enc.frames], [1, 48000, 16, 1, 480]);
+  assert.deepStrictEqual(S.wavDeviceIssues(enc), [], 'Converted WAVs are always playable');
+  assert.strictEqual(S.inspectWav(S.encodeWav16([tone, tone], 44100)).channels, 2, 'Stereo stays stereo');
+  const quad = S.deviceChannels([tone, tone, tone, tone]);
+  assert.strictEqual(quad.length, 1, '4 channels are mixed to mono');
+  assert.ok(Math.abs(quad[0][7] - tone[7]) < 1e-6, 'Mixdown averages the channels');
+  assert.strictEqual(S.deviceChannels([tone, tone]).length, 2);
+  const clip = new DataView(S.encodeWav16([Float32Array.of(2, -2)], 8000).buffer);
+  assert.deepStrictEqual([clip.getInt16(44, true), clip.getInt16(46, true)], [32767, -32768], 'Samples are clipped to 16-bit');
+
+  // 23b. Disk-safe, unique file names
+  assert.strictEqual(S.sanitizeSampleFileName('My Shout!.WAV'), 'my-shout.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('Café Ölé.wav'), 'cafe-ole.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('???.wav'), 'sample.wav');
+  assert.strictEqual(S.sanitizeSampleFileName('horn.wav', ['HORN.wav', 'horn-2.wav']), 'horn-3.wav');
+  assert.ok(S.sanitizeSampleFileName('x'.repeat(80) + '.wav').length <= 28);
+
+  // 23c. Slots: a slot is custom only when samples lists it
+  const base = createEmptyPack();
+  assert.strictEqual(base.useBuiltInSamples, true);
+  assert.deepStrictEqual(S.customSampleSlots(base), [], 'Factory packs have no custom slots');
+  let p = S.assignSampleFile(base, 2, 'horn.wav');
+  assert.strictEqual(p.useBuiltInSamples, false);
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => [s.pos, s.file, s.playmode]), [[2, 'horn.wav', 'oneshot']], 'The default slot list is dropped');
+  p = S.updateSampleSlot(p, 2, { playmode: 'hold', duck: 0.5 });
+  p = S.assignSampleFile(p, 0, 'kick.wav');
+  p = S.assignSampleFile(p, 2, 'horn-2.wav');
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => [s.pos, s.file, s.playmode, s.duck]), [[0, 'kick.wav', 'oneshot', undefined], [2, 'horn-2.wav', 'hold', 0.5]], 'Replacing a file keeps playmode and duck');
+  assert.strictEqual(S.updateSampleSlot(p, 1, { playmode: 'hold' }), p, 'Factory slots have no settings');
+  const noDuck = S.updateSampleSlot(p, 2, { duck: undefined });
+  assert.ok(!('duck' in S.customSampleAt(noDuck, 2)), 'duck: undefined removes duck');
+  const exported = JSON.parse(serializeToConfigJson(p));
+  assert.deepStrictEqual(exported.samples, [{ pos: 0, file: 'kick.wav', playmode: 'oneshot' }, { pos: 2, file: 'horn-2.wav', playmode: 'hold', duck: 0.5 }]);
+  const reparsed = parseConfigJson(serializeToConfigJson(p)).pack;
+  assert.deepStrictEqual(S.customSampleSlots(reparsed).map((s) => s.file), ['kick.wav', 'horn-2.wav'], 'Custom slots survive a round trip');
+  p = S.clearSampleSlot(p, 0);
+  assert.deepStrictEqual(S.customSampleSlots(p).map((s) => s.pos), [2]);
+  p = S.clearSampleSlot(p, 2);
+  assert.strictEqual(p.useBuiltInSamples, true, 'No custom slot left: back to factory sounds');
+  assert.ok(!('samples' in JSON.parse(serializeToConfigJson(p))), 'Factory packs write no samples block');
+
+  // 23c2. Names across packs: WAVs are stored by name, so a new one avoids other packs' files
+  const packA = S.assignSampleFile(S.assignSampleFile(base, 0, 'horn.wav'), 1, 'kick.wav');
+  const packB = S.assignSampleFile(base, 3, 'snare.wav');
+  assert.deepStrictEqual([...S.referencedSampleFiles([packA, packB, base])].sort(), ['horn.wav', 'kick.wav', 'snare.wav']);
+  assert.deepStrictEqual(S.referencedSampleFiles([{ ...packA, useBuiltInSamples: true }]).size, 0, 'Factory packs use no files');
+  const taken = S.takenSampleNames(packB, 3, [packA]);
+  assert.deepStrictEqual(taken.sort(), ['horn.wav', 'kick.wav'], "A slot's own file is free to reuse, other packs' are not");
+  assert.strictEqual(S.sanitizeSampleFileName('Horn.wav', taken), 'horn-2.wav');
+  assert.deepStrictEqual(S.takenSampleNames(packA, 0, []), ['kick.wav']);
+
+  // 23d. Disk budget: config.json plus the WAVs the pack names, in whole 4 KB clusters of a 250-cluster disk
+  assert.strictEqual(S.DISK_BUDGET_BYTES, 1_024_000, '250 clusters of 4 KB (os.statvfs on the mic)');
+  assert.deepStrictEqual([0, 1, 4096, 4097, 600_000].map(S.onDiskBytes), [0, 4096, 4096, 8192, 602_112]);
+  const withTwo = S.assignSampleFile(S.assignSampleFile(base, 0, 'a.wav'), 1, 'b.wav');
+  const u = S.diskUsage(withTwo, { 'a.wav': 600_000, 'unused.wav': 999_999 });
+  assert.strictEqual(u.configBytes, 4096, 'A small config.json still takes a whole cluster');
+  assert.strictEqual(u.sampleBytes, 602_112, 'Only files the pack names count, in whole clusters');
+  assert.deepStrictEqual(u.missingFiles, ['b.wav']);
+  assert.strictEqual(u.fits, true);
+  assert.strictEqual(S.diskUsage(withTwo, { 'a.wav': 600_000, 'b.wav': 600_000 }).fits, false, 'Over the disk does not fit');
+  // Bytes alone would fit (1,019,904 + config), clusters do not: that is the case the old count missed
+  const edge = S.diskUsage(withTwo, { 'a.wav': 509_953, 'b.wav': 509_953 });
+  assert.ok(509_953 * 2 + 1000 < S.DISK_BUDGET_BYTES && !edge.fits, 'Cluster rounding can tip a pack over');
+
+  // 23e. Zip: stored entries a standard unzip can read
+  assert.strictEqual(crc32(new TextEncoder().encode('123456789')), 0xcbf43926, 'CRC-32 check value');
+  const wav = makeWav({ frames: 100 });
+  const cfgBytes = new TextEncoder().encode('{"name":"Z"}');
+  const zip = createZip([{ name: 'config.json', data: cfgBytes }, { name: 'a.wav', data: wav }], new Date(2026, 10, 18, 12, 30, 10));
+  const zv = new DataView(zip.buffer);
+  const eocd = zip.length - 22;
+  assert.strictEqual(zv.getUint32(eocd, true), 0x06054b50);
+  assert.strictEqual(zv.getUint16(eocd + 10, true), 2);
+  let cd = zv.getUint32(eocd + 16, true);
+  const read = [];
+  for (let i = 0; i < 2; i++) {
+    assert.strictEqual(zv.getUint32(cd, true), 0x02014b50);
+    const nameLen = zv.getUint16(cd + 28, true);
+    const name = new TextDecoder().decode(zip.subarray(cd + 46, cd + 46 + nameLen));
+    const local = zv.getUint32(cd + 42, true);
+    const size = zv.getUint32(cd + 24, true);
+    assert.strictEqual(zv.getUint32(local, true), 0x04034b50);
+    const dataStart = local + 30 + zv.getUint16(local + 26, true);
+    const data = zip.subarray(dataStart, dataStart + size);
+    assert.strictEqual(crc32(data), zv.getUint32(cd + 16, true));
+    read.push([name, data]);
+    cd += 46 + nameLen;
+  }
+  assert.deepStrictEqual(read.map(([n]) => n), ['config.json', 'a.wav']);
+  assert.deepStrictEqual([...read[1][1]], [...wav], 'WAV bytes are stored unchanged');
+
+  // 23f. Engine: a custom WAV plays from its slot, clearing it brings back the demo sound
+  const smpEngine = new DspAudioEngine();
+  await smpEngine.init();
+  smpEngine.updatePreset({ id: 's', pos: 0, list: [{ id: 'x', effect: 'SAMPLE' }] });
+  const customBuf = smpEngine.ctx.createBuffer(1, 10, 48000);
+  smpEngine.setCustomSample(1, customBuf);
+  assert.strictEqual(smpEngine.hasCustomSample(1), true);
+  smpEngine.setActiveSampleSlot(1);
+  await smpEngine.triggerSample(true, 'oneshot');
+  assert.strictEqual(smpEngine.sampleSourceNode.buffer, customBuf, 'The slot plays the custom WAV');
+  smpEngine.setCustomSample(1, null);
+  assert.strictEqual(smpEngine.isSamplePlaying, false, 'Changing the playing slot stops it');
+  await smpEngine.triggerSample(true, 'oneshot');
+  assert.notStrictEqual(smpEngine.sampleSourceNode.buffer, customBuf, 'Cleared slot plays its demo sound again');
+  smpEngine.stop();
+}
+console.log('✓ Suite 23: Custom samples (WAV checks, slots, disk budget, zip export, engine slots) verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 24: Fitter (four sounds into the ~1 MB disk)
+// -----------------------------------------------------------------------------
+{
+  const F = fitter;
+  const src = (file, o = {}) => ({
+    file,
+    frames: 44100 * 3,
+    channels: 2,
+    sampleRate: 44100,
+    bitsPerSample: 16,
+    isFloat: false,
+    sound: { start: 0, end: 44100 * 3 },
+    ...o
+  });
+  const stereo3s = src('a.wav'); // 3 s stereo 16-bit 44.1 kHz = 529,244 bytes
+  assert.strictEqual(F.encodedBytes(stereo3s, F.nativeEncoding(stereo3s)), 44 + 44100 * 3 * 4);
+
+  // 24a. Everything fits: nothing changes
+  const roomy = F.planFit([stereo3s], 1_000_000);
+  assert.strictEqual(roomy.fits, true);
+  assert.ok(F.isNative(stereo3s, roomy.encodings['a.wav']));
+  assert.deepStrictEqual(roomy.notes['a.wav'], []);
+
+  // 24b. Concessions go cheapest first: silence, then mono, then the rate
+  const padded = src('p.wav', { sound: { start: 22050, end: 44100 * 2 } }); // 0.5 s silence before, 1 s after
+  const p1 = F.planFit([padded], 400_000);
+  assert.deepStrictEqual(p1.notes['p.wav'], ['trimmed 1.50 s of silence'], 'Trimming alone is enough');
+  assert.deepStrictEqual(p1.encodings['p.wav'].trim, { start: 22050, end: 88200 });
+  const p2 = F.planFit([padded], 150_000);
+  assert.deepStrictEqual(p2.notes['p.wav'], ['trimmed 1.50 s of silence', 'stereo → mono']);
+  const p3 = F.planFit([padded], 60_000);
+  assert.deepStrictEqual(p3.notes['p.wav'].slice(0, 3), ['trimmed 1.50 s of silence', 'stereo → mono', '44.1 kHz → 32 kHz'], '48 kHz is skipped: it would not save anything');
+  assert.ok(p3.fits && p3.totalBytes <= 60_000);
+
+  // 24c. 24-bit and float come down to 16-bit before anything audible
+  const hi = src('h.wav', { bitsPerSample: 24 });
+  assert.deepStrictEqual(F.planFit([hi], 600_000).notes['h.wav'], ['24-bit → 16-bit']);
+  const flt = src('f.wav', { bitsPerSample: 32, isFloat: true, channels: 1 });
+  const fp = F.planFit([flt], 300_000);
+  assert.deepStrictEqual(fp.notes['f.wav'], ['32-bit float → 16-bit']);
+  assert.deepStrictEqual([fp.encodings['f.wav'].bits, fp.encodings['f.wav'].isFloat], [16, false]);
+  // Any re-encode is 16-bit at most, even when the first step is a trim
+  const hiPad = src('hp.wav', { bitsPerSample: 24, sound: { start: 44100, end: 88200 } });
+  assert.strictEqual(F.planFit([hiPad], 500_000).encodings['hp.wav'].bits, 16);
+
+  // 24d. The largest file gives first, so small sounds keep their quality
+  const big = src('big.wav', { frames: 44100 * 4, sound: { start: 0, end: 44100 * 4 } });
+  const small = src('small.wav', { frames: 22050, sound: { start: 0, end: 22050 } });
+  const shared = F.planFit([big, small], 700_000);
+  assert.ok(shared.fits);
+  assert.deepStrictEqual(shared.notes['small.wav'], [], 'The small file is untouched');
+  assert.deepStrictEqual(shared.notes['big.wav'], ['stereo → mono']);
+
+  // 24e. When nothing is left to give, it says it does not fit
+  const huge = src('huge.wav', { frames: 44100 * 600, channels: 1, sound: { start: 0, end: 44100 * 600 } });
+  const none = F.planFit([huge], 1_000_000);
+  assert.strictEqual(none.fits, false);
+  assert.deepStrictEqual(none.encodings['huge.wav'], { channels: 1, sampleRate: 8000, bits: 8, isFloat: false }, 'It goes all the way down first');
+
+  // 24e2. With 4 KB clusters every file counts as whole clusters
+  const tiny = (f) => src(f, { frames: 100, channels: 1, sound: { start: 0, end: 100 } }); // 244 bytes each
+  assert.strictEqual(F.planFit([tiny('1.wav'), tiny('2.wav')], 8192, 4096).totalBytes, 8192);
+  assert.strictEqual(F.planFit([tiny('1.wav'), tiny('2.wav'), tiny('3.wav')], 8192, 4096).fits, false, 'Three files need three clusters');
+
+  // 24f. Silence detection with padding
+  const quietLoud = new Float32Array(1000);
+  quietLoud.fill(0.0001);
+  for (let i = 300; i < 600; i++) quietLoud[i] = 0.5;
+  assert.deepStrictEqual(F.findSound([quietLoud], 1000, -50, 0.01), { start: 290, end: 610 });
+  assert.deepStrictEqual(F.findSound([new Float32Array(500)], 1000), { start: 0, end: 500 }, 'All silence is kept as it is');
+  const right = new Float32Array(100);
+  right[50] = 0.9;
+  assert.deepStrictEqual(F.findSound([new Float32Array(100), right], 1000, -50, 0), { start: 50, end: 51 }, 'Either channel counts');
+
+  // 24g. 8-bit WAV is unsigned with 128 as silence; the header matches
+  const w8 = F.encodeWavPcm([Float32Array.of(0, 1, -1)], 8000, 8);
+  assert.deepStrictEqual([...w8.subarray(44)], [128, 255, 0]);
+  const info8 = samplesLib.inspectWav(w8);
+  assert.deepStrictEqual([info8.bitsPerSample, info8.sampleRate, info8.frames], [8, 8000, 3]);
+  assert.deepStrictEqual(samplesLib.wavDeviceIssues(info8), [], '8-bit files are playable');
+
+  // 24h. Same plan, no re-render
+  const e1 = p2.encodings['p.wav'];
+  assert.ok(F.sameEncoding(e1, { ...e1, trim: { ...e1.trim } }));
+  assert.ok(!F.sameEncoding(e1, { ...e1, sampleRate: 22050 }));
+  assert.ok(!F.sameEncoding(e1, undefined));
+}
+console.log('✓ Suite 24: Fitter (silence, bit depth, mono, sample rate, 8-bit, largest first) verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 25: Sending samples to the mic over USB (disk check, file transfer, live load)
+// -----------------------------------------------------------------------------
+{
+  const S = samplesLib;
+
+  // 25a. Space check against the mic's real disk
+  const disk = {
+    blockSize: 4096,
+    totalBlocks: 250,
+    freeBlocks: 100,
+    files: [
+      { name: 'readme.pdf', size: 300_000 },
+      { name: 'config.json', size: 1500 },
+      { name: 'horn.wav', size: 100_000 }
+    ]
+  };
+  const ok = S.planDeviceWrite(disk, [{ name: 'horn.wav', size: 200_000 }, { name: 'config.json', size: 2000 }]);
+  assert.strictEqual(ok.neededBytes, 200_704 + 4096 - 102_400 - 4096, 'Replaced files free their clusters');
+  assert.strictEqual(ok.fits, true);
+  const tooBig = S.planDeviceWrite(disk, [{ name: 'big.wav', size: 500_000 }]);
+  assert.strictEqual(tooBig.fits, false);
+  assert.strictEqual(tooBig.shortBytes, 503_808 - 409_600);
+  assert.deepStrictEqual(tooBig.otherFiles.map((f) => f.name), ['readme.pdf', 'horn.wav', 'config.json'], 'Largest other files first');
+  assert.strictEqual(S.planDeviceWrite(disk, [{ name: 'HORN.wav', size: 100_000 }]).neededBytes, 0, 'FAT names are case-insensitive');
+
+  // 25b. A mock mic with a tiny FAT disk that understands the client's REPL commands
+  const fs = new Map([['readme.pdf', new Uint8Array(1000)], ['old.wav', new Uint8Array(10)]]);
+  const sent = [];
+  let writing = null;
+  let ctrl = null;
+  const enc = new TextEncoder();
+  const reply = (text, out = '') => ctrl.enqueue(enc.encode(`\r\n>>> ${text}${out}\r\n>>> `));
+  const port = {
+    readable: new ReadableStream({ start(c) { ctrl = c; } }),
+    writable: new WritableStream({
+      write(chunk) {
+        const text = new TextDecoder().decode(chunk);
+        sent.push(text);
+        let m;
+        if (text.includes('"__DSK_" + "START__"')) {
+          const files = [...fs].map(([n, b]) => [n, b.length]);
+          return reply(text, `__DSK_START__${JSON.stringify({ b: 4096, t: 250, f: 200, files })}__DSK_END__`);
+        }
+        if (text.includes('os.listdir("/fat")') && text.includes('os.remove')) {
+          for (const r of text.matchAll(/os\.remove\("\/fat\/([^"]+)"\) if "([^"]+)" in _ls/g)) fs.delete(r[2]);
+        }
+        if ((m = text.match(/_w = open\("\/fat\/([^"]+)", "wb"\)/))) {
+          writing = m[1];
+          fs.set(writing, new Uint8Array(0));
+        }
+        if ((m = text.match(/_w\.write\(binascii\.a2b_base64\("([^"]*)"\)\)/))) {
+          if (writing === 'fail.wav.part') {
+            return ctrl.enqueue(enc.encode(`\r\n${text}Traceback (most recent call last):\r\nOSError: 28\r\n>>> `));
+          }
+          const add = Uint8Array.from(Buffer.from(m[1], 'base64'));
+          const prev = fs.get(writing);
+          const next = new Uint8Array(prev.length + add.length);
+          next.set(prev);
+          next.set(add, prev.length);
+          fs.set(writing, next);
+        }
+        if ((m = text.match(/os\.rename\("\/fat\/([^"]+)", "\/fat\/([^"]+)"\)/))) {
+          fs.set(m[2], fs.get(m[1]));
+          fs.delete(m[1]);
+        }
+        if ((m = text.match(/^import os; os\.remove\("\/fat\/([^"]+)"\)/))) fs.delete(m[1]);
+        if ((m = text.match(/_ep_ld\((\d), "\/fat\/([^"]+)", "(\w+)", ([\d.]+)\)/))) {
+          return reply(text, `__LD_OK__:${fs.has(m[2]) ? 'True' : 'False'}`);
+        }
+        ctrl.enqueue(enc.encode(`\r\n${text}>>> `));
+      }
+    }),
+    getInfo: () => ({ usbVendorId: EP2350_USB_VID, usbProductId: EP2350_USB_PID }),
+    open: async () => {},
+    close: async () => {}
+  };
+  const prevNavigator = globalThis.navigator;
+  globalThis.navigator = { serial: { requestPort: async () => port, getPorts: async () => [port] } };
+  const mic = new Ep2350SerialClient(0, 0);
+  await mic.connect();
+
+  const info = await mic.readDiskInfo();
+  assert.deepStrictEqual([info.blockSize, info.totalBlocks, info.freeBlocks], [4096, 250, 200]);
+  assert.deepStrictEqual(info.files.map((f) => f.name).sort(), ['old.wav', 'readme.pdf']);
+
+  // 25c. File transfer: base64 chunks into name.part, renamed when complete; bytes arrive unchanged
+  const wav = Uint8Array.from({ length: 3000 }, (_, i) => (i * 37) % 256);
+  const progress = [];
+  await mic.writeFile('horn.wav', wav, (done, total) => progress.push([done, total]));
+  assert.deepStrictEqual([...fs.get('horn.wav')], [...wav], 'The file arrives byte for byte');
+  assert.ok(!fs.has('horn.wav.part'), 'The temporary file is renamed');
+  assert.strictEqual(progress.length, Math.ceil(3000 / SERIAL_FILE_CHUNK_BYTES));
+  assert.deepStrictEqual(progress.at(-1), [3000, 3000]);
+  assert.ok(sent.some((c) => c.includes('os.sync()')), 'The disk is synced after writing');
+  await mic.writeFile('old.wav', Uint8Array.of(1, 2, 3));
+  assert.deepStrictEqual([...fs.get('old.wav')], [1, 2, 3], 'An existing file is replaced');
+  await assert.rejects(() => mic.writeFile('fail.wav', wav), /OSError: 28/, 'A write error stops the transfer');
+  assert.ok(!fs.has('fail.wav') && !fs.has('fail.wav.part'), 'A failed transfer leaves no file behind');
+  await assert.rejects(() => mic.writeFile('../boot.py', wav), /Unsafe file name/);
+  await assert.rejects(() => mic.writeFile('a"b.wav', wav), /Unsafe file name/);
+
+  // 25d. Live load: custom slots via the loader (playmode + duck), factory slots back to ROM, no remount
+  const loaded = await mic.loadSamplesLive([
+    { pos: 0, file: 'horn.wav', playmode: 'hold', duck: 0.5 },
+    { pos: 1 },
+    { pos: 2, file: 'missing.wav', playmode: 'oneshot' },
+    { pos: 3, file: 'old.wav', playmode: 'weird', duck: 7 }
+  ]);
+  assert.deepStrictEqual(loaded, [true, true, false, true]);
+  assert.ok(sent.some((c) => c.startsWith('exec(') && c.includes('spl.load_wav(p, g, m, d)') && c.includes('except TypeError')), 'The loader passes duck and falls back for older firmware');
+  assert.ok(sent.some((c) => c.includes('_ep_ld(0, "/fat/horn.wav", "hold", 0.5)')));
+  assert.ok(sent.some((c) => c.includes('spl.rom(1)')), 'Factory slots get their ROM sound back');
+  assert.ok(sent.some((c) => c.includes('_ep_ld(3, "/fat/old.wav", "oneshot", 1)')), 'Unknown playmode and out-of-range duck are sanitised');
+  assert.ok(!sent.some((c) => c.includes('examine_drive')), 'Never remounts the disk (the computer would report an unsafe eject)');
+  await assert.rejects(() => mic.loadSamplesLive([{ pos: 5, file: 'x.wav' }]), /Invalid sample slot/);
+
+  await mic.disconnect();
+  globalThis.navigator = prevNavigator;
+}
+console.log('✓ Suite 25: Sending samples to the mic over USB (disk check, transfer, live load) verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 26: REVERB kernel (room decay, diffusion, spring dispersion, stability)
+// -----------------------------------------------------------------------------
+{
+  const sr = 48000;
+  const render = (time, spring, secs, input) => {
+    const k = new ReverbKernel(sr);
+    k.setParams(time, spring);
+    const n = Math.round(sr * secs);
+    const L = new Float32Array(n);
+    const R = new Float32Array(n);
+    const inp = input ?? new Float32Array(n);
+    if (!input) inp[0] = 1;
+    for (let i = 0; i < n; i += 128) k.process(inp.subarray(i, i + 128), L.subarray(i, i + 128), R.subarray(i, i + 128));
+    return { L, R, k };
+  };
+  /** Schroeder backward integration: T60 from the -5..-25 dB slope. */
+  const rt60 = (x) => {
+    const e = new Float64Array(x.length);
+    let acc = 0;
+    for (let i = x.length - 1; i >= 0; i--) e[i] = acc += x[i] * x[i];
+    const db = (i) => 10 * Math.log10(e[i] / e[0]);
+    let a = 0;
+    while (db(a) > -5) a++;
+    let b = a;
+    while (b < x.length - 1 && db(b) > -25) b++;
+    return ((b - a) / sr) * 3;
+  };
+  const energy = (x) => x.reduce((a, v) => a + v * v, 0);
+  const bandpass = (x, f, q = 2) => {
+    const w = (2 * Math.PI * f) / sr, al = Math.sin(w) / (2 * q), a0 = 1 + al, a1 = -2 * Math.cos(w), a2 = 1 - al;
+    const y = new Float32Array(x.length);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) {
+      const v = (al * x[i] - al * x2 - a1 * y1 - a2 * y2) / a0;
+      x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+    }
+    return y;
+  };
+  const arrivalMs = (y, n) => {
+    let a = 0, b = 0;
+    for (let i = 0; i < n; i++) { a += i * y[i] * y[i]; b += y[i] * y[i]; }
+    return (a / b / sr) * 1000;
+  };
+
+  // 26a. The decay matches the knob (0..1 reads 0.0 s..6.0 s), within 15%
+  for (const t of [0.2, 0.5, 1]) {
+    const target = Math.max(0.1, 6 * t);
+    const measured = rt60(render(t, 0, target * 1.3 + 0.5).L);
+    assert.ok(Math.abs(measured - target) / target < 0.15, `time ${t}: RT60 ${measured.toFixed(2)} s should be about ${target} s`);
+  }
+
+  // 26b. time changes the decay, never a delay length (no pitch bending while it moves)
+  const k = new ReverbKernel(sr);
+  const lengths = () => [...k.combL, ...k.combR, ...k.apL, ...k.apR].map((b) => b.length).join(',');
+  const before = lengths();
+  k.setParams(0.1, 0);
+  k.setParams(1, 1);
+  assert.strictEqual(lengths(), before);
+  assert.ok(k.combFb.every((g) => g > 0 && g < 1), 'Comb feedback stays below 1');
+
+  // 26c. Diffuse and wide: dense tail, left and right differ
+  const room = render(0.5, 0, 1);
+  const tail = room.L.subarray(Math.round(0.05 * sr), Math.round(0.1 * sr));
+  const peak = Math.max(...tail.map(Math.abs));
+  assert.ok(tail.filter((v) => Math.abs(v) > peak * 0.01).length / tail.length > 0.5, 'Dense tail after 50 ms (no flutter of a few echoes)');
+  let diff = 0;
+  for (let i = 0; i < room.L.length; i++) diff += (room.L[i] - room.R[i]) ** 2;
+  assert.ok(diff / energy(room.L) > 0.5, 'Left and right are decorrelated');
+
+  // 26d. Spring: low frequencies arrive later than high ones (the descending chirp); the room has no such spread
+  const spr = render(0.5, 1, 0.5).L;
+  const win = Math.round(0.04 * sr);
+  const sLow = arrivalMs(bandpass(spr, 300), win), sHigh = arrivalMs(bandpass(spr, 3000), win);
+  assert.ok(sLow - sHigh > 3, `Spring 300 Hz should arrive >3 ms after 3 kHz (got ${sLow.toFixed(1)} vs ${sHigh.toFixed(1)} ms)`);
+  const rLow = arrivalMs(bandpass(room.L, 300), win), rHigh = arrivalMs(bandpass(room.L, 3000), win);
+  assert.ok(Math.abs(rLow - rHigh) < 2, 'The room does not chirp');
+
+  // 26e. Room and spring are about as loud, so spring-mix crossfades rather than jumps
+  const ratioDb = 10 * Math.log10(energy(spr) / energy(render(0.5, 0, 0.5).L));
+  assert.ok(Math.abs(ratioDb) < 3, `Room and spring within 3 dB (got ${ratioDb.toFixed(1)} dB)`);
+  assert.strictEqual(energy(render(0.5, 0, 0.3).L.subarray(0, 10)), 0, 'Silent until the first reflection');
+
+  // 26f. Stable: 5 s of full-scale noise at the longest time, half spring, stays finite and bounded
+  const noise = Float32Array.from({ length: sr * 5 }, (_, i) => Math.sin(i * 12.9898) * 43758.5453 % 1);
+  const loud = render(1, 0.5, 5, noise);
+  assert.ok(loud.L.every(Number.isFinite) && loud.R.every(Number.isFinite), 'No NaN or Infinity');
+  assert.ok(loud.L.reduce((m, v) => Math.max(m, Math.abs(v)), 0) < 2, 'Output stays bounded');
+
+  // 26g. Out-of-range and missing values are clamped
+  const c = new ReverbKernel(0);
+  assert.strictEqual(c.sr, 48000);
+  c.setParams(7, -1);
+  assert.deepStrictEqual([c.time, c.spring], [1, 0]);
+  c.setParams(NaN, NaN);
+  assert.deepStrictEqual([c.time, c.spring], [0.5, 0]);
+}
+console.log('✓ Suite 26: REVERB kernel (decay matches the knob, no pitch bend, diffuse stereo room, spring chirp, stable) verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 27: Stereo DELAY with cross-feed (ping-pong)
+// -----------------------------------------------------------------------------
+{
+  const ctx = new MockAudioContext();
+  const d = buildStereoDelay(ctx);
+  const set = (param, v) => { if (param) param.value = v; };
+  const base = { time: 0.3, echo: 0.6, crossFeed: 0, lowpass: 0.7, highpass: 0.2, wet: 0.5, dry: 1, balance: 0.5 };
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+  // 27a. cross-feed 0: each side repeats itself, both take the input (dual mono)
+  d.apply(base, set);
+  assert.ok(near(d.left.fbSame.gain.value, 0.6) && near(d.left.fbCross.gain.value, 0));
+  assert.ok(near(d.right.fbSame.gain.value, 0.6) && near(d.right.fbCross.gain.value, 0));
+  assert.strictEqual(d.injectR.gain.value, 1);
+
+  // 27b. cross-feed 1: repeats alternate sides, only the left takes the input (ping-pong)
+  d.apply({ ...base, crossFeed: 1 }, set);
+  assert.ok(near(d.left.fbSame.gain.value, 0) && near(d.left.fbCross.gain.value, 0.6));
+  assert.ok(near(d.right.fbCross.gain.value, 0.6));
+  assert.strictEqual(d.injectR.gain.value, 0);
+
+  // 27c. In between the loop gain per line stays `echo`, so cross-feed never changes how long repeats last
+  d.apply({ ...base, crossFeed: 0.25 }, set);
+  assert.ok(near(d.left.fbSame.gain.value + d.left.fbCross.gain.value, 0.6));
+  assert.ok(near(d.left.fbSame.gain.value, 0.45) && near(d.injectR.gain.value, 0.75));
+
+  // 27d. Both lines share time and filters; values are clamped; balance pans the repeats
+  d.apply({ ...base, time: 5, echo: 3, lowpass: 0.5, highpass: 0.1, balance: 0 }, set);
+  assert.deepStrictEqual([d.left.delay.delayTime.value, d.right.delay.delayTime.value], [1.1, 1.1]);
+  assert.ok(near(d.left.fbSame.gain.value, 1.18), 'Echo tops out at 1.18 (soft-clipped self-oscillation)');
+  assert.ok(near(d.left.lp.frequency.value, cutoffToHz(0.5)) && near(d.right.hp.frequency.value, cutoffToHz(0.1)));
+  assert.strictEqual(d.wetPanner.pan.value, -1);
+  d.apply({ ...base, time: 0 }, set);
+  assert.strictEqual(d.left.delay.delayTime.value, 0.01);
+
+  // 27e. Wiring: each line feeds the other through fbCross, and the two sides reach separate channels
+  assert.ok(d.left.fbCross.connections.includes(d.right.delay) && d.right.fbCross.connections.includes(d.left.delay));
+  assert.ok(d.left.fbSame.connections.includes(d.left.delay) && d.right.fbSame.connections.includes(d.right.delay));
+  assert.ok(d.input.connections.includes(d.left.delay) && d.injectR.connections.includes(d.right.delay));
+  assert.ok(d.left.clip.curve && d.right.clip.curve, 'Each loop has the soft clipper');
+}
+console.log('✓ Suite 27: Stereo DELAY with cross-feed (dual mono at 0, ping-pong at 1, constant loop gain) verified');
+
+// -----------------------------------------------------------------------------
+// SUITE 28: The mic opens only while the handle is squeezed (samples still play)
+// -----------------------------------------------------------------------------
+{
+  assert.strictEqual(isHandleSqueezed(0), false, 'Released: mic closed');
+  assert.strictEqual(isHandleSqueezed(0.01), true, 'Any squeeze opens it');
+  assert.strictEqual(isHandleSqueezed(1), true);
+
+  const gateEngine = new DspAudioEngine();
+  await gateEngine.init();
+  gateEngine.updatePreset({ id: 'g', pos: 0, list: [{ id: 's', effect: 'SAMPLE' }] });
+  gateEngine.updateModulation({ handlePos: 1 });
+  await gateEngine.start();
+  const gate = gateEngine.getMicGate();
+  assert.strictEqual(gate.gain.value, 1, 'Squeezed by default: the voice passes');
+
+  gateEngine.updateModulation({ handlePos: 0 });
+  assert.strictEqual(gate.gain.value, 0, 'Releasing the handle closes the mic');
+  gateEngine.updateModulation({ handlePos: 0.4 });
+  assert.strictEqual(gate.gain.value, 1, 'Squeezing again opens it');
+
+  // A sample plays with the handle released: it enters after the gate
+  gateEngine.updateModulation({ handlePos: 0 });
+  await gateEngine.triggerSample(true, 'hold');
+  assert.ok(gateEngine.sampleSourceNode, 'The sample plays');
+  assert.ok(!gate.connections.includes(gateEngine.sampleSourceNode) && !gateEngine.sampleSourceNode.connections.includes(gate), 'Samples bypass the mic gate');
+  gateEngine.stop();
+  assert.strictEqual(gateEngine.getMicGate(), null, 'stop() tears the gate down');
+
+  // Restarting while released keeps the mic closed
+  await gateEngine.start();
+  assert.strictEqual(gateEngine.getMicGate().gain.value, 0);
+  gateEngine.stop();
+}
+console.log('✓ Suite 28: Mic opens only while the handle is squeezed; samples bypass it verified');
+
+console.log('\n=== ALL 28 PRODUCTION TEST SUITES PASSED (100%) ===');

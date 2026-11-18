@@ -227,6 +227,19 @@ export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
         defaultVal: 1.0,
         unit: 'Hz',
         displayScale: (v) => `${Math.round(20 * Math.pow(1000, v))}Hz`
+      },
+      {
+        name: 'Q',
+        label: 'Q',
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        // 0.2 is the resonance the preview uses when Q is left out (biquad Q 2.0)
+        defaultVal: 0.2,
+        unit: '',
+        displayScale: (v) => (v * 10).toFixed(1),
+        optional: true,
+        minFirmware: '1.0.9'
       }
     ]
   },
@@ -246,6 +259,19 @@ export const EFFECTS_REGISTRY: Record<EffectType, EffectMeta> = {
         defaultVal: 0.0,
         unit: 'Hz',
         displayScale: (v) => `${Math.round(20 * Math.pow(1000, v))}Hz`
+      },
+      {
+        name: 'Q',
+        label: 'Q',
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        // 0.2 is the resonance the preview uses when Q is left out (biquad Q 2.0)
+        defaultVal: 0.2,
+        unit: '',
+        displayScale: (v) => (v * 10).toFixed(1),
+        optional: true,
+        minFirmware: '1.0.9'
       }
     ]
   },

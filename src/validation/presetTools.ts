@@ -150,6 +150,19 @@ export function validatePresetInput(
         'The pack has a "samples" block. WAV files cannot travel with the pack or its share link, so the mic would look for files the user does not have.',
         'Leave "samples" out; the mic then uses its built-in sounds.'
       );
+      if (Array.isArray(packObj.samples)) {
+        packObj.samples.forEach((smp: any, i: number) => {
+          if (!smp || typeof smp !== 'object' || smp.duck === undefined) return;
+          const path = `samples[${i}].duck`;
+          if (typeof smp.duck !== 'number' || !Number.isFinite(smp.duck)) {
+            addPack('error', 'duck_not_number', path, `duck must be a number, got ${JSON.stringify(smp.duck)}.`, 'Use a number from 0 (mic untouched) to 1 (mic silent while the sample plays), or leave duck out.');
+          } else if (smp.duck < 0 || smp.duck > 1) {
+            addPack('error', 'out_of_range', path, `duck is ${smp.duck}, outside 0..1.`, 'Use a number from 0 (mic untouched) to 1 (mic silent while the sample plays).');
+          } else {
+            addPack('warning', 'needs_firmware', path, 'duck needs EP-2350 firmware 1.0.9 or newer; older firmware does not know it.', 'Update the mic to the latest firmware, or remove "duck".');
+          }
+        });
+      }
     }
     if (!Array.isArray(packObj.presets) || packObj.presets.length === 0) {
       addPack('error', 'missing_presets', 'presets', 'config.json has no "presets" array (or it is empty).', 'Add "presets": up to 4 presets with pos 0..3.');

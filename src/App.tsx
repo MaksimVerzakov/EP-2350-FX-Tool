@@ -1,12 +1,37 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_PACK, OFFICIAL_TE_PACKS, OfficialPackPreset, createEmptyPack } from './constants/defaultPresets';
-import { PackConfig, PresetConfig, ThemeMode } from './types/config';
+import { PackConfig, PlayMode, PresetConfig, ThemeMode } from './types/config';
 import { audioEngine } from './dsp/AudioEngine';
 import { serializeToConfigJson } from './utils/serializer';
 import { parseConfigJson } from './utils/parser';
 import { buildPackShareUrl, decodeHashPayload } from './utils/presetUrl';
 import { Ep2350SerialClient, ep2350Serial } from './utils/webSerial';
 import { createMultiTabGuard } from './utils/tabGuard';
+import {
+  DISK_BUDGET_BYTES,
+  DISK_CLUSTER_BYTES,
+  SAMPLE_SLOTS,
+  assignSampleFile,
+  clearSampleSlot,
+  customSampleAt,
+  customSampleSlots,
+  describeWav,
+  diskUsage,
+  deviceChannels,
+  encodeWav16,
+  formatBytes,
+  inspectWav,
+  planDeviceWrite,
+  referencedSampleFiles,
+  takenSampleNames,
+  type WavInfo,
+  sanitizeSampleFileName,
+  updateSampleSlot,
+  wavDeviceIssues
+} from './utils/samples';
+import { createZip } from './utils/zip';
+import { loadStoredSamples, pruneStoredSamples, storeSample } from './utils/sampleStore';
+import { type FitSource, encodeWavPcm, findSound, isNative, nativeEncoding, planFit, sameEncoding } from './utils/fitter';
 import {
   type KeyValueStore,
   type PackSelection,
@@ -29,6 +54,7 @@ import { MicDevice } from './components/MicDevice';
 import { AudioPlayerCompact } from './components/AudioPlayerCompact';
 import { PresetLedger } from './components/PresetLedger';
 import { McpPanel } from './components/McpPanel';
+import { SamplesPanel, type LoadedSample } from './components/SamplesPanel';
 import { DeviceConnector } from './components/DeviceConnector';
 import { MultiTabBanner } from './components/MultiTabBanner';
 import { PackConflictDialog } from './components/PackConflictDialog';
@@ -96,6 +122,9 @@ const getInitialPackState = (): InitialPackState => (initialPackStateCache ??= r
 export const App: React.FC = () => {
   const [initialPackState] = useState(getInitialPackState);
   const [pack, setPack] = useState<PackConfig>(initialPackState.pack);
+  /** Latest pack, for edits that finish after an await (loading a WAV). */
+  const packRef = useRef(pack);
+  packRef.current = pack;
   /** "YOUR PACKS": packs the user created, imported or opened from a link, kept in localStorage. */
   const [userPacks, setUserPacks] = useState<UserPack[]>(initialPackState.userPacks);
   const [selection, setSelection] = useState<PackSelection | null>(initialPackState.selection);
@@ -180,7 +209,15 @@ export const App: React.FC = () => {
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [activeSampleSlot, setActiveSampleSlot] = useState<number>(0);
   const [handlePos, setHandlePos] = useState<number>(1.0);
-  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'mcp'>('fx');
+  const [rightPanelMode, setRightPanelMode] = useState<'fx' | 'samples' | 'mcp'>('fx');
+  /** WAV files loaded in this browser session, by disk file name (not stored across reloads yet). */
+  const [sampleLibrary, setSampleLibrary] = useState<Record<string, LoadedSample>>({});
+  /** Decoded audio for the loaded WAVs, by file name. */
+  const decodedSamplesRef = useRef(new Map<string, AudioBuffer>());
+  /** Decoded originals, by file name: the fitter always renders from these. */
+  const originalDecodedRef = useRef(new Map<string, AudioBuffer>());
+  const sampleLibraryRef = useRef(sampleLibrary);
+  sampleLibraryRef.current = sampleLibrary;
   const [isDeviceConnected, setIsDeviceConnected] = useState<boolean>(false);
   const [isDeviceConnecting, setIsDeviceConnecting] = useState<boolean>(false);
   const [isDevicePack, setIsDevicePack] = useState<boolean>(false);
@@ -382,14 +419,144 @@ export const App: React.FC = () => {
     [isDeviceConnected, isDevicePack]
   );
 
-  // Trigger selected sample through active preset's SAMPLE block
-  const handleSampleTrigger = useCallback(
-    (down: boolean) => {
-      const slotCfg = pack.samples.find((s) => s.pos === activeSampleSlot) || pack.samples[activeSampleSlot];
-      audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot');
+  // Trigger a sample slot through the active preset's SAMPLE block
+  const triggerSampleSlot = useCallback(
+    (pos: number, down: boolean) => {
+      const slotCfg = pack.useBuiltInSamples
+        ? pack.samples.find((s) => s.pos === pos) || pack.samples[pos]
+        : customSampleAt(pack, pos);
+      audioEngine.triggerSample(down, slotCfg?.playmode || 'oneshot', pack.useBuiltInSamples ? 0 : slotCfg?.duck ?? 0);
     },
-    [pack.samples, activeSampleSlot]
+    [pack]
   );
+
+  const handleSampleTrigger = useCallback(
+    (down: boolean) => triggerSampleSlot(activeSampleSlot, down),
+    [triggerSampleSlot, activeSampleSlot]
+  );
+
+  /** The SAMPLES panel's PLAY button: select the slot (as the mic's sample button would), then play it. */
+  const handlePlaySampleSlot = useCallback(
+    (pos: number, down: boolean) => {
+      if (down && pos !== activeSampleSlot) handleSelectSampleSlot(pos);
+      triggerSampleSlot(pos, down);
+    },
+    [activeSampleSlot, handleSelectSampleSlot, triggerSampleSlot]
+  );
+
+  // Custom WAVs play from their slots in the preview; other slots play the bundled demo sounds
+  useEffect(() => {
+    for (let pos = 0; pos < SAMPLE_SLOTS; pos++) {
+      const slot = customSampleAt(pack, pos);
+      audioEngine.setCustomSample(pos, (slot && decodedSamplesRef.current.get(slot.file)) || null);
+    }
+  }, [pack, sampleLibrary]);
+
+  // Bring back the WAVs loaded in earlier sessions (stored in IndexedDB) that a pack still uses
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await loadStoredSamples();
+      const used = referencedSampleFiles([packRef.current, ...userPacksRef.current.map((u) => u.pack)]);
+      const restored: Record<string, LoadedSample> = {};
+      for (const [name, sample] of Object.entries(stored)) {
+        if (!used.has(name)) continue;
+        restored[name] = sample;
+        if (!decodedSamplesRef.current.has(name)) {
+          try {
+            const fitted = await audioEngine.decodeSampleFile(sample.bytes);
+            decodedSamplesRef.current.set(name, fitted);
+            originalDecodedRef.current.set(
+              name,
+              sample.original ? await audioEngine.decodeSampleFile(sample.original.bytes) : fitted
+            );
+          } catch {
+            // Still exported with the pack; there is just no preview
+          }
+        }
+      }
+      // A WAV loaded in this session wins over the stored copy of the same name
+      if (!cancelled && Object.keys(restored).length > 0) setSampleLibrary((lib) => ({ ...restored, ...lib }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Drop stored WAVs no pack uses any more (leader tab only, so a second tab cannot delete in-use files)
+  const hasPrunedSamplesRef = useRef(false);
+  useEffect(() => {
+    if (!isTabLeader || hasPrunedSamplesRef.current) return;
+    hasPrunedSamplesRef.current = true;
+    void pruneStoredSamples(referencedSampleFiles([packRef.current, ...userPacksRef.current.map((u) => u.pack)]));
+  }, [isTabLeader]);
+
+  // Fit the pack's WAVs into the ~1 MB disk whenever its files change. Always from the originals,
+  // so removing a sample gives the others their quality back.
+  const fitGenRef = useRef(0);
+  const sampleFilesKey = customSampleSlots(pack)
+    .map((s) => {
+      const e = sampleLibrary[s.file];
+      return `${s.file}:${e ? (e.original ?? e).bytes.byteLength : '-'}`;
+    })
+    .join('|');
+  useEffect(() => {
+    const gen = ++fitGenRef.current;
+    void (async () => {
+      const p = packRef.current;
+      const lib = sampleLibraryRef.current;
+      const files = [...new Set(customSampleSlots(p).map((s) => s.file))].filter((f) => lib[f]);
+      if (files.length === 0) return;
+      const sources: FitSource[] = files.map((f) => {
+        const o = (lib[f].original ?? lib[f]).info;
+        return {
+          file: f,
+          frames: o.frames,
+          channels: o.channels,
+          sampleRate: o.sampleRate,
+          bitsPerSample: o.bitsPerSample,
+          isFloat: o.isFloat,
+          sound: lib[f].sound ?? { start: 0, end: o.frames }
+        };
+      });
+      const plan = planFit(sources, DISK_BUDGET_BYTES - diskUsage(p, {}).configBytes, DISK_CLUSTER_BYTES);
+      const updates: Record<string, LoadedSample> = {};
+      for (const src of sources) {
+        const entry = lib[src.file];
+        const enc = plan.encodings[src.file];
+        if (sameEncoding(entry.encoding ?? nativeEncoding(src), enc)) continue;
+        const original = entry.original ?? { bytes: entry.bytes, info: entry.info };
+        let bytes = original.bytes;
+        if (!isNative(src, enc)) {
+          const buf = originalDecodedRef.current.get(src.file);
+          if (!buf) continue;
+          try {
+            const out = await audioEngine.renderForDevice(buf, src.sampleRate, enc);
+            bytes = encodeWavPcm(out.channels, out.sampleRate, enc.bits === 8 ? 8 : 16);
+          } catch {
+            continue;
+          }
+        }
+        if (gen !== fitGenRef.current) return;
+        const fitted = isNative(src, enc)
+          ? { bytes, info: original.info, sound: entry.sound }
+          : { bytes, info: inspectWav(bytes), original, sound: entry.sound, encoding: enc, notes: plan.notes[src.file] };
+        try {
+          decodedSamplesRef.current.set(src.file, await audioEngine.decodeSampleFile(bytes));
+        } catch {
+          decodedSamplesRef.current.delete(src.file);
+        }
+        updates[src.file] = fitted;
+      }
+      if (gen !== fitGenRef.current || Object.keys(updates).length === 0) return;
+      setSampleLibrary((cur) => ({ ...cur, ...updates }));
+      for (const [f, e] of Object.entries(updates)) void storeSample(f, e);
+      const lines = Object.entries(updates).map(([f, e]) =>
+        e.notes?.length ? `${f}: ${e.notes.join(', ')}` : `${f}: back to its original quality`
+      );
+      showToast('success', plan.fits ? 'Fitted into 1 MB' : 'Still over 1 MB', `${lines.join('. ')}.`);
+    })();
+  }, [sampleFilesKey, showToast]);
 
   // Squeeze handle modulation
   const handleHandleChange = useCallback((val: number) => {
@@ -446,6 +613,7 @@ export const App: React.FC = () => {
 
   /** Apply an edit to the editor pack; user packs save as you go, official packs only live in memory. */
   const commitPackEdit = (nextPack: PackConfig) => {
+    packRef.current = nextPack;
     setPack(nextPack);
     if (isDevicePack) {
       setDevicePack(nextPack);
@@ -532,14 +700,120 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleLoadSampleFile = async (pos: number, file: File) => {
+    let bytes: Uint8Array;
+    let info: WavInfo;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+      info = inspectWav(bytes);
+    } catch (err) {
+      showToast('error', 'Not a WAV file', `${file.name}: ${err instanceof Error ? err.message : String(err)} The mic only plays WAV files.`);
+      return;
+    }
+    let decoded: AudioBuffer | null = null;
+    try {
+      decoded = await audioEngine.decodeSampleFile(bytes);
+    } catch {
+      decoded = null;
+    }
+    // A WAV the mic cannot take (over 96 kHz, compressed, 32-bit integer, 3+ channels) is converted
+    // to 16-bit PCM at the browser's rate, keeping mono or stereo
+    let converted = false;
+    if (wavDeviceIssues(info).length > 0) {
+      if (!decoded) {
+        showToast('error', 'Cannot convert this WAV', `${file.name}: the mic cannot play it and this browser cannot convert it.`);
+        return;
+      }
+      const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded!.getChannelData(c));
+      bytes = encodeWav16(deviceChannels(channels), decoded.sampleRate);
+      info = inspectWav(bytes);
+      decoded = await audioEngine.decodeSampleFile(bytes).catch(() => decoded);
+      converted = true;
+    }
+    // Read the pack after the awaits: another WAV may have been loaded meanwhile
+    // Avoid this pack's other slots and every other pack's files: WAVs are stored by name
+    const sel = selectionRef.current;
+    const otherPacks = userPacksRef.current
+      .filter((u) => !(sel?.kind === 'user' && u.id === sel.id))
+      .map((u) => u.pack);
+    const name = sanitizeSampleFileName(file.name, takenSampleNames(packRef.current, pos, otherPacks));
+    let sound: LoadedSample['sound'];
+    if (decoded) {
+      decodedSamplesRef.current.set(name, decoded);
+      originalDecodedRef.current.set(name, decoded);
+      // Silence found at the decoded rate, in frames of the file
+      const d = decoded;
+      const found = findSound(Array.from({ length: d.numberOfChannels }, (_, c) => d.getChannelData(c)), d.sampleRate);
+      const k = info.sampleRate / d.sampleRate;
+      sound = { start: Math.floor(found.start * k), end: Math.min(info.frames, Math.ceil(found.end * k)) };
+    } else {
+      decodedSamplesRef.current.delete(name);
+      originalDecodedRef.current.delete(name);
+    }
+    const entry: LoadedSample = { bytes, info, sound };
+    setSampleLibrary((lib) => ({ ...lib, [name]: entry }));
+    commitPackEdit(assignSampleFile(packRef.current, pos, name));
+    void storeSample(name, entry);
+    if (converted) {
+      showToast('success', 'Converted for the mic', `${name} is now ${describeWav(info)}.`);
+    } else if (!decoded) {
+      showToast('error', 'No preview', `This browser cannot play ${name}, but it is in the pack.`);
+    }
+  };
+
+  const handleClearSampleSlot = (pos: number) => {
+    commitPackEdit(clearSampleSlot(pack, pos));
+  };
+
+  const handleUpdateSampleSlot = (pos: number, patch: { playmode?: PlayMode; duck?: number | undefined }) => {
+    commitPackEdit(updateSampleSlot(pack, pos, patch));
+  };
+
   const handleSaveToDevice = async (): Promise<boolean> => {
     if (!isDeviceConnected) return false;
     try {
       const jsonStr = serializeToConfigJson(pack);
+      const custom = customSampleSlots(pack);
+      const lib = sampleLibraryRef.current;
+      const files = [...new Set(custom.map((s) => s.file))].filter((f) => lib[f]);
+      if (files.length > 0) {
+        // Check the mic's real free space first: TE's own files (readme.pdf) may take room too
+        const disk = await ep2350Serial.readDiskInfo();
+        const plan = planDeviceWrite(disk, [
+          ...files.map((f) => ({ name: f, size: lib[f].bytes.byteLength })),
+          { name: 'config.json', size: new TextEncoder().encode(jsonStr).byteLength }
+        ]);
+        if (!plan.fits) {
+          const others = plan.otherFiles.slice(0, 3).map((f) => `${f.name} (${formatBytes(f.size)})`);
+          showToast('error', 'Not enough space on the mic', `${formatBytes(plan.shortBytes)} short.${others.length ? ` Also on its disk: ${others.join(', ')}.` : ''} Delete files from the fx-mic disk or use fewer samples.`);
+          return false;
+        }
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          await ep2350Serial.writeFile(f, lib[f].bytes, (sent, total) => {
+            showToast('success', 'Sending samples to the mic', `${f} (${i + 1} of ${files.length}): ${Math.round((sent / total) * 100)}%`);
+          });
+        }
+      }
       await ep2350Serial.saveConfigJson(jsonStr, activeSlot);
+      let loadedNote = '';
+      if (custom.length > 0) {
+        // Load every slot now: sent WAVs play straight away, the other slots get their factory sound
+        const slots = [0, 1, 2, 3].map((pos) => {
+          const s = custom.find((c) => c.pos === pos);
+          return s ? { pos, file: s.file, playmode: s.playmode, duck: s.duck } : { pos };
+        });
+        const results = await ep2350Serial.loadSamplesLive(slots);
+        const failed = slots.filter((s, i) => s.file && !results[i]).map((s) => s.file);
+        loadedNote = failed.length
+          ? ` The mic could not load ${failed.join(', ')}; those slots play the factory sound.`
+          : ` ${files.length} sample${files.length === 1 ? '' : 's'} sent and loaded.`;
+      }
       const copied = selection?.kind === 'official' && keepEditedPackAsCopy();
       if (selection === null) setSelection({ kind: 'device' });
-      if (copied) showToast('success', 'Saved to the mic', 'A copy of this pack is now in YOUR PACKS.');
+      if (loadedNote || copied) {
+        showToast('success', 'Saved to the mic', `${copied ? 'A copy of this pack is now in YOUR PACKS.' : ''}${loadedNote}`.trim());
+      }
       setDevicePack(pack);
       setIsDevicePack(true);
       setSavedDeviceJson(jsonStr);
@@ -612,11 +886,35 @@ export const App: React.FC = () => {
       showToast('success', 'Exported', 'A copy of this pack is now in YOUR PACKS.');
     }
     const jsonStr = serializeToConfigJson(pack);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const files = [...new Set(customSampleSlots(pack).map((s) => s.file))];
+    const loadedFiles = files.filter((f) => sampleLibrary[f]);
+    let blob: Blob;
+    let fileName: string;
+    if (loadedFiles.length > 0) {
+      // config.json plus the WAVs it names: copy everything in the zip to the root of the fx-mic disk
+      const zip = createZip([
+        { name: 'config.json', data: new TextEncoder().encode(jsonStr) },
+        ...loadedFiles.map((f) => ({ name: f, data: sampleLibrary[f].bytes }))
+      ]);
+      blob = new Blob([zip as BlobPart], { type: 'application/zip' });
+      const slug = pack.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'pack';
+      fileName = `${slug}.zip`;
+      const missing = files.filter((f) => !sampleLibrary[f]);
+      showToast(
+        'success',
+        'Exported with samples',
+        `Unzip and copy config.json and the WAVs to the root of the fx-mic disk.${
+          missing.length ? ` Not included (not loaded): ${missing.join(', ')}.` : ''
+        }`
+      );
+    } else {
+      blob = new Blob([jsonStr], { type: 'application/json' });
+      fileName = 'config.json';
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'config.json';
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -698,6 +996,7 @@ export const App: React.FC = () => {
             >
               {([
                 { id: 'fx', label: 'FX CHAIN', widthClass: 'w-[76px]', isEdge: false, title: 'Show preset FX chain editor' },
+                { id: 'samples', label: 'SAMPLES', widthClass: 'w-[76px]', isEdge: false, title: 'Load your own WAVs into the four sample slots' },
                 { id: 'mcp', label: 'MCP', widthClass: 'w-[75px]', isEdge: true, title: 'Connect the EP-2350 tool to your AI' }
               ] as const).map((tab) => {
                 const isActive = rightPanelMode === tab.id;
@@ -736,6 +1035,18 @@ export const App: React.FC = () => {
                 presetNames={pack.presets.map((p, i) => p.name || `PRESET ${i + 1}`)}
                 onUpdatePreset={handleUpdateActivePreset}
                 onSelectPreset={handleSelectSlot}
+                theme={theme}
+              />
+            ) : rightPanelMode === 'samples' ? (
+              <SamplesPanel
+                pack={pack}
+                library={sampleLibrary}
+                activeSampleSlot={activeSampleSlot}
+                onSelectSlot={handleSelectSampleSlot}
+                onLoadFile={(pos, file) => void handleLoadSampleFile(pos, file)}
+                onClearSlot={handleClearSampleSlot}
+                onUpdateSlot={handleUpdateSampleSlot}
+                onPlaySlot={handlePlaySampleSlot}
                 theme={theme}
               />
             ) : (

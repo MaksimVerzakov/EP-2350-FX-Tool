@@ -14,6 +14,12 @@ interface KnobProps {
   size?: number;
   isModulated?: boolean;
   modulationSource?: string;
+  /** Optional parameter left out of config.json: drawn dimmed, the mic uses its own default. */
+  inactive?: boolean;
+  /** Extra line for the hover title, e.g. firmware requirements. */
+  hint?: string;
+  /** Shown but not adjustable (e.g. settings a factory sample cannot take). */
+  disabled?: boolean;
 }
 
 export const Knob: React.FC<KnobProps> = ({
@@ -29,7 +35,10 @@ export const Knob: React.FC<KnobProps> = ({
   accentColor = '#f15a22',
   size = 36,
   isModulated = false,
-  modulationSource
+  modulationSource,
+  inactive = false,
+  hint,
+  disabled = false
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -199,8 +208,18 @@ export const Knob: React.FC<KnobProps> = ({
 
   return (
     <div
-      className="flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5"
-      title={`${label}: ${formatVal(value)} (Drag dial or type in box)`}
+      className={`flex flex-col items-center select-none group w-[68px] min-w-[68px] px-0.5 py-0.5 transition-opacity ${
+        disabled ? 'opacity-35 pointer-events-none' : inactive ? 'opacity-45 hover:opacity-80' : ''
+      }`}
+      data-inactive={inactive ? 'true' : undefined}
+      aria-disabled={disabled || undefined}
+      title={
+        disabled
+          ? `${label}: not available here.${hint ? ` ${hint}` : ''}`
+          : inactive
+          ? `${label}: not set, the mic uses its own default. Turn the dial to set it.${hint ? ` ${hint}` : ''}`
+          : `${label}: ${formatVal(value)} (Drag dial or type in box)${hint ? `. ${hint}` : ''}`
+      }
     >
       {/* Parameter Label + Mod Indicator */}
       <div className="flex items-center justify-between w-full mb-0.5 px-0.5">
@@ -295,6 +314,7 @@ export const Knob: React.FC<KnobProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onDoubleClick={onReset}
+          disabled={disabled}
           className="w-[52px] h-[17px] text-te-xs font-mono font-bold text-[#192a3c] text-center bg-white border border-[#d2d5d2] hover:border-te-edge focus:border-te-accent rounded-[1px] outline-none px-0.5 py-0 leading-none transition-colors"
         />
       </div>

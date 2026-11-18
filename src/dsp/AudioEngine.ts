@@ -1,14 +1,15 @@
 import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import { busLanes } from '../utils/busRouting';
+import { buildStereoDelay } from './stereoDelay';
 import {
   NoiseGateKernel,
   PitchShiftKernel,
+  ReverbKernel,
   SsbFrequencyShiftKernel,
   computeLfoWave,
   cutoffToHz,
   makeDistortionCurve,
-  makeSoftClipCurve,
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
@@ -24,7 +25,7 @@ export const BUNDLED_SAMPLES = [
   { pos: 3, name: 'ALERT', file: 'alert.wav', url: sampleSlot3Url }
 ] as const;
 
-const WORKLET_PROCESSOR_SOURCE = `
+export const WORKLET_PROCESSOR_SOURCE = `
 class Ep2350PitchShiftProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -222,9 +223,51 @@ class Ep2350NoiseGateProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('ep2350-noisegate', Ep2350NoiseGateProcessor);
+
+// REVERB runs the same kernel class as the ScriptProcessor fallback and the tests (src/dsp/math.ts)
+const ReverbKernel = (${ReverbKernel.toString()});
+
+class Ep2350ReverbProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const p = (options && options.processorOptions) || {};
+    this.kernel = new ReverbKernel(sampleRate);
+    this.kernel.setParams(typeof p.time === 'number' ? p.time : 0.5, typeof p.spring === 'number' ? p.spring : 0);
+    this.port.onmessage = (e) => {
+      const d = e.data || {};
+      this.kernel.setParams(
+        typeof d.time === 'number' ? d.time : this.kernel.time,
+        typeof d.spring === 'number' ? d.spring : this.kernel.spring
+      );
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0];
+    if (!out || !out[0]) return true;
+    const input = inputs[0] && inputs[0][0];
+    this.kernel.process(input, out[0], out[1] || out[0]);
+    return true;
+  }
+}
+
+registerProcessor('ep2350-reverb', Ep2350ReverbProcessor);
 `;
 
 export type InputMode = 'sample' | 'mic';
+
+/** Filter Q when a LOWPASS/HIGHPASS row leaves `Q` out (maps to biquad Q 2.0). */
+export const FILTER_DEFAULT_Q = 0.2;
+/** config.json Q (0..1) to biquad Q, the same scale as EQUALISER. */
+export const filterQ = (q: number) => Math.max(0.1, q * 10);
+/** Playback rate of a triggered sample: SAMPLE.speed times the SAMPLE.pitch ratio (tape-style). */
+export const samplePlaybackRate = (speed: number, semitones: number) =>
+  Math.max(0.01, Math.min(16, speed * Math.pow(2, semitones / 12)));
+/** Any squeeze opens the mic; at rest (0) it is closed. */
+export const isHandleSqueezed = (handlePos: number) => handlePos > 0.005;
+const MIC_GATE_OPEN_S = 0.008;
+const MIC_GATE_CLOSE_S = 0.02;
+const DUCK_ATTACK_S = 0.01;
+const DUCK_RELEASE_S = 0.12;
 
 export interface ModulationState {
   handlePos: number; // 0.0 to 1.0
@@ -242,12 +285,18 @@ export class DspAudioEngine {
   private lastMicError: string | null = null;
   private currentBuffer: AudioBuffer | null = null;
   private sampleBuffers: AudioBuffer[] = [];
+  /** User WAVs per slot; a slot without one plays its bundled demo sound. */
+  private customSampleBuffers: Array<AudioBuffer | null> = [null, null, null, null];
   private activeSampleSlot: number = 0;
   private sampleSourceNode: AudioBufferSourceNode | null = null;
   private isSamplePlaying: boolean = false;
   private sourceNode: AudioBufferSourceNode | null = null;
   private inputCompressor: DynamicsCompressorNode | null = null;
   private inputNoiseGate: (AudioNode & { onaudioprocess?: any }) | null = null;
+  /** Turns the mic down while a sample with `duck` plays. Samples bypass it. */
+  private duckGain: GainNode | null = null;
+  /** The mic only opens while the handle is squeezed, as on the EP-2350. Samples bypass it. */
+  private micGate: GainNode | null = null;
   private sourceHub: GainNode | null = null;
   private busSummer: GainNode | null = null;
   private gainMaster: GainNode | null = null;
@@ -405,9 +454,80 @@ export class DspAudioEngine {
     try {
       this.inputNoiseGate.disconnect();
     } catch {}
+    if (!this.duckGain) {
+      this.duckGain = ctx.createGain();
+      this.duckGain.gain.value = 1.0;
+    }
+    if (!this.micGate) {
+      this.micGate = ctx.createGain();
+      this.micGate.gain.value = isHandleSqueezed(this.modState.handlePos) ? 1.0 : 0.0;
+    }
+    try {
+      this.duckGain.disconnect();
+    } catch {}
+    try {
+      this.micGate.disconnect();
+    } catch {}
     this.inputCompressor.connect(this.inputNoiseGate);
-    this.inputNoiseGate.connect(this.sourceHub);
+    this.inputNoiseGate.connect(this.micGate);
+    this.micGate.connect(this.duckGain);
+    this.duckGain.connect(this.sourceHub);
     return this.inputCompressor;
+  }
+
+  /**
+   * Decode a WAV file for auditioning. Before the first click the page may not start audio, so an
+   * OfflineAudioContext decodes instead; an AudioBuffer plays in any context.
+   */
+  public async decodeSampleFile(bytes: Uint8Array): Promise<AudioBuffer> {
+    // decodeAudioData detaches its input, so hand it a copy
+    const copy = bytes.slice().buffer;
+    if (this.ctx) return this.ctx.decodeAudioData(copy);
+    const w = typeof window !== 'undefined' ? (window as any) : undefined;
+    const Offline = w?.OfflineAudioContext || w?.webkitOfflineAudioContext;
+    if (Offline) return new Offline(1, 1, 48000).decodeAudioData(copy);
+    await this.init();
+    if (!this.ctx) throw new Error('Audio is not available in this browser.');
+    return (this.ctx as AudioContext).decodeAudioData(copy);
+  }
+
+  /**
+   * Render `buffer` (decoded from a file at `srcRate`) for the mic: trimmed to `enc.trim` (frames of
+   * the original file), mixed to `enc.channels` and resampled to `enc.sampleRate`.
+   */
+  public async renderForDevice(
+    buffer: AudioBuffer,
+    srcRate: number,
+    enc: { trim?: { start: number; end: number }; channels: number; sampleRate: number }
+  ): Promise<{ channels: Float32Array[]; sampleRate: number }> {
+    const w = typeof window !== 'undefined' ? (window as any) : undefined;
+    const Offline = w?.OfflineAudioContext || w?.webkitOfflineAudioContext;
+    if (!Offline) throw new Error('This browser cannot re-encode audio.');
+    const startSec = enc.trim ? enc.trim.start / srcRate : 0;
+    const durSec = enc.trim ? (enc.trim.end - enc.trim.start) / srcRate : buffer.duration;
+    const frames = Math.max(1, Math.round(durSec * enc.sampleRate));
+    const off = new Offline(enc.channels, frames, enc.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buffer;
+    src.connect(off.destination); // a mono destination mixes stereo down to (L + R) / 2
+    src.start(0, startSec, durSec);
+    const out: AudioBuffer = await off.startRendering();
+    return {
+      channels: Array.from({ length: out.numberOfChannels }, (_, c) => out.getChannelData(c)),
+      sampleRate: enc.sampleRate
+    };
+  }
+
+  /** Play `buffer` from sample slot `slot` (null: back to the bundled demo sound). */
+  public setCustomSample(slot: number, buffer: AudioBuffer | null) {
+    if (slot < 0 || slot > 3) return;
+    if (this.customSampleBuffers[slot] === buffer) return;
+    this.customSampleBuffers[slot] = buffer;
+    if (slot === this.activeSampleSlot) this.stopSample();
+  }
+
+  public hasCustomSample(slot: number): boolean {
+    return !!this.customSampleBuffers[slot];
   }
 
   public setActiveSampleSlot(slot: number) {
@@ -428,6 +548,7 @@ export class DspAudioEngine {
 
   public stopSample() {
     this.isSamplePlaying = false;
+    this.setDuck(0);
     if (this.sampleSourceNode) {
       try {
         this.sampleSourceNode.onended = null;
@@ -441,7 +562,22 @@ export class DspAudioEngine {
     }
   }
 
-  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot') {
+  public getDuckGain(): GainNode | null {
+    return this.duckGain;
+  }
+
+  /** Duck the mic by `amount` (0 = untouched, 1 = silent): fast attack, slower release. */
+  private setDuck(amount: number) {
+    if (!this.ctx || !this.duckGain) return;
+    const target = 1 - Math.max(0, Math.min(1, amount));
+    const param = this.duckGain.gain;
+    const now = this.ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.setTargetAtTime(target, now, target < param.value ? DUCK_ATTACK_S : DUCK_RELEASE_S);
+  }
+
+  public async triggerSample(down: boolean = true, playmode: PlayMode = 'oneshot', duck: number = 0) {
     if (!down) {
       if (playmode === 'hold') {
         this.stopSample();
@@ -466,7 +602,8 @@ export class DspAudioEngine {
 
     this.stopSample();
 
-    const sampleBuf = this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
+    const sampleBuf =
+      this.customSampleBuffers[this.activeSampleSlot] || this.sampleBuffers[this.activeSampleSlot] || this.currentBuffer;
     if (!sampleBuf) return;
 
     const triggerRow = this.preset?.trigger?.row;
@@ -481,7 +618,7 @@ export class DspAudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = sampleBuf;
     src.loop = playmode === 'hold' || playmode === 'startstop';
-    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastSpeed ?? 1.0;
+    src.playbackRate.value = sampleNodeEntry?.nodeRefs?.lastRate ?? 1.0;
 
     this.sampleSourceNode = src;
     this.isSamplePlaying = true;
@@ -489,6 +626,7 @@ export class DspAudioEngine {
       if (this.sampleSourceNode === src) {
         this.isSamplePlaying = false;
         this.sampleSourceNode = null;
+        this.setDuck(0);
         if (!this.isRunning) {
           this.stopModulationLoop();
         }
@@ -497,6 +635,7 @@ export class DspAudioEngine {
 
     src.connect(targetInput);
     this.applyLiveModulation(true);
+    if (typeof duck === 'number' && duck > 0) this.setDuck(duck);
     src.start(0);
     this.startModulationLoop();
   }
@@ -529,7 +668,23 @@ export class DspAudioEngine {
 
   public updateModulation(mod: Partial<ModulationState>) {
     this.modState = { ...this.modState, ...mod };
+    if (typeof mod.handlePos === 'number') this.updateMicGate();
     this.applyLiveModulation();
+  }
+
+  public getMicGate(): GainNode | null {
+    return this.micGate;
+  }
+
+  /** Open the mic while the handle is squeezed, close it when released (short ramps, no clicks). */
+  private updateMicGate() {
+    if (!this.ctx || !this.micGate) return;
+    const open = isHandleSqueezed(this.modState.handlePos);
+    const param = this.micGate.gain;
+    const now = this.ctx.currentTime;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+    param.setTargetAtTime(open ? 1 : 0, now, open ? MIC_GATE_OPEN_S : MIC_GATE_CLOSE_S);
   }
 
   public triggerShake(impulse: number = 1.0) {
@@ -679,6 +834,12 @@ export class DspAudioEngine {
           nodeRefs.pitchShifter.processor.disconnect();
         } catch (e) {}
       }
+      if (nodeRefs.reverb?.processor) {
+        try {
+          nodeRefs.reverb.processor.onaudioprocess = null;
+          nodeRefs.reverb.processor.disconnect();
+        } catch (e) {}
+      }
       if (nodeRefs.ssbShifter?.processor) {
         try {
           nodeRefs.ssbShifter.processor.onaudioprocess = null;
@@ -724,6 +885,47 @@ export class DspAudioEngine {
         kernel.setPitch(currentPitch);
       },
       getPitch: () => currentPitch
+    };
+  }
+
+  /**
+   * REVERB in an AudioWorkletNode (stereo wet out), or a ScriptProcessor running the same kernel
+   * where worklets are unavailable. Parameters are only sent when they change.
+   */
+  private createReverb(ctx: AudioContext, initialTime: number, initialSpring: number) {
+    let current = { time: initialTime, spring: initialSpring };
+    if (this.workletReady && typeof AudioWorkletNode !== 'undefined') {
+      const node = new AudioWorkletNode(ctx, 'ep2350-reverb', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        processorOptions: current
+      });
+      return {
+        processor: node as AudioNode & { onaudioprocess?: any },
+        setParams: (time: number, spring: number) => {
+          if (time === current.time && spring === current.spring) return;
+          current = { time, spring };
+          node.port.postMessage(current);
+        },
+        getParams: () => current
+      };
+    }
+    const processor = ctx.createScriptProcessor(512, 1, 2);
+    const kernel = new ReverbKernel(ctx.sampleRate);
+    kernel.setParams(initialTime, initialSpring);
+    processor.onaudioprocess = (e: AudioProcessingEvent) => {
+      const out = e.outputBuffer;
+      kernel.process(e.inputBuffer.getChannelData(0), out.getChannelData(0), out.getChannelData(out.numberOfChannels > 1 ? 1 : 0));
+    };
+    return {
+      processor,
+      setParams: (time: number, spring: number) => {
+        if (time === current.time && spring === current.spring) return;
+        current = { time, spring };
+        kernel.setParams(time, spring);
+      },
+      getParams: () => current
     };
   }
 
@@ -784,6 +986,18 @@ export class DspAudioEngine {
         this.inputNoiseGate.disconnect();
       } catch (e) {}
       this.inputNoiseGate = null;
+    }
+    if (this.duckGain) {
+      try {
+        this.duckGain.disconnect();
+      } catch (e) {}
+      this.duckGain = null;
+    }
+    if (this.micGate) {
+      try {
+        this.micGate.disconnect();
+      } catch (e) {}
+      this.micGate = null;
     }
     if (this.sourceHub) {
       try {
@@ -937,7 +1151,7 @@ export class DspAudioEngine {
       case 'HIGHPASS': {
         const filter = ctx.createBiquadFilter();
         filter.type = fx.effect === 'LOWPASS' ? 'lowpass' : 'highpass';
-        filter.Q.value = 2.0;
+        filter.Q.value = filterQ(FILTER_DEFAULT_Q);
         return { input: filter, output: filter, nodeRefs: { filter, rowIdx } };
       }
 
@@ -978,95 +1192,31 @@ export class DspAudioEngine {
       }
 
       case 'DELAY': {
-        // Stereo/Dub Delay with up to 1.2s delay line, HP + LP damping in loop, and tape saturation for self-oscillation
-        const input = ctx.createGain();
-        const output = ctx.createGain();
-        const delayNode = ctx.createDelay(2.0);
-        const feedbackGain = ctx.createGain();
-
-        // Soft limiter inside feedback loop so echo > 1.0 (SPACE ECHO) self-oscillates warmly without clipping
-        const tapeLimiter = ctx.createWaveShaper();
-        tapeLimiter.curve = makeSoftClipCurve() as any;
-
-        const lpFilter = ctx.createBiquadFilter();
-        lpFilter.type = 'lowpass';
-        const hpFilter = ctx.createBiquadFilter();
-        hpFilter.type = 'highpass';
-        const dryGain = ctx.createGain();
-        const wetGain = ctx.createGain();
-        const wetPanner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-
-        // Connect delay loop: input -> delay -> hp -> lp -> tapeLimiter -> feedback -> delay
-        input.connect(dryGain);
-        dryGain.connect(output);
-
-        input.connect(delayNode);
-        delayNode.connect(hpFilter);
-        hpFilter.connect(lpFilter);
-        lpFilter.connect(tapeLimiter);
-        tapeLimiter.connect(feedbackGain);
-        feedbackGain.connect(delayNode);
-
-        tapeLimiter.connect(wetGain);
-        wetGain.connect(wetPanner);
-        wetPanner.connect(output);
-
-        return {
-          input,
-          output,
-          nodeRefs: { delayNode, feedbackGain, lpFilter, hpFilter, dryGain, wetGain, wetPanner, rowIdx }
-        };
+        // Two echo lines (left/right) with cross-feed between them; see stereoDelay.ts
+        const delay = buildStereoDelay(ctx);
+        return { input: delay.input, output: delay.output, nodeRefs: { delay, rowIdx } };
       }
 
       case 'REVERB': {
-        // Algorithmic Reverb & Spring Tank with live-modulatable decay time and spring-mix
+        // Room (Freeverb-style combs + allpass diffusers) and dispersive spring, in ReverbKernel.
+        // input -> dry -> output; input -> high-pass -> reverb (stereo wet) -> wet -> output
         const input = ctx.createGain();
         const output = ctx.createGain();
         const dryGain = ctx.createGain();
         const wetGain = ctx.createGain();
         const hpFilter = ctx.createBiquadFilter();
         hpFilter.type = 'highpass';
-
-        const combTimes = [0.029, 0.037, 0.043, 0.051];
-        const combBaseGains = [0.82, 0.78, 0.74, 0.7];
-        const combSum = ctx.createGain();
-        const combFeedbackGains: GainNode[] = [];
-        const combDelays: DelayNode[] = [];
-
-        combTimes.forEach(() => {
-          const delay = ctx.createDelay(0.5);
-          const fb = ctx.createGain();
-
-          hpFilter.connect(delay);
-          delay.connect(fb);
-          fb.connect(delay);
-          delay.connect(combSum);
-
-          combDelays.push(delay);
-          combFeedbackGains.push(fb);
-        });
+        const time = typeof fx.time === 'number' ? fx.time : 0.5;
+        const reverb = this.createReverb(ctx, time, 0);
 
         input.connect(dryGain);
         dryGain.connect(output);
         input.connect(hpFilter);
-        combSum.connect(wetGain);
+        hpFilter.connect(reverb.processor);
+        reverb.processor.connect(wetGain);
         wetGain.connect(output);
 
-        return {
-          input,
-          output,
-          nodeRefs: {
-            dryGain,
-            wetGain,
-            hpFilter,
-            combSum,
-            combFeedbackGains,
-            combDelays,
-            combTimes,
-            combBaseGains,
-            rowIdx
-          }
-        };
+        return { input, output, nodeRefs: { dryGain, wetGain, hpFilter, reverb, rowIdx } };
       }
 
       case 'RING': {
@@ -1122,28 +1272,24 @@ export class DspAudioEngine {
       }
 
       case 'SAMPLE': {
-        // Main vocal audition stream passes cleanly through SAMPLE (input -> output)
-        // Triggered hardware samples enter via sampleInput -> pitchShifter -> gain -> panner -> output
+        // Main vocal audition stream passes cleanly through SAMPLE (input -> output).
+        // Triggered samples enter via sampleInput -> gain -> panner -> output. SAMPLE.pitch is
+        // tape-style like on the mic: it changes the playback rate, so it also changes the length.
         const input = ctx.createGain();
         const output = ctx.createGain();
         const sampleInput = ctx.createGain();
         const gain = ctx.createGain();
         const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
 
-        const semitones = typeof fx.pitch === 'number' ? fx.pitch : 0;
-        const pitchRatio = Math.pow(2, semitones / 12);
-        const pitchShifter = this.createConstantSpeedPitchShifter(ctx, pitchRatio);
-
         input.connect(output);
-        sampleInput.connect(pitchShifter.processor);
-        pitchShifter.processor.connect(gain);
+        sampleInput.connect(gain);
         gain.connect(panner);
         panner.connect(output);
 
         return {
           input,
           output,
-          nodeRefs: { sampleInput, gain, panner, pitchShifter, lastSpeed: 1.0, rowIdx }
+          nodeRefs: { sampleInput, gain, panner, lastSpeed: 1.0, lastRate: 1.0, rowIdx }
         };
       }
 
@@ -1231,6 +1377,9 @@ export class DspAudioEngine {
         case 'HIGHPASS': {
           const baseCutoff = toCutoffRatio(params.cutoff, effectType === 'LOWPASS' ? 1.0 : 0.0);
           setParam(nodeRefs.filter?.frequency, cutoffToHz(mod('cutoff', baseCutoff, 0.0, 1.0)), 0.015);
+          // Q is optional (firmware 1.0.9+); left out, it keeps the preview's fixed resonance (0.2 -> 2.0)
+          const q = mod('Q', typeof params.Q === 'number' ? params.Q : FILTER_DEFAULT_Q, 0.0, 1.0);
+          setParam(nodeRefs.filter?.Q, filterQ(q), 0.015);
           break;
         }
 
@@ -1260,18 +1409,19 @@ export class DspAudioEngine {
         }
 
         case 'DELAY': {
-          const crossFeed = mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0);
-          const echo = mod('echo', toRatio(params.echo, 0.4) + crossFeed * 0.15, 0.0, 1.18);
-          setParam(nodeRefs.feedbackGain?.gain, echo, 0.02);
-          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1), 0.03);
-          setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.lpFilter?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.02);
-          setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
-          if (nodeRefs.wetPanner && 'pan' in nodeRefs.wetPanner) {
-            const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
-            setParam(nodeRefs.wetPanner.pan, (bal - 0.5) * 2, 0.015);
-          }
+          nodeRefs.delay?.apply(
+            {
+              time: mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1),
+              echo: mod('echo', toRatio(params.echo, 0.4), 0.0, 1.18),
+              crossFeed: mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0),
+              lowpass: mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0),
+              highpass: mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0),
+              wet: mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0),
+              dry: mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0),
+              balance: mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0)
+            },
+            setParam
+          );
           break;
         }
 
@@ -1279,20 +1429,10 @@ export class DspAudioEngine {
           setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
           setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
           setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
-          const timeScale = mod('time', typeof params.time === 'number' ? params.time : 0.5, 0.0, 1.0);
-          if (nodeRefs.combFeedbackGains && nodeRefs.combBaseGains) {
-            nodeRefs.combFeedbackGains.forEach((fb: GainNode, idx: number) => {
-              const g = Math.min(0.96, nodeRefs.combBaseGains[idx] * (0.6 + timeScale * 0.36));
-              setParam(fb.gain, g, 0.02);
-            });
-          }
-          if (nodeRefs.combDelays && nodeRefs.combTimes) {
-            nodeRefs.combDelays.forEach((delay: DelayNode, idx: number) => {
-              setParam(delay.delayTime, nodeRefs.combTimes[idx] * (0.6 + timeScale * 0.8), 0.02);
-            });
-          }
+          // time sets the decay (0.1..6 s) without changing any delay length, so it never bends the pitch
+          const time = mod('time', typeof params.time === 'number' ? params.time : 0.5, 0.0, 1.0);
           const spring = mod('spring-mix', toRatio(params['spring-mix'], 0.0), 0.0, 1.0);
-          setParam(nodeRefs.combSum?.gain, (0.28 + spring * 0.55) * 0.5, 0.02);
+          nodeRefs.reverb?.setParams(time, spring);
           break;
         }
 
@@ -1322,11 +1462,13 @@ export class DspAudioEngine {
 
         case 'SAMPLE': {
           const moddedSemitones = mod('pitch', typeof params.pitch === 'number' ? params.pitch : 0, -24, 24);
-          nodeRefs.pitchShifter?.setPitch(Math.pow(2, moddedSemitones / 12));
           const moddedSpeed = mod('speed', typeof params.speed === 'number' ? params.speed : 1.0, 0.05, 4.0);
+          // Confirmed on the device: pitch changes the sample's length, so it multiplies the rate
+          const rate = samplePlaybackRate(moddedSpeed, moddedSemitones);
           nodeRefs.lastSpeed = moddedSpeed;
+          nodeRefs.lastRate = rate;
           if (this.sampleSourceNode) {
-            this.sampleSourceNode.playbackRate.value = moddedSpeed;
+            this.sampleSourceNode.playbackRate.value = rate;
           }
           setParam(nodeRefs.gain?.gain, mod('level', toRatio(params.level, 1.0), 0.0, 1.0), 0.015);
           if (nodeRefs.panner && 'pan' in nodeRefs.panner) {
