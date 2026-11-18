@@ -34,6 +34,7 @@ function buildSourceModulesForTest() {
     'src/utils/zip.ts',
     'src/utils/fitter.ts',
     'src/dsp/math.ts',
+    'src/dsp/stereoDelay.ts',
     'src/dsp/synthSamples.ts',
     'src/dsp/AudioEngine.ts',
     'src/validation/presetCheck.ts',
@@ -117,6 +118,7 @@ const {
 } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/math.mjs')).href
 );
+const { buildStereoDelay } = await import(pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/stereoDelay.mjs')).href);
 const { DspAudioEngine, BUNDLED_SAMPLES, samplePlaybackRate } = await import(
   pathToFileURL(path.join(TMP_TEST_BUILD, 'src/dsp/AudioEngine.mjs')).href
 );
@@ -843,6 +845,11 @@ class MockAudioContext {
     node.pan = createMockAudioParam(0.0);
     return node;
   }
+  createChannelMerger(n = 2) {
+    const node = new MockAudioNode();
+    node.numberOfInputs = n;
+    return node;
+  }
   createScriptProcessor() {
     const node = new MockAudioNode();
     node.onaudioprocess = null;
@@ -916,8 +923,8 @@ const sampleNode = engine.activeNodes.find((n) => n.effectType === 'SAMPLE');
 
 // Verify 1% UI values map to 0.01 gain ratio (not 1.0!)
 assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DIST 1% mix must set wetGain to 0.01');
-assert.ok(Math.abs(delayNode.nodeRefs.feedbackGain.gain.value - 0.01) < 1e-6, 'DELAY 1% echo must set feedbackGain to 0.01');
-assert.ok(Math.abs(delayNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'DELAY 1% wet-level must set wetGain to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.delay.left.fbSame.gain.value - 0.01) < 1e-6, 'DELAY 1% echo must set the feedback to 0.01');
+assert.ok(Math.abs(delayNode.nodeRefs.delay.wetGain.gain.value - 0.01) < 1e-6, 'DELAY 1% wet-level must set wetGain to 0.01');
 assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.01) < 1e-6, 'RING 1% mix must set wetGain to 0.01');
 assert.ok(Math.abs(sampleNode.nodeRefs.gain.gain.value - 0.01) < 1e-6, 'SAMPLE 1% level must set gain to 0.01');
 
@@ -937,7 +944,7 @@ engine.updatePreset(updatedPreset);
 
 assert.strictEqual(distNode.nodeRefs.lastAmount, 25, 'Live DIST.amount update must regenerate distortion curve');
 assert.ok(Math.abs(distNode.nodeRefs.wetGain.gain.value - 0.6) < 1e-6, 'Live DIST.mix update must update wetGain');
-assert.strictEqual(delayNode.nodeRefs.wetPanner.pan.value, 1.0, 'Live DELAY.balance update must pan wetPanner to +1');
+assert.strictEqual(delayNode.nodeRefs.delay.wetPanner.pan.value, 1.0, 'Live DELAY.balance update must pan wetPanner to +1');
 assert.ok(Math.abs(reverbNode.nodeRefs.hpFilter.frequency.value - cutoffToHz(0.8)) < 1e-3, 'Live REVERB.highpass-cutoff must update hpFilter');
 assert.ok(Math.abs(ringNode.nodeRefs.wetGain.gain.value - 0.75) < 1e-6, 'Live RING.mix must update wetGain');
 assert.ok(Math.abs(eqNode.nodeRefs.eq.Q.value - 9.0) < 1e-6, 'Live EQUALISER.Q must update eq.Q');
@@ -3099,4 +3106,48 @@ console.log('✓ Suite 25: Sending samples to the mic over USB (disk check, tran
 }
 console.log('✓ Suite 26: REVERB kernel (decay matches the knob, no pitch bend, diffuse stereo room, spring chirp, stable) verified');
 
-console.log('\n=== ALL 26 PRODUCTION TEST SUITES PASSED (100%) ===');
+// -----------------------------------------------------------------------------
+// SUITE 27: Stereo DELAY with cross-feed (ping-pong)
+// -----------------------------------------------------------------------------
+{
+  const ctx = new MockAudioContext();
+  const d = buildStereoDelay(ctx);
+  const set = (param, v) => { if (param) param.value = v; };
+  const base = { time: 0.3, echo: 0.6, crossFeed: 0, lowpass: 0.7, highpass: 0.2, wet: 0.5, dry: 1, balance: 0.5 };
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+  // 27a. cross-feed 0: each side repeats itself, both take the input (dual mono)
+  d.apply(base, set);
+  assert.ok(near(d.left.fbSame.gain.value, 0.6) && near(d.left.fbCross.gain.value, 0));
+  assert.ok(near(d.right.fbSame.gain.value, 0.6) && near(d.right.fbCross.gain.value, 0));
+  assert.strictEqual(d.injectR.gain.value, 1);
+
+  // 27b. cross-feed 1: repeats alternate sides, only the left takes the input (ping-pong)
+  d.apply({ ...base, crossFeed: 1 }, set);
+  assert.ok(near(d.left.fbSame.gain.value, 0) && near(d.left.fbCross.gain.value, 0.6));
+  assert.ok(near(d.right.fbCross.gain.value, 0.6));
+  assert.strictEqual(d.injectR.gain.value, 0);
+
+  // 27c. In between the loop gain per line stays `echo`, so cross-feed never changes how long repeats last
+  d.apply({ ...base, crossFeed: 0.25 }, set);
+  assert.ok(near(d.left.fbSame.gain.value + d.left.fbCross.gain.value, 0.6));
+  assert.ok(near(d.left.fbSame.gain.value, 0.45) && near(d.injectR.gain.value, 0.75));
+
+  // 27d. Both lines share time and filters; values are clamped; balance pans the repeats
+  d.apply({ ...base, time: 5, echo: 3, lowpass: 0.5, highpass: 0.1, balance: 0 }, set);
+  assert.deepStrictEqual([d.left.delay.delayTime.value, d.right.delay.delayTime.value], [1.1, 1.1]);
+  assert.ok(near(d.left.fbSame.gain.value, 1.18), 'Echo tops out at 1.18 (soft-clipped self-oscillation)');
+  assert.ok(near(d.left.lp.frequency.value, cutoffToHz(0.5)) && near(d.right.hp.frequency.value, cutoffToHz(0.1)));
+  assert.strictEqual(d.wetPanner.pan.value, -1);
+  d.apply({ ...base, time: 0 }, set);
+  assert.strictEqual(d.left.delay.delayTime.value, 0.01);
+
+  // 27e. Wiring: each line feeds the other through fbCross, and the two sides reach separate channels
+  assert.ok(d.left.fbCross.connections.includes(d.right.delay) && d.right.fbCross.connections.includes(d.left.delay));
+  assert.ok(d.left.fbSame.connections.includes(d.left.delay) && d.right.fbSame.connections.includes(d.right.delay));
+  assert.ok(d.input.connections.includes(d.left.delay) && d.injectR.connections.includes(d.right.delay));
+  assert.ok(d.left.clip.curve && d.right.clip.curve, 'Each loop has the soft clipper');
+}
+console.log('✓ Suite 27: Stereo DELAY with cross-feed (dual mono at 0, ping-pong at 1, constant loop gain) verified');
+
+console.log('\n=== ALL 27 PRODUCTION TEST SUITES PASSED (100%) ===');

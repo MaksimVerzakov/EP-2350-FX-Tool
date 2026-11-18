@@ -1,6 +1,7 @@
 import type { AnyEffect, PlayMode, PresetConfig } from '../types/config';
 import { createSyntheticAudioBuffer } from './synthSamples';
 import { busLanes } from '../utils/busRouting';
+import { buildStereoDelay } from './stereoDelay';
 import {
   NoiseGateKernel,
   PitchShiftKernel,
@@ -9,7 +10,6 @@ import {
   computeLfoWave,
   cutoffToHz,
   makeDistortionCurve,
-  makeSoftClipCurve,
   resolveModDepth
 } from './math';
 import defaultSpeechUrl from '../assets/speech.mp3';
@@ -1156,44 +1156,9 @@ export class DspAudioEngine {
       }
 
       case 'DELAY': {
-        // Stereo/Dub Delay with up to 1.2s delay line, HP + LP damping in loop, and tape saturation for self-oscillation
-        const input = ctx.createGain();
-        const output = ctx.createGain();
-        const delayNode = ctx.createDelay(2.0);
-        const feedbackGain = ctx.createGain();
-
-        // Soft limiter inside feedback loop so echo > 1.0 (SPACE ECHO) self-oscillates warmly without clipping
-        const tapeLimiter = ctx.createWaveShaper();
-        tapeLimiter.curve = makeSoftClipCurve() as any;
-
-        const lpFilter = ctx.createBiquadFilter();
-        lpFilter.type = 'lowpass';
-        const hpFilter = ctx.createBiquadFilter();
-        hpFilter.type = 'highpass';
-        const dryGain = ctx.createGain();
-        const wetGain = ctx.createGain();
-        const wetPanner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
-
-        // Connect delay loop: input -> delay -> hp -> lp -> tapeLimiter -> feedback -> delay
-        input.connect(dryGain);
-        dryGain.connect(output);
-
-        input.connect(delayNode);
-        delayNode.connect(hpFilter);
-        hpFilter.connect(lpFilter);
-        lpFilter.connect(tapeLimiter);
-        tapeLimiter.connect(feedbackGain);
-        feedbackGain.connect(delayNode);
-
-        tapeLimiter.connect(wetGain);
-        wetGain.connect(wetPanner);
-        wetPanner.connect(output);
-
-        return {
-          input,
-          output,
-          nodeRefs: { delayNode, feedbackGain, lpFilter, hpFilter, dryGain, wetGain, wetPanner, rowIdx }
-        };
+        // Two echo lines (left/right) with cross-feed between them; see stereoDelay.ts
+        const delay = buildStereoDelay(ctx);
+        return { input: delay.input, output: delay.output, nodeRefs: { delay, rowIdx } };
       }
 
       case 'REVERB': {
@@ -1408,18 +1373,19 @@ export class DspAudioEngine {
         }
 
         case 'DELAY': {
-          const crossFeed = mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0);
-          const echo = mod('echo', toRatio(params.echo, 0.4) + crossFeed * 0.15, 0.0, 1.18);
-          setParam(nodeRefs.feedbackGain?.gain, echo, 0.02);
-          setParam(nodeRefs.delayNode?.delayTime, mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1), 0.03);
-          setParam(nodeRefs.wetGain?.gain, mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.dryGain?.gain, mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0), 0.02);
-          setParam(nodeRefs.lpFilter?.frequency, cutoffToHz(mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0)), 0.02);
-          setParam(nodeRefs.hpFilter?.frequency, cutoffToHz(mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0)), 0.02);
-          if (nodeRefs.wetPanner && 'pan' in nodeRefs.wetPanner) {
-            const bal = mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0);
-            setParam(nodeRefs.wetPanner.pan, (bal - 0.5) * 2, 0.015);
-          }
+          nodeRefs.delay?.apply(
+            {
+              time: mod('time', typeof params.time === 'number' ? params.time : 0.35, 0.01, 1.1),
+              echo: mod('echo', toRatio(params.echo, 0.4), 0.0, 1.18),
+              crossFeed: mod('cross-feed', toRatio(params['cross-feed'], 0.0), 0.0, 1.0),
+              lowpass: mod('lowpass-cutoff', toRatio(params['lowpass-cutoff'], 1.0), 0.0, 1.0),
+              highpass: mod('highpass-cutoff', toRatio(params['highpass-cutoff'], 0.0), 0.0, 1.0),
+              wet: mod('wet-level', toRatio(params['wet-level'], 0.5), 0.0, 1.0),
+              dry: mod('dry-level', toRatio(params['dry-level'], 1.0), 0.0, 1.0),
+              balance: mod('balance', typeof params.balance === 'number' ? params.balance : 0.5, 0.0, 1.0)
+            },
+            setParam
+          );
           break;
         }
 
